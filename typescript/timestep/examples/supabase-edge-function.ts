@@ -36,7 +36,7 @@ import {
 	type ModelProvider,
 	type Repository,
 	type RepositoryContainer,
-} from 'npm:@timestep-ai/timestep@2025.9.201317';
+} from 'npm:@timestep-ai/timestep@2025.9.201409';
 
 /**
  * Supabase Agent Repository Implementation
@@ -49,7 +49,7 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		// Upsert defaults for this user
 		try {
 			const {getDefaultAgents} = await import(
-				'npm:@timestep-ai/timestep@2025.9.201317'
+				'npm:@timestep-ai/timestep@2025.9.201409'
 			);
 			const defaultAgents = getDefaultAgents();
 			for (const agent of defaultAgents) {
@@ -234,7 +234,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 		// Always upsert defaults for this user
 		try {
 			const {getDefaultMcpServers} = await import(
-				'npm:@timestep-ai/timestep@2025.9.201317'
+				'npm:@timestep-ai/timestep@2025.9.201409'
 			);
 			const defaults = getDefaultMcpServers(this.baseUrl);
 			for (const server of defaults) {
@@ -263,7 +263,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		if (servers.length === 0) {
 			const {getDefaultMcpServers} = await import(
-				'npm:@timestep-ai/timestep@2025.9.201317'
+				'npm:@timestep-ai/timestep@2025.9.201409'
 			);
 			const defaultServers = getDefaultMcpServers(this.baseUrl);
 			try {
@@ -318,13 +318,12 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			description: (server as any).description ?? server.name,
 			server_url: (server as any).serverUrl,
 			enabled: server.enabled,
-			auth_token: (server as any).authToken,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.201317'
+			'npm:@timestep-ai/timestep@2025.9.201409'
 		);
 
-		// Encrypt auth token if provided and not already encrypted
+		// Handle auth token - encrypt if provided, set to null if not
 		if ((server as any).authToken !== undefined) {
 			let token = (server as any).authToken as string | undefined;
 			if (token && !isEncryptedSecret(token)) {
@@ -333,6 +332,8 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 				} catch {}
 			}
 			toSave.auth_token = token ?? null;
+		} else {
+			toSave.auth_token = null;
 		}
 		const {error} = await this.supabase
 			.from('mcp_servers')
@@ -374,7 +375,7 @@ class SupabaseModelProviderRepository
 		// Always upsert defaults for this user
 		try {
 			const {getDefaultModelProviders} = await import(
-				'npm:@timestep-ai/timestep@2025.9.201317'
+				'npm:@timestep-ai/timestep@2025.9.201409'
 			);
 			const defaults = getDefaultModelProviders();
 			for (const p of defaults) {
@@ -427,7 +428,7 @@ class SupabaseModelProviderRepository
 			models_url: (provider as any).modelsUrl ?? (provider as any).models_url,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.201317'
+			'npm:@timestep-ai/timestep@2025.9.201409'
 		);
 		if ((provider as any).apiKey !== undefined) {
 			let key = (provider as any).apiKey as string | undefined;
@@ -856,7 +857,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// Get tool information from the MCP server
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.201317'
+					'npm:@timestep-ai/timestep@2025.9.201409'
 				);
 
 				// First, get the list of tools from the server
@@ -958,7 +959,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				const [serverId, toolName] = parts;
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.201317'
+					'npm:@timestep-ai/timestep@2025.9.201409'
 				);
 
 				const result = await handleMcpServerRequest(
@@ -1001,7 +1002,7 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.201317'
+					'npm:@timestep-ai/timestep@2025.9.201409'
 				);
 
 				if (request.method === 'POST') {
@@ -1044,7 +1045,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// GET request - return full MCP server record
 				const {getMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.201317'
+					'npm:@timestep-ai/timestep@2025.9.201409'
 				);
 				const server = await getMcpServer(serverId, repositories);
 
