@@ -1,6 +1,6 @@
 {
 	"name": "@timestep-ai/timestep",
-	"version": "2025.9.201305",
+	"version": "2025.9.201311",
 	"description": "A CLI tool built with Ink and React",
 	"keywords": [
 		"cli",
