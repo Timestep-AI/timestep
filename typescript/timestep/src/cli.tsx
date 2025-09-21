@@ -12,7 +12,8 @@ const cli = meow(
 	Commands
 	  server                   Start the agents server
 	  stop                     Stop the agents server
-	  chat                     Start interactive chat with an agent
+	  chat                     Start interactive chat with an agent (A2A protocol)
+	  ag-ui-chat               Start interactive chat with an agent (AG-UI protocol)
 	  get-version              Show version information
 	  list-agents              List all agents from the server
 	  list-chats               List all chats from the server
@@ -40,10 +41,16 @@ const cli = meow(
 	  Stop the agents server
 
 	  $ timestep chat
-	  Start interactive chat with an agent
+	  Start interactive chat with an agent (A2A protocol)
 
 	  $ timestep chat --agentId 00000000-0000-0000-0000-000000000000 --auto-approve --user-input "What's the weather?"
 	  Start chat with specific agent, auto-approve tools, and send message
+
+	  $ timestep ag-ui-chat
+	  Start interactive chat with an agent (AG-UI protocol)
+
+	  $ timestep ag-ui-chat --agentId 00000000-0000-0000-0000-000000000000 --user-input "What's the weather?"
+	  Start AG-UI chat with specific agent and send message
 
 	  $ timestep list-agents
 	  List all agents from the server

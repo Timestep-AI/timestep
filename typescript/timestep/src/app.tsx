@@ -120,6 +120,8 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 			stopServer();
 		} else if (command === 'chat') {
 			startChat();
+		} else if (command === 'ag-ui-chat') {
+			startAgUiChat();
 		}
 	}, [command]);
 
@@ -210,6 +212,73 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 						resolve({
 							success: false,
 							error: `A2A client exited with code ${code}`,
+						});
+					}
+				});
+			});
+		} catch (error) {
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	};
+
+	// Helper function to start AG-UI chat process
+	const startAgUiChatProcess = async (
+		options: {
+			agentId?: string;
+			userInput?: string;
+		} = {},
+	): Promise<{success: boolean; error?: string}> => {
+		try {
+			const timestepPaths = getTimestepPaths();
+
+			// Build arguments for the agUiClient
+			const args = ['src/agUiClient.ts'];
+
+			if (options.agentId) {
+				args.push('--agentId', options.agentId);
+			}
+
+			if (options.userInput) {
+				args.push('--user-input', options.userInput);
+			}
+
+			// Check if agents config exists
+			const fs = await import('node:fs');
+			if (!fs.existsSync(timestepPaths.agentsConfig)) {
+				return {
+					success: false,
+					error: `Agents configuration not found at: ${timestepPaths.agentsConfig}`,
+				};
+			}
+
+			// Start the agUiClient process using tsx (TypeScript runner)
+			const childProcess = spawn('npx', ['tsx', ...args], {
+				stdio: 'inherit',
+				cwd: process.cwd(),
+			});
+
+			setChatProcess(childProcess);
+
+			return new Promise(resolve => {
+				childProcess.on('error', (error: Error) => {
+					resolve({
+						success: false,
+						error: `Failed to start AG-UI client: ${error.message}`,
+					});
+				});
+
+				childProcess.on('spawn', () => {
+					resolve({success: true});
+				});
+
+				childProcess.on('exit', (code: number | null) => {
+					if (code !== 0) {
+						resolve({
+							success: false,
+							error: `AG-UI client exited with code ${code}`,
 						});
 					}
 				});
@@ -331,6 +400,40 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to start chat');
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const startAgUiChat = async () => {
+		setLoading(true);
+		setError(null);
+
+		try {
+			// First, check if agents are available
+			const agentsResult = await getAvailableAgents();
+
+			if (!agentsResult.success) {
+				setError(agentsResult.error || 'Failed to load agents');
+				setLoading(false);
+				return;
+			}
+
+			setAvailableAgents(agentsResult.agents || []);
+
+			// Start the AG-UI chat
+			const result = await startAgUiChatProcess({
+				agentId: flags?.agentId,
+				userInput: flags?.userInput,
+			});
+
+			if (result.success) {
+				setChatStarted(true);
+			} else {
+				setError(result.error || 'Failed to start AG-UI chat');
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to start AG-UI chat');
 		} finally {
 			setLoading(false);
 		}
@@ -600,6 +703,65 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		return (
 			<Box flexDirection="column">
 				<Text color="blue">🤖 Preparing to start chat...</Text>
+				<Text>Loading available agents...</Text>
+			</Box>
+		);
+	}
+
+	if (command === 'ag-ui-chat') {
+		if (loading) {
+			return <Text color="blue">Loading agents and starting AG-UI chat...</Text>;
+		}
+
+		if (error) {
+			return (
+				<Box flexDirection="column">
+					<Text color="red">❌ Error: {error}</Text>
+					<Text color="yellow">
+						Make sure your timestep configuration is set up correctly.
+					</Text>
+					<Text color="gray">Expected config at:</Text>
+					{availableAgents.length === 0 && (
+						<Text color="gray">
+							{' '}
+							- Run 'timestep list-agents' to see if agents are configured
+						</Text>
+					)}
+				</Box>
+			);
+		}
+
+		if (chatStarted) {
+			return (
+				<Box flexDirection="column">
+					<Text color="green">🚀 Interactive AG-UI chat session started!</Text>
+					<Text color="blue">
+						You can now chat with the agent using AG-UI protocol. Use Ctrl+C to exit.
+					</Text>
+					{availableAgents.length > 0 && (
+						<Box flexDirection="column" marginTop={1}>
+							<Text color="cyan">Available agents:</Text>
+							{availableAgents.slice(0, 3).map((agent, index) => (
+								<Text key={index} color="gray">
+									{' '}
+									• {agent.name}
+								</Text>
+							))}
+							{availableAgents.length > 3 && (
+								<Text color="gray">
+									{' '}
+									• ... and {availableAgents.length - 3} more
+								</Text>
+							)}
+						</Box>
+					)}
+				</Box>
+			);
+		}
+
+		return (
+			<Box flexDirection="column">
+				<Text color="blue">🤖 Preparing to start AG-UI chat...</Text>
 				<Text>Loading available agents...</Text>
 			</Box>
 		);

@@ -54,12 +54,14 @@ function generateId(): string {
 let selectedAgentId: string | undefined = undefined;
 let agentName = 'Agent';
 const appConfig = loadAppConfig();
-const baseServerUrl = `http://localhost:${appConfig.appPort}`;
+let baseServerUrl = `http://localhost:${appConfig.appPort}`;
 
-// Command line args
+// Command line args - match a2aClient functionality
 interface CliArgs {
 	agentId?: string;
+	autoApprove?: boolean;
 	userInput?: string;
+	baseUrl?: string;
 }
 
 function parseCliArgs(): CliArgs {
@@ -68,8 +70,15 @@ function parseCliArgs(): CliArgs {
 		const arg = process.argv[i];
 		if (arg === '--agentId' && i + 1 < process.argv.length) {
 			args.agentId = process.argv[++i];
+		} else if (arg === '--auto-approve') {
+			args.autoApprove = true;
 		} else if (arg === '--user-input' && i + 1 < process.argv.length) {
 			args.userInput = process.argv[++i];
+		} else if (arg === '--base-url' && i + 1 < process.argv.length) {
+			args.baseUrl = process.argv[++i];
+		} else if (!arg.startsWith('--') && !args.baseUrl) {
+			// First non-flag argument is base URL for backward compatibility
+			args.baseUrl = arg;
 		}
 	}
 
@@ -77,6 +86,14 @@ function parseCliArgs(): CliArgs {
 }
 
 const cliArgs = parseCliArgs();
+if (cliArgs.baseUrl) {
+	baseServerUrl = cliArgs.baseUrl;
+}
+
+// Debug logging to match a2aClient
+console.log('🔍 Debug - process.argv:', process.argv);
+console.log('🔍 Debug - baseServerUrl:', baseServerUrl);
+console.log('🔍 Debug - cliArgs:', cliArgs);
 
 // --- AG-UI Functions ---
 async function discoverAgents(): Promise<AGUIAgent[]> {
@@ -119,9 +136,12 @@ async function selectAgent(): Promise<string> {
 		);
 		console.log(`   ${colorize('dim', agent.description)}`);
 		if (agent.capabilities && agent.capabilities.length > 0) {
-			console.log(`   ${colorize('dim', `Capabilities: ${agent.capabilities.join(', ')}`)}`)
+			console.log(`   ${colorize('dim', `Capabilities: ${agent.capabilities.join(', ')}`)}`);
 		}
+		if (index < agents.length - 1) console.log(); // Add spacing between agents
 	});
+
+	console.log();
 
 	return new Promise(resolve => {
 		const askForSelection = () => {
@@ -142,7 +162,8 @@ async function selectAgent(): Promise<string> {
 
 					const selectedAgent = agents[choice - 1];
 					agentName = selectedAgent.name;
-					console.log(colorize('green', `✓ Selected: ${selectedAgent.name}\n`));
+					console.log(colorize('green', `✓ Selected: ${selectedAgent.name}`));
+					console.log(colorize('dim', `   ${selectedAgent.description}\n`));
 					resolve(selectedAgent.id);
 				},
 			);
@@ -244,7 +265,7 @@ const rl = readline.createInterface({
 });
 
 // --- Main CLI Logic ---
-async function startCli(): Promise<void> {
+async function main(): Promise<void> {
 	try {
 		console.log(colorize('bright', '🚀 AG-UI CLI Client'));
 		console.log(colorize('dim', `Connecting to: ${baseServerUrl}\n`));
@@ -252,21 +273,48 @@ async function startCli(): Promise<void> {
 		selectedAgentId = await selectAgent();
 
 		if (cliArgs.userInput) {
+			console.log(colorize('dim', `Received message from CLI: "${cliArgs.userInput}"`));
+			console.log(colorize('green', `Sending message automatically...`));
 			console.log(colorize('cyan', `You: ${cliArgs.userInput}`));
 			await runAgent(cliArgs.userInput);
+			console.log(colorize('yellow', '\nMessage processed. Exiting...'));
 			process.exit(0);
+		}
+
+		// Check if there's input from stdin (non-interactive mode)
+		if (!process.stdin.isTTY) {
+			// Non-interactive mode - read from stdin
+			let input = '';
+			process.stdin.setEncoding('utf8');
+
+			for await (const chunk of process.stdin) {
+				input += chunk;
+			}
+
+			const trimmedInput = input.trim();
+			if (trimmedInput) {
+				console.log(colorize('dim', `Received input from stdin: "${trimmedInput}"`));
+				console.log(colorize('green', `Sending message automatically...`));
+				await runAgent(trimmedInput);
+				console.log(colorize('yellow', '\nMessage processed. Exiting...'));
+				process.exit(0);
+			}
 		}
 
 		console.log(colorize('bright', `💬 Chat with ${agentName}`));
 		console.log(colorize('dim', 'Type your message or "quit" to exit.\n'));
 
+		rl.setPrompt(colorize('cyan', `${agentName} > You: `)); // Set initial prompt
 		rl.prompt();
 
 		rl.on('line', async (input: string) => {
 			const trimmedInput = input.trim();
 
+			// Keep the prompt consistent as "You:" throughout the interaction
+			rl.setPrompt(colorize('cyan', `${agentName} > You: `));
+
 			if (trimmedInput === 'quit' || trimmedInput === 'exit') {
-				console.log(colorize('dim', 'Goodbye! 👋'));
+				console.log(colorize('yellow', '\nExiting AG-UI Terminal Client. Goodbye!'));
 				rl.close();
 				return;
 			}
@@ -288,10 +336,8 @@ async function startCli(): Promise<void> {
 			}
 
 			rl.prompt();
-		});
-
-		rl.on('close', () => {
-			console.log(colorize('dim', '\nGoodbye! 👋'));
+		}).on('close', () => {
+			console.log(colorize('yellow', '\nExiting AG-UI Terminal Client. Goodbye!'));
 			process.exit(0);
 		});
 	} catch (error) {
@@ -309,5 +355,8 @@ async function startCli(): Promise<void> {
 
 // --- Start the CLI ---
 if (import.meta.url === `file://${process.argv[1]}`) {
-	startCli();
+	main().catch(err => {
+		console.error(colorize('red', 'Unhandled error in main:'), err);
+		process.exit(1);
+	});
 }
