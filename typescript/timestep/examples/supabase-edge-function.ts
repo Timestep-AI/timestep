@@ -36,7 +36,7 @@ import {
 	type ModelProvider,
 	type Repository,
 	type RepositoryContainer,
-} from 'npm:@timestep-ai/timestep@2025.9.211249';
+} from 'npm:@timestep-ai/timestep@2025.9.211334';
 
 // Custom function to get agent card with correct Supabase base URL
 async function getAgentCardForSupabase(
@@ -44,7 +44,7 @@ async function getAgentCardForSupabase(
 	baseUrl: string,
 	repositories: any,
 ): Promise<any> {
-	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211249');
+	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211334');
 	const agent = await getAgent(agentId, repositories);
 	if (!agent) {
 		throw new Error(`Agent ${agentId} not found`);
@@ -95,19 +95,68 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		if (checkError)
 			throw new Error(`Failed to check existing agents: ${checkError.message}`);
 
-		// Only create defaults if no agents exist
-		if (!existingData || existingData.length === 0) {
-			try {
-				const {getDefaultAgents} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
-				);
-				const defaultAgents = getDefaultAgents();
-				for (const agent of defaultAgents) {
-					await this.save(agent);
+		// Always ensure default agents exist and are up-to-date
+		try {
+			const {getDefaultAgents} = await import(
+				'npm:@timestep-ai/timestep@2025.9.211334'
+			);
+			const defaultAgents = getDefaultAgents();
+
+			// Get existing agents to compare
+			const {data: existingAgents, error: listError} = await this.supabase
+				.from('agents')
+				.select('*')
+				.eq('user_id', this.userId);
+
+			if (listError) {
+				console.warn(`Failed to list existing agents: ${listError.message}`);
+			} else {
+				// Update or create each default agent
+				for (const defaultAgent of defaultAgents) {
+					const existingAgent = existingAgents?.find(
+						(a: any) => a.id === defaultAgent.id,
+					);
+
+					if (!existingAgent) {
+						// Create new default agent
+						await this.save(defaultAgent);
+						console.log(`Created default agent: ${defaultAgent.name}`);
+					} else {
+						// Check if agent needs updating
+						const toolIdsMatch =
+							JSON.stringify(existingAgent.tool_ids || []) ===
+							JSON.stringify((defaultAgent as any).toolIds || []);
+						const handoffIdsMatch =
+							JSON.stringify(existingAgent.handoff_ids || []) ===
+							JSON.stringify((defaultAgent as any).handoffIds || []);
+						const nameMatch = existingAgent.name === defaultAgent.name;
+						const instructionsMatch =
+							existingAgent.instructions === defaultAgent.instructions;
+
+						const needsUpdate =
+							!toolIdsMatch ||
+							!handoffIdsMatch ||
+							!nameMatch ||
+							!instructionsMatch;
+
+						console.log(
+							`Agent ${defaultAgent.name}: toolIds match=${toolIdsMatch}, handoffIds match=${handoffIdsMatch}, name match=${nameMatch}, instructions match=${instructionsMatch}, needs update=${needsUpdate}`,
+						);
+
+						if (needsUpdate) {
+							// Update existing agent with new defaults
+							const updatedAgent = {
+								...defaultAgent,
+								id: existingAgent.id, // Keep the existing ID
+							};
+							await this.save(updatedAgent);
+							console.log(`Updated agent: ${defaultAgent.name}`);
+						}
+					}
 				}
-			} catch (saveError) {
-				console.warn(`Failed to create default agents: ${saveError}`);
 			}
+		} catch (saveError) {
+			console.warn(`Failed to ensure default agents: ${saveError}`);
 		}
 
 		const {data, error} = await this.supabase
@@ -226,8 +275,28 @@ class SupabaseContextRepository implements Repository<Context, string> {
 
 	async save(context: Context): Promise<void> {
 		if (!this.userId) throw new Error('Unauthenticated: user_id required');
-		const {error} = await this.supabase.from('contexts').upsert([
-			{
+
+		// First check if context exists
+		const existing = await this.load(context.contextId);
+		const now = new Date().toISOString();
+
+		if (existing) {
+			// Update existing context
+			const {error} = await this.supabase
+				.from('contexts')
+				.update({
+					task_histories: context.taskHistories,
+					task_states: context.taskStates,
+					tasks: context.tasks,
+					updated_at: now,
+				})
+				.eq('user_id', this.userId)
+				.eq('context_id', context.contextId);
+
+			if (error) throw new Error(`Failed to update context: ${error.message}`);
+		} else {
+			// Insert new context
+			const {error} = await this.supabase.from('contexts').insert({
 				id: crypto.randomUUID(),
 				user_id: this.userId,
 				context_id: context.contextId,
@@ -235,11 +304,12 @@ class SupabaseContextRepository implements Repository<Context, string> {
 				task_histories: context.taskHistories,
 				task_states: context.taskStates,
 				tasks: context.tasks,
-				created_at: new Date().toISOString(),
-			},
-		]);
+				created_at: now,
+				updated_at: now,
+			});
 
-		if (error) throw new Error(`Failed to save context: ${error.message}`);
+			if (error) throw new Error(`Failed to create context: ${error.message}`);
+		}
 	}
 
 	async delete(id: string): Promise<void> {
@@ -295,19 +365,55 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 				`Failed to check existing MCP servers: ${checkError.message}`,
 			);
 
-		// Only create defaults if no MCP servers exist
+		console.log(
+			`🔌 MCP server list called, existing servers: ${
+				existingData?.length || 0
+			}`,
+		);
+
+		// Always ensure the built-in MCP server exists, regardless of other servers
+		const builtinServerId = '00000000-0000-0000-0000-000000000000';
+		const hasBuiltinServer = existingData?.some(
+			(server: any) => server.id === builtinServerId,
+		);
+
+		console.log(
+			`🔌 Built-in MCP server exists: ${hasBuiltinServer}, baseUrl: ${this.baseUrl}`,
+		);
+
+		if (!hasBuiltinServer) {
+			try {
+				const {getBuiltinMcpServer} = await import(
+					'npm:@timestep-ai/timestep@2025.9.211334'
+				);
+				const builtinServer = getBuiltinMcpServer(this.baseUrl);
+				console.log(`🔌 Creating built-in MCP server:`, builtinServer);
+				await this.save(builtinServer);
+				console.log(`🔌 Created built-in MCP server in database`);
+			} catch (e) {
+				console.warn(`Failed to create built-in MCP server: ${e}`);
+			}
+		}
+
+		// Create other defaults only if no MCP servers exist at all
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultMcpServers} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 				const defaults = getDefaultMcpServers(this.baseUrl);
-				for (const server of defaults) {
+				// Skip the built-in server since we already handled it above
+				const otherDefaults = defaults.filter(
+					server => server.id !== builtinServerId,
+				);
+				for (const server of otherDefaults) {
 					await this.save(server);
 				}
-				console.log(
-					`🔌 Created ${defaults.length} default MCP servers in database`,
-				);
+				if (otherDefaults.length > 0) {
+					console.log(
+						`🔌 Created ${otherDefaults.length} additional default MCP servers in database`,
+					);
+				}
 			} catch (e) {
 				console.warn(`Failed to create default MCP servers: ${e}`);
 			}
@@ -319,16 +425,34 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			.eq('user_id', this.userId);
 		if (error) throw new Error(`Failed to list MCP servers: ${error.message}`);
 
-		const servers = (data || []).map((row: any) => {
-			return {
-				id: row.id,
-				name: row.name,
-				description: row.description ?? row.name,
-				serverUrl: row.server_url ?? '',
-				enabled: row.enabled ?? true,
-				authToken: row.auth_token,
-			} as McpServer;
-		});
+		// Decrypt auth tokens if needed
+		const {isEncryptedSecret, decryptSecret} = await import(
+			'npm:@timestep-ai/timestep@2025.9.211334'
+		);
+
+		const servers = await Promise.all(
+			(data || []).map(async (row: any) => {
+				let authToken = row.auth_token;
+				if (authToken && isEncryptedSecret(authToken)) {
+					try {
+						authToken = await decryptSecret(authToken);
+					} catch (e) {
+						console.warn(
+							`Failed to decrypt auth token for MCP server ${row.name}: ${e}`,
+						);
+						authToken = null;
+					}
+				}
+				return {
+					id: row.id,
+					name: row.name,
+					description: row.description ?? row.name,
+					serverUrl: row.server_url ?? '',
+					enabled: row.enabled ?? true,
+					authToken: authToken,
+				};
+			}),
+		);
 
 		return servers;
 	}
@@ -346,6 +470,23 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		if (!data) return null;
 
+		// Decrypt auth token if needed
+		const {isEncryptedSecret, decryptSecret} = await import(
+			'npm:@timestep-ai/timestep@2025.9.211334'
+		);
+
+		let authToken = data.auth_token;
+		if (authToken && isEncryptedSecret(authToken)) {
+			try {
+				authToken = await decryptSecret(authToken);
+			} catch (e) {
+				console.warn(
+					`Failed to decrypt auth token for MCP server ${data.name}: ${e}`,
+				);
+				authToken = null;
+			}
+		}
+
 		// Apply the same transformation logic as the list method
 		return {
 			id: data.id,
@@ -353,8 +494,8 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			description: data.description ?? data.name,
 			serverUrl: data.server_url ?? '',
 			enabled: data.enabled ?? true,
-			authToken: data.auth_token,
-		} as McpServer;
+			authToken: authToken,
+		};
 	}
 
 	async save(server: McpServer): Promise<void> {
@@ -365,16 +506,21 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			user_id: this.userId,
 			name: server.name,
 			description: (server as any).description ?? server.name,
-			server_url: (server as any).serverUrl,
+			server_url: (server as any).server_url ?? (server as any).serverUrl,
 			enabled: server.enabled,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211249'
+			'npm:@timestep-ai/timestep@2025.9.211334'
 		);
 
 		// Handle auth token - encrypt if provided, set to null if not
-		if ((server as any).authToken !== undefined) {
-			let token = (server as any).authToken as string | undefined;
+		if (
+			(server as any).auth_token !== undefined ||
+			(server as any).authToken !== undefined
+		) {
+			let token = ((server as any).auth_token ?? (server as any).authToken) as
+				| string
+				| undefined;
 			if (token && !isEncryptedSecret(token)) {
 				try {
 					token = await encryptSecret(token);
@@ -438,7 +584,7 @@ class SupabaseModelProviderRepository
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultModelProviders} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 				const defaults = getDefaultModelProviders();
 				for (const p of defaults) {
@@ -457,13 +603,33 @@ class SupabaseModelProviderRepository
 		if (error)
 			throw new Error(`Failed to list model providers: ${error.message}`);
 
-		const providers = (data || []).map((row: any) => ({
-			id: row.id,
-			provider: row.provider,
-			apiKey: row.api_key,
-			baseUrl: row.base_url,
-			modelsUrl: row.models_url,
-		}));
+		// Decrypt API keys if needed
+		const {isEncryptedSecret, decryptSecret} = await import(
+			'npm:@timestep-ai/timestep@2025.9.211334'
+		);
+
+		const providers = await Promise.all(
+			(data || []).map(async (row: any) => {
+				let apiKey = row.api_key;
+				if (apiKey && isEncryptedSecret(apiKey)) {
+					try {
+						apiKey = await decryptSecret(apiKey);
+					} catch (e) {
+						console.warn(
+							`Failed to decrypt API key for provider ${row.provider}: ${e}`,
+						);
+						apiKey = null;
+					}
+				}
+				return {
+					id: row.id,
+					provider: row.provider,
+					api_key: apiKey,
+					base_url: row.base_url,
+					models_url: row.models_url,
+				};
+			}),
+		);
 
 		return providers;
 	}
@@ -478,7 +644,31 @@ class SupabaseModelProviderRepository
 		if (error && error.code !== 'PGRST116') {
 			throw new Error(`Failed to load model provider: ${error.message}`);
 		}
-		return data || null;
+
+		if (!data) return null;
+
+		// Decrypt API key if needed
+		const {isEncryptedSecret, decryptSecret} = await import(
+			'npm:@timestep-ai/timestep@2025.9.211334'
+		);
+
+		let apiKey = data.api_key;
+		if (apiKey && isEncryptedSecret(apiKey)) {
+			try {
+				apiKey = await decryptSecret(apiKey);
+			} catch (e) {
+				console.warn(
+					`Failed to decrypt API key for provider ${data.provider}: ${e}`,
+				);
+				apiKey = null;
+			}
+		}
+
+		// Return decrypted data
+		return {
+			...data,
+			api_key: apiKey,
+		};
 	}
 
 	async save(provider: ModelProvider): Promise<void> {
@@ -488,14 +678,19 @@ class SupabaseModelProviderRepository
 			id: provider.id,
 			user_id: this.userId,
 			provider: provider.provider,
-			base_url: (provider as any).baseUrl ?? (provider as any).base_url,
-			models_url: (provider as any).modelsUrl ?? (provider as any).models_url,
+			base_url: (provider as any).base_url ?? (provider as any).baseUrl,
+			models_url: (provider as any).models_url ?? (provider as any).modelsUrl,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211249'
+			'npm:@timestep-ai/timestep@2025.9.211334'
 		);
-		if ((provider as any).apiKey !== undefined) {
-			let key = (provider as any).apiKey as string | undefined;
+		if (
+			(provider as any).api_key !== undefined ||
+			(provider as any).apiKey !== undefined
+		) {
+			let key = ((provider as any).api_key ?? (provider as any).apiKey) as
+				| string
+				| undefined;
 			if (key && !isEncryptedSecret(key)) {
 				try {
 					key = await encryptSecret(key);
@@ -940,7 +1135,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// Get tool information from the MCP server
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 
 				// First, get the list of tools from the server
@@ -1043,7 +1238,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				const [serverId, toolName] = parts;
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 
 				const result = await handleMcpServerRequest(
@@ -1086,7 +1281,7 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 
 				if (request.method === 'POST') {
@@ -1129,7 +1324,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// GET request - return full MCP server record
 				const {getMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 				const server = await getMcpServer(serverId, repositories as any);
 
@@ -1523,7 +1718,7 @@ Deno.serve({port}, async (request: Request) => {
 			try {
 				// Check if agent exists first
 				const {isAgentAvailable} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211249'
+					'npm:@timestep-ai/timestep@2025.9.211334'
 				);
 				if (!(await isAgentAvailable(agentId, repositories as any))) {
 					console.log(`❌ Agent ${agentId} not found`);
@@ -1582,7 +1777,7 @@ Deno.serve({port}, async (request: Request) => {
 						try {
 							// Create the request handler for this agent
 							const {createAgentRequestHandler} = await import(
-								'npm:@timestep-ai/timestep@2025.9.211249'
+								'npm:@timestep-ai/timestep@2025.9.211334'
 							);
 							const requestHandler = await createAgentRequestHandler(
 								agentId,
@@ -1623,8 +1818,15 @@ Deno.serve({port}, async (request: Request) => {
 										)) {
 											console.log(`🔍 Stream event:`, event);
 
-											// Format as SSE data (just the event object, not wrapped in JSON-RPC)
-											const sseData = `data: ${JSON.stringify(event)}\n\n`;
+											// Format as JSON-RPC SSE response
+											const jsonRpcResponse = {
+												jsonrpc: '2.0',
+												id: jsonRpcRequest.id,
+												result: event,
+											};
+											const sseData = `data: ${JSON.stringify(
+												jsonRpcResponse,
+											)}\n\n`;
 											const encoder = new TextEncoder();
 											controller.enqueue(encoder.encode(sseData));
 										}
@@ -1636,15 +1838,21 @@ Deno.serve({port}, async (request: Request) => {
 											`🔍 Error in stream for agent ${agentId}:`,
 											error,
 										);
-										const errorEvent = {
-											kind: 'error',
-											message:
-												error instanceof Error
-													? error.message
-													: 'Unknown error',
-											agentId: agentId,
+										const errorResponse = {
+											jsonrpc: '2.0',
+											id: jsonRpcRequest.id,
+											error: {
+												code: -32603,
+												message: 'Internal error',
+												data:
+													error instanceof Error
+														? error.message
+														: 'Unknown error',
+											},
 										};
-										const sseData = `data: ${JSON.stringify(errorEvent)}\n\n`;
+										const sseData = `data: ${JSON.stringify(
+											errorResponse,
+										)}\n\n`;
 										const encoder = new TextEncoder();
 										controller.enqueue(encoder.encode(sseData));
 										controller.close();
