@@ -18,6 +18,7 @@ export {listTools} from './api/toolsApi.js';
 export {
 	listAgents,
 	getAgent,
+	isAgentAvailable,
 	handleAgentRequest,
 	handleListAgents,
 } from './api/agentsApi.js';
@@ -36,6 +37,7 @@ export {listModelProviders, getModelProvider} from './api/modelProvidersApi.js';
 export {Context} from './types/context.js';
 export {DefaultRepositoryContainer} from './services/backing/repositoryContainer.js';
 export {TimestepAIAgentExecutor} from './core/agentExecutor.js';
+export {ContextAwareRequestHandler} from './api/contextAwareRequestHandler.js';
 
 // Configuration functions
 export {
