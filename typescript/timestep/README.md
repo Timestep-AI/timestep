@@ -78,7 +78,7 @@ timestep --help
 
 ### AG-UI Protocol (Real-time Frontend Interaction)
 
-The AG-UI (Agent User Interaction Protocol) provides real-time streaming interfaces for frontend applications:
+The AG-UI (Agent User Interaction Protocol) provides real-time streaming interfaces for frontend applications following the official AG-UI specification:
 
 ```bash
 # Start AG-UI interactive client
@@ -87,7 +87,7 @@ node dist/agUiClient.js
 # Direct message to specific agent
 node dist/agUiClient.js --agentId 00000000-0000-0000-0000-000000000000 --user-input "Hello!"
 
-# AG-UI REST endpoints
+# AG-UI REST endpoints (compliant with official specification)
 curl http://localhost:8080/ag-ui/agents/discover
 curl -X POST http://localhost:8080/ag-ui/agents/AGENT_ID/run \
   -H "Content-Type: application/json" \
@@ -95,9 +95,10 @@ curl -X POST http://localhost:8080/ag-ui/agents/AGENT_ID/run \
 ```
 
 The AG-UI protocol features:
-- **Real-time streaming** with Server-Sent Events
-- **Agent discovery** with skills and capabilities
-- **Event-driven communication** (RUN_STARTED, TEXT_MESSAGE_CONTENT, etc.)
+- **Real-time streaming** with Server-Sent Events following official specification
+- **Agent discovery** with capabilities and status information
+- **Event-driven communication** (RUN_STARTED, TEXT_MESSAGE_START/CONTENT/END, RUN_FINISHED, RUN_ERROR)
+- **Official protocol compliance** with proper message formats and event types
 - **Side-by-side operation** with existing A2A protocol
 
 ### Library Usage (Node.js)

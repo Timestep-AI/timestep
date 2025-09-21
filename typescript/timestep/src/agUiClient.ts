@@ -15,8 +15,8 @@ import {loadAppConfig} from './utils.js';
 // --- AG-UI Types ---
 interface AGUIMessage {
 	role: 'user' | 'assistant';
-	parts: Array<{kind: 'text'; text: string}>;
-	messageId: string;
+	content: string;
+	messageId?: string;
 }
 
 interface AGUIRunInput {
@@ -29,7 +29,7 @@ interface AGUIAgent {
 	id: string;
 	name: string;
 	description: string;
-	skills: string[];
+	capabilities?: string[];
 	status: string;
 }
 
@@ -123,7 +123,9 @@ async function selectAgent(): Promise<string> {
 			)} ${colorize('gray', `(${agent.id})`)}`,
 		);
 		console.log(`   ${colorize('dim', agent.description)}`);
-		console.log(`   ${colorize('dim', `Skills: ${agent.skills.join(', ')}`)}`);
+		if (agent.capabilities && agent.capabilities.length > 0) {
+			console.log(`   ${colorize('dim', `Capabilities: ${agent.capabilities.join(', ')}`)}`)
+		}
 	});
 
 	return new Promise(resolve => {
@@ -164,7 +166,7 @@ async function runAgent(userInput: string): Promise<void> {
 		messages: [
 			{
 				role: 'user',
-				parts: [{kind: 'text', text: userInput}],
+				content: userInput,
 				messageId: generateId(),
 			},
 		],
@@ -208,8 +210,8 @@ async function runAgent(userInput: string): Promise<void> {
 								process.stdout.write(`${prefix} ${colorize('green', '')}`);
 								break;
 							case 'TEXT_MESSAGE_CONTENT':
-								if (event.content)
-									process.stdout.write(colorize('green', event.content));
+								if (event.delta)
+									process.stdout.write(colorize('green', event.delta));
 								break;
 							case 'TEXT_MESSAGE_END':
 								console.log(); // New line

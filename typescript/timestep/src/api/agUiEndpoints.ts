@@ -14,11 +14,11 @@ import {
 	DefaultRepositoryContainer,
 } from '../services/backing/repositoryContainer.js';
 
-// AG-UI Protocol Types
+// AG-UI Protocol Types - Based on official specification
 interface AGUIMessage {
 	role: 'user' | 'assistant';
-	parts: Array<{kind: 'text'; text: string}>;
-	messageId: string;
+	content: string;
+	messageId?: string;
 }
 
 interface AGUIRunInput {
@@ -27,22 +27,66 @@ interface AGUIRunInput {
 	messages: AGUIMessage[];
 }
 
-interface AGUIEvent {
-	type: string;
-	timestamp: string;
-	runId?: string;
-	content?: string;
-	toolName?: string;
-	error?: string;
+// Official AG-UI Event Types
+enum EventType {
+	RUN_STARTED = 'RUN_STARTED',
+	TEXT_MESSAGE_START = 'TEXT_MESSAGE_START',
+	TEXT_MESSAGE_CONTENT = 'TEXT_MESSAGE_CONTENT',
+	TEXT_MESSAGE_END = 'TEXT_MESSAGE_END',
+	RUN_FINISHED = 'RUN_FINISHED',
+	RUN_ERROR = 'RUN_ERROR',
 }
+
+interface BaseEvent {
+	type: EventType;
+	threadId?: string;
+	runId?: string;
+}
+
+interface RunStartedEvent extends BaseEvent {
+	type: EventType.RUN_STARTED;
+	threadId: string;
+	runId: string;
+}
+
+interface TextMessageStartEvent extends BaseEvent {
+	type: EventType.TEXT_MESSAGE_START;
+	messageId: string;
+	role: 'assistant';
+}
+
+interface TextMessageContentEvent extends BaseEvent {
+	type: EventType.TEXT_MESSAGE_CONTENT;
+	messageId: string;
+	delta: string;
+}
+
+interface TextMessageEndEvent extends BaseEvent {
+	type: EventType.TEXT_MESSAGE_END;
+	messageId: string;
+}
+
+interface RunFinishedEvent extends BaseEvent {
+	type: EventType.RUN_FINISHED;
+	threadId: string;
+	runId: string;
+}
+
+interface RunErrorEvent extends BaseEvent {
+	type: EventType.RUN_ERROR;
+	threadId: string;
+	runId: string;
+	error: string;
+}
+
+type AGUIEvent = RunStartedEvent | TextMessageStartEvent | TextMessageContentEvent | TextMessageEndEvent | RunFinishedEvent | RunErrorEvent;
 
 interface AGUIAgent {
 	id: string;
 	name: string;
 	description: string;
-	skills: string[];
 	status: string;
-	handoffIds?: string[];
+	capabilities?: string[];
 }
 
 export class AGUIEndpoints {
@@ -64,12 +108,9 @@ export class AGUIEndpoints {
 			const aguiAgents: AGUIAgent[] = agents.map(agent => ({
 				id: agent.id,
 				name: agent.name,
-				description:
-					agent.handoffDescription ||
-					agent.instructions.substring(0, 100) + '...',
-				skills: this.extractSkills(agent.instructions),
+				description: agent.handoffDescription || agent.instructions.substring(0, 100) + '...',
 				status: 'available',
-				handoffIds: agent.handoffIds,
+				capabilities: this.extractCapabilities(agent.instructions),
 			}));
 
 			res.json({agents: aguiAgents});
@@ -104,58 +145,67 @@ export class AGUIEndpoints {
 				res.write(`data: ${JSON.stringify(event)}\n\n`);
 			};
 
-			// Send start event
-			sendEvent({
-				type: 'RUN_STARTED',
-				timestamp: new Date().toISOString(),
+			// Send RUN_STARTED event
+			const runStartedEvent: RunStartedEvent = {
+				type: EventType.RUN_STARTED,
+				threadId: runInput.threadId,
 				runId: runInput.runId,
-			});
+			};
+			sendEvent(runStartedEvent);
 
 			try {
 				// Get the user's message
 				const userMessage = runInput.messages[runInput.messages.length - 1];
-				const userText =
-					userMessage.parts.find(p => p.kind === 'text')?.text || '';
+				const userText = userMessage.content || '';
 
-				// Send message start
-				sendEvent({
-					type: 'TEXT_MESSAGE_START',
-					timestamp: new Date().toISOString(),
-				});
+				// Generate message ID
+				const messageId = `msg_${Date.now()}`;
 
-				// Simple echo response for now - replace with your actual agent logic
+				// Send TEXT_MESSAGE_START event
+				const messageStartEvent: TextMessageStartEvent = {
+					type: EventType.TEXT_MESSAGE_START,
+					messageId,
+					role: 'assistant',
+				};
+				sendEvent(messageStartEvent);
+
+				// Generate response
 				const response = `Hello! You said: "${userText}". I'm agent ${agentId}.`;
 
 				// Stream the response character by character
 				for (let i = 0; i < response.length; i++) {
-					sendEvent({
-						type: 'TEXT_MESSAGE_CONTENT',
-						timestamp: new Date().toISOString(),
-						content: response[i],
-					});
+					const contentEvent: TextMessageContentEvent = {
+						type: EventType.TEXT_MESSAGE_CONTENT,
+						messageId,
+						delta: response[i],
+					};
+					sendEvent(contentEvent);
 					// Small delay to demonstrate streaming
 					await new Promise(resolve => setTimeout(resolve, 50));
 				}
 
-				// Send message end
-				sendEvent({
-					type: 'TEXT_MESSAGE_END',
-					timestamp: new Date().toISOString(),
-				});
+				// Send TEXT_MESSAGE_END event
+				const messageEndEvent: TextMessageEndEvent = {
+					type: EventType.TEXT_MESSAGE_END,
+					messageId,
+				};
+				sendEvent(messageEndEvent);
 
-				// Send completion
-				sendEvent({
-					type: 'RUN_FINISHED',
-					timestamp: new Date().toISOString(),
+				// Send RUN_FINISHED event
+				const runFinishedEvent: RunFinishedEvent = {
+					type: EventType.RUN_FINISHED,
+					threadId: runInput.threadId,
 					runId: runInput.runId,
-				});
+				};
+				sendEvent(runFinishedEvent);
 			} catch (error) {
-				sendEvent({
-					type: 'RUN_ERROR',
-					timestamp: new Date().toISOString(),
+				const runErrorEvent: RunErrorEvent = {
+					type: EventType.RUN_ERROR,
+					threadId: runInput.threadId,
 					runId: runInput.runId,
 					error: error instanceof Error ? error.message : 'Unknown error',
-				});
+				};
+				sendEvent(runErrorEvent);
 			}
 
 			res.end();
@@ -167,33 +217,33 @@ export class AGUIEndpoints {
 		}
 	};
 
-	private extractSkills(instructions: string): string[] {
-		const skills: string[] = [];
+	private extractCapabilities(instructions: string): string[] {
+		const capabilities: string[] = [];
 		const lowerInstructions = instructions.toLowerCase();
 
 		if (
 			lowerInstructions.includes('code') ||
 			lowerInstructions.includes('program')
 		)
-			skills.push('coding');
+			capabilities.push('coding');
 		if (
 			lowerInstructions.includes('analyze') ||
 			lowerInstructions.includes('data')
 		)
-			skills.push('analysis');
+			capabilities.push('analysis');
 		if (
 			lowerInstructions.includes('research') ||
 			lowerInstructions.includes('search')
 		)
-			skills.push('research');
+			capabilities.push('research');
 		if (
 			lowerInstructions.includes('plan') ||
 			lowerInstructions.includes('strategy')
 		)
-			skills.push('planning');
+			capabilities.push('planning');
 
-		skills.push('hello_world');
-		return skills.length > 0 ? skills : ['general'];
+		capabilities.push('conversation');
+		return capabilities.length > 0 ? capabilities : ['general'];
 	}
 }
 
