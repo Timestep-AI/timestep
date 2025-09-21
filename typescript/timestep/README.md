@@ -6,6 +6,7 @@ A comprehensive TypeScript library and CLI for building AI agent systems with A2
 
 - 🤖 **Agent Management** - Create, configure, and manage AI agents with JSONL-based configuration
 - 🔄 **A2A Protocol** - Full Agent-to-Agent protocol implementation with streaming support
+- ⚡ **AG-UI Protocol** - Real-time streaming frontend interface with Server-Sent Events
 - 🛠️ **Tool Integration** - Built-in MCP server with weather, document, and thinking tools plus external MCP server support
 - 🌐 **Multi-Runtime** - Works in Node.js, Deno, and Supabase Edge Functions
 - 📊 **Model Provider Support** - Supports OpenAI, Anthropic, Ollama, and custom providers
@@ -74,6 +75,30 @@ timestep get-version
 # List all available commands
 timestep --help
 ```
+
+### AG-UI Protocol (Real-time Frontend Interaction)
+
+The AG-UI (Agent User Interaction Protocol) provides real-time streaming interfaces for frontend applications:
+
+```bash
+# Start AG-UI interactive client
+node dist/agUiClient.js
+
+# Direct message to specific agent
+node dist/agUiClient.js --agentId 00000000-0000-0000-0000-000000000000 --user-input "Hello!"
+
+# AG-UI REST endpoints
+curl http://localhost:8080/ag-ui/agents/discover
+curl -X POST http://localhost:8080/ag-ui/agents/AGENT_ID/run \
+  -H "Content-Type: application/json" \
+  -d '{"runId":"123","threadId":"thread","messages":[{"role":"user","parts":[{"kind":"text","text":"Hello!"}],"messageId":"msg1"}]}'
+```
+
+The AG-UI protocol features:
+- **Real-time streaming** with Server-Sent Events
+- **Agent discovery** with skills and capabilities
+- **Event-driven communication** (RUN_STARTED, TEXT_MESSAGE_CONTENT, etc.)
+- **Side-by-side operation** with existing A2A protocol
 
 ### Library Usage (Node.js)
 
@@ -168,6 +193,11 @@ When running the server, the following endpoints are available:
 ### A2A Protocol Endpoints
 
 - `/agents/{agentId}/*` - Dynamic agent endpoints following A2A protocol
+
+### AG-UI Protocol Endpoints
+
+- `GET /ag-ui/agents/discover` - Discover available agents with capabilities
+- `POST /ag-ui/agents/{agentId}/run` - Stream real-time agent interactions (Server-Sent Events)
 
 ### Utility Endpoints
 
