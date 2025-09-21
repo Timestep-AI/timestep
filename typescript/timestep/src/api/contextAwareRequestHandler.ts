@@ -36,6 +36,7 @@ import {RequestContext} from '@a2a-js/sdk/server';
 import {ContextService} from '../services/contextService.js';
 import {JsonlContextRepository} from '../services/backing/jsonlContextRepository.js';
 import {Context} from '../types/context.js';
+import {RepositoryContainer} from '../services/backing/repositoryContainer.js';
 
 const terminalStates: TaskState[] = [
 	'completed',
@@ -64,6 +65,7 @@ export class ContextAwareRequestHandler implements A2ARequestHandler {
 		pushNotificationStore?: PushNotificationStore,
 		pushNotificationSender?: PushNotificationSender,
 		extendedAgentCard?: AgentCard,
+		repositories?: RepositoryContainer,
 	) {
 		this.agentId = agentId;
 		this.agentCard = agentCard;
@@ -73,7 +75,7 @@ export class ContextAwareRequestHandler implements A2ARequestHandler {
 		this.extendedAgentCard = extendedAgentCard;
 
 		// Initialize context service
-		const repository = new JsonlContextRepository();
+		const repository = repositories?.contexts || new JsonlContextRepository();
 		this.contextService = new ContextService(repository);
 
 		// If push notifications are supported, use the provided store and sender.

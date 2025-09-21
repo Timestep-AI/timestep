@@ -86,6 +86,14 @@ const cli = meow(
 				type: 'string',
 				alias: 'user-input',
 			},
+			baseServerUrl: {
+				type: 'string',
+				alias: 'base-server-url',
+			},
+			authToken: {
+				type: 'string',
+				alias: 'auth-token',
+			},
 		},
 	},
 );

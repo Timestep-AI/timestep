@@ -1,7 +1,7 @@
 import React, {useState, useEffect} from 'react';
 import {Text, Box} from 'ink';
 import {spawn, ChildProcess} from 'child_process';
-import {getTimestepPaths, loadAppConfig} from './utils.js';
+import {loadAppConfig} from './utils.js';
 
 type Props = {
 	name: string | undefined;
@@ -10,6 +10,8 @@ type Props = {
 		agentId?: string;
 		autoApprove?: boolean;
 		userInput?: string;
+		baseServerUrl?: string;
+		authToken?: string;
 	};
 };
 
@@ -84,6 +86,10 @@ type ModelProvider = {
 
 export default function App({name = 'Stranger', command, flags}: Props) {
 	const appConfig = loadAppConfig();
+	// Resolve base URL and optional auth token for all HTTP requests from this UI
+	const uiBaseUrl =
+		(flags as any)?.baseServerUrl || `http://localhost:${appConfig.appPort}`;
+	const uiAuthToken = (flags as any)?.authToken as string | undefined;
 	const [agents, setAgents] = useState<Agent[]>([]);
 	const [chats, setChats] = useState<Chat[]>([]);
 	const [models, setModels] = useState<Model[]>([]);
@@ -132,16 +138,23 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		};
 	}, [chatProcess]);
 
-	// Helper function to get available agents
+	// Helper function to get available agents via the configured base URL
 	const getAvailableAgents = async (): Promise<{
 		success: boolean;
 		agents?: any[];
 		error?: string;
 	}> => {
 		try {
-			const {listAgents} = await import('./api/agentsApi.js');
-			const response = await listAgents();
-			return {success: true, agents: response.data};
+			const res = await fetch(`${uiBaseUrl}/agents`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
+			if (!res.ok) {
+				return {success: false, error: `Server responded with ${res.status}`};
+			}
+			const data = await res.json();
+			return {success: true, agents: data};
 		} catch (error) {
 			return {
 				success: false,
@@ -156,11 +169,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 			agentId?: string;
 			autoApprove?: boolean;
 			userInput?: string;
+			baseServerUrl?: string;
+			authToken?: string;
 		} = {},
 	): Promise<{success: boolean; error?: string}> => {
 		try {
-			const timestepPaths = getTimestepPaths();
-
 			// Build arguments for the a2aClient
 			const args = ['src/a2aClient.ts'];
 
@@ -176,13 +189,12 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 				args.push('--user-input', options.userInput);
 			}
 
-			// Check if agents config exists
-			const fs = await import('node:fs');
-			if (!fs.existsSync(timestepPaths.agentsConfig)) {
-				return {
-					success: false,
-					error: `Agents configuration not found at: ${timestepPaths.agentsConfig}`,
-				};
+			if (options.baseServerUrl) {
+				args.push('--base-server-url', options.baseServerUrl);
+			}
+
+			if (options.authToken) {
+				args.push('--auth-token', options.authToken);
 			}
 
 			// Start the a2aClient process using tsx (TypeScript runner)
@@ -322,6 +334,8 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 				agentId: flags?.agentId,
 				autoApprove: flags?.autoApprove || false,
 				userInput: flags?.userInput,
+				baseServerUrl: (flags as any)?.baseServerUrl,
+				authToken: (flags as any)?.authToken,
 			});
 
 			if (result.success) {
@@ -341,9 +355,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/agents`,
-			);
+			const response = await fetch(`${uiBaseUrl}/agents`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}
@@ -361,9 +377,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/chats`,
-			);
+			const response = await fetch(`${uiBaseUrl}/chats`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}
@@ -381,9 +399,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/models`,
-			);
+			const response = await fetch(`${uiBaseUrl}/models`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}
@@ -401,9 +421,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/tools`,
-			);
+			const response = await fetch(`${uiBaseUrl}/tools`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}
@@ -421,9 +443,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/traces`,
-			);
+			const response = await fetch(`${uiBaseUrl}/traces`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}
@@ -441,9 +465,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/mcp_servers`,
-			);
+			const response = await fetch(`${uiBaseUrl}/mcp_servers`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}
@@ -463,9 +489,11 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		setError(null);
 
 		try {
-			const response = await fetch(
-				`http://localhost:${appConfig.appPort}/model_providers`,
-			);
+			const response = await fetch(`${uiBaseUrl}/model_providers`, {
+				headers: uiAuthToken
+					? {Authorization: `Bearer ${uiAuthToken}`}
+					: undefined,
+			});
 			if (!response.ok) {
 				throw new Error(`Server responded with ${response.status}`);
 			}

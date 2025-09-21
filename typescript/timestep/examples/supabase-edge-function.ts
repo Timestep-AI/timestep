@@ -36,7 +36,45 @@ import {
 	type ModelProvider,
 	type Repository,
 	type RepositoryContainer,
-} from 'npm:@timestep-ai/timestep@2025.9.211041';
+} from 'npm:@timestep-ai/timestep@2025.9.211249';
+
+// Custom function to get agent card with correct Supabase base URL
+async function getAgentCardForSupabase(
+	agentId: string,
+	baseUrl: string,
+	repositories: any,
+): Promise<any> {
+	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211249');
+	const agent = await getAgent(agentId, repositories);
+	if (!agent) {
+		throw new Error(`Agent ${agentId} not found`);
+	}
+
+	// Create agent card with correct base URL
+	const agentCard = {
+		capabilities: {streaming: true},
+		defaultInputModes: ['text'],
+		defaultOutputModes: ['text'],
+		description: `A helpful AI agent powered by ${agent.name}`,
+		name: agent.name,
+		preferredTransport: 'JSONRPC',
+		protocolVersion: '0.3.0',
+		skills: [
+			{
+				id: 'hello_world',
+				name: 'Returns hello world',
+				description: 'just returns hello world',
+				examples: ['hi', 'hello world'],
+				tags: ['hello world'],
+			},
+		],
+		supportsAuthenticatedExtendedCard: true,
+		url: `${baseUrl}/agents/${agentId}/`,
+		version: '1.0.0',
+	};
+
+	return agentCard;
+}
 
 /**
  * Supabase Agent Repository Implementation
@@ -61,7 +99,7 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultAgents} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 				const defaultAgents = getDefaultAgents();
 				for (const agent of defaultAgents) {
@@ -261,7 +299,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultMcpServers} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 				const defaults = getDefaultMcpServers(this.baseUrl);
 				for (const server of defaults) {
@@ -331,7 +369,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			enabled: server.enabled,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211041'
+			'npm:@timestep-ai/timestep@2025.9.211249'
 		);
 
 		// Handle auth token - encrypt if provided, set to null if not
@@ -400,7 +438,7 @@ class SupabaseModelProviderRepository
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultModelProviders} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 				const defaults = getDefaultModelProviders();
 				for (const p of defaults) {
@@ -454,7 +492,7 @@ class SupabaseModelProviderRepository
 			models_url: (provider as any).modelsUrl ?? (provider as any).models_url,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211041'
+			'npm:@timestep-ai/timestep@2025.9.211249'
 		);
 		if ((provider as any).apiKey !== undefined) {
 			let key = (provider as any).apiKey as string | undefined;
@@ -596,11 +634,24 @@ Deno.serve({port}, async (request: Request) => {
 		cleanPath = apiParts.length > 0 ? '/' + apiParts.join('/') : '/';
 	}
 
+	// Respect original protocol behind the proxy (prefer https on Supabase)
+	const forwardedProto =
+		request.headers.get('x-forwarded-proto') ||
+		request.headers.get('X-Forwarded-Proto');
+	const inferredProto =
+		forwardedProto ||
+		(url.hostname.endsWith('.supabase.co')
+			? 'https'
+			: url.protocol.replace(':', ''));
+	const scheme = inferredProto.endsWith(':')
+		? inferredProto
+		: `${inferredProto}:`;
+
 	// Generate base URL for MCP servers from the current request
-	const baseUrl = `${url.protocol}//${url.host}/${functionName}`;
+	const baseUrl = `${scheme}//${url.host}/${functionName}`;
 
 	// Generate agent base URL for agent cards (without the /functions/v1/ prefix)
-	const agentBaseUrl = `${url.protocol}//${url.host}/${functionName}`;
+	const agentBaseUrl = `${scheme}//${url.host}/${functionName}`;
 
 	// Derive user from Authorization header (Bearer JWT)
 	const authHeader = request.headers.get('Authorization') || '';
@@ -889,7 +940,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// Get tool information from the MCP server
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 
 				// First, get the list of tools from the server
@@ -992,7 +1043,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				const [serverId, toolName] = parts;
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 
 				const result = await handleMcpServerRequest(
@@ -1035,7 +1086,7 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 
 				if (request.method === 'POST') {
@@ -1078,7 +1129,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// GET request - return full MCP server record
 				const {getMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 				const server = await getMcpServer(serverId, repositories as any);
 
@@ -1131,20 +1182,57 @@ Deno.serve({port}, async (request: Request) => {
 		}
 
 		// Handle dynamic agent routes - proxy to A2A Express app like server.ts
-		const agentMatch = cleanPath.match(/^\/agents\/([^\/]+)(?:\/.*)?$/);
+		console.log(`🔍 Checking if path matches agent route: ${cleanPath}`);
+		// Check for both /agents/... and /server/agents/... patterns (Supabase function URL structure)
+		const agentMatch = cleanPath.match(
+			/^\/(?:server\/)?agents\/([^\/]+)(?:\/.*)?$/,
+		);
 		if (agentMatch) {
+			console.log(
+				`🔍 Agent route matched! agentId: ${agentMatch[1]}, full path: ${cleanPath}`,
+			);
 			const agentId = agentMatch[1];
 
+			// Compute sub-path for the agent app (strip /agents/{agentId} prefix, accounting for optional /server prefix)
+			const agentPrefix = `/agents/${agentId}`;
+			const serverAgentPrefix = `/server${agentPrefix}`;
+			let agentSubPath: string;
+
+			if (cleanPath.startsWith(serverAgentPrefix)) {
+				// Path has /server/agents/{agentId} prefix
+				agentSubPath = cleanPath.slice(serverAgentPrefix.length) || '/';
+			} else if (cleanPath.startsWith(agentPrefix)) {
+				// Path has /agents/{agentId} prefix
+				agentSubPath = cleanPath.slice(agentPrefix.length) || '/';
+			} else {
+				// Fallback
+				agentSubPath = cleanPath;
+			}
+			console.log(
+				`🔍 Agent prefixes checked: ${agentPrefix}, ${serverAgentPrefix}, subPath: ${agentSubPath}`,
+			);
+
 			// Create a mock Express-style request object that satisfies the Request interface
+			// Get the request body as text for compatibility
+			let requestBodyText = '';
+			let requestBody: Uint8Array | null = null;
+			if (request.method !== 'GET') {
+				try {
+					requestBodyText = await request.text();
+					requestBody = new TextEncoder().encode(requestBodyText);
+				} catch (e) {
+					requestBodyText = '';
+					requestBody = new Uint8Array(0);
+				}
+			}
+
 			const mockReq = {
 				method: request.method,
-				path: cleanPath,
-				originalUrl: cleanPath + url.search,
+				path: agentSubPath,
+				originalUrl: agentSubPath + url.search,
 				params: {agentId: agentId},
 				body:
-					request.method !== 'GET'
-						? await request.json().catch(() => ({}))
-						: {},
+					request.method !== 'GET' ? JSON.parse(requestBodyText || '{}') : {},
 				headers: Object.fromEntries(Array.from(request.headers.entries())),
 				// Add required Express Request methods as stubs
 				get: (name: string) => request.headers.get(name),
@@ -1167,14 +1255,39 @@ Deno.serve({port}, async (request: Request) => {
 				xhr: false,
 				route: undefined,
 				signedCookies: {},
-				url: cleanPath + url.search,
-				baseUrl: '',
+				url: agentSubPath + url.search,
+				baseUrl: '/agents',
 				app: {} as any,
 				res: {} as any,
 				next: (() => {}) as any,
 				query: Object.fromEntries(url.searchParams),
 				cookies: {},
 				secret: undefined,
+				// Add stream properties for Express compatibility
+				readable: true,
+				readableHighWaterMark: 16384,
+				readableLength: requestBody ? requestBody.length : 0,
+				_buffer: requestBody,
+				destroyed: false,
+				// Mock pipe method
+				pipe: (destination: any) => {
+					if (requestBody) {
+						destination.write(requestBody);
+					}
+					destination.end();
+					return destination;
+				},
+				// Mock on method for event listeners
+				on: (event: string, listener: Function) => {
+					// No-op for basic compatibility
+					return mockReq;
+				},
+				// Add pipes property that was causing the error
+				pipes: [],
+				// Add other stream properties
+				readableFlowing: null,
+				readableEnded: false,
+				readablePaused: false,
 			} as any;
 
 			// Create a proper response handler that captures the response
@@ -1183,6 +1296,39 @@ Deno.serve({port}, async (request: Request) => {
 			let responseHeaders: Record<string, string> = {...headers};
 			let isStreaming = false;
 			let responseEnded = false;
+			let stream: ReadableStream<Uint8Array> | null = null;
+			let streamController: ReadableStreamDefaultController<Uint8Array> | null =
+				null;
+			let responseResolved = false;
+			let responseResolve:
+				| ((r: {
+						type: 'stream' | 'body';
+						status: number;
+						headers: Record<string, string>;
+				  }) => void)
+				| null = null;
+			const responsePromise = new Promise<{
+				type: 'stream' | 'body';
+				status: number;
+				headers: Record<string, string>;
+			}>(resolve => {
+				responseResolve = r => {
+					if (!responseResolved) {
+						responseResolved = true;
+						resolve(r);
+					}
+				};
+			});
+
+			const ensureStream = () => {
+				if (!stream) {
+					stream = new ReadableStream<Uint8Array>({
+						start(controller) {
+							streamController = controller;
+						},
+					});
+				}
+			};
 
 			const mockRes = {
 				status: (code: number) => {
@@ -1208,6 +1354,11 @@ Deno.serve({port}, async (request: Request) => {
 						responseData = data;
 					}
 					responseEnded = true;
+					if (streamController) {
+						try {
+							streamController.close();
+						} catch {}
+					}
 					return mockRes;
 				},
 				setHeader: (name: string, value: string) => {
@@ -1219,6 +1370,7 @@ Deno.serve({port}, async (request: Request) => {
 						value.includes('text/event-stream')
 					) {
 						isStreaming = true;
+						ensureStream();
 					}
 					return mockRes;
 				},
@@ -1235,24 +1387,143 @@ Deno.serve({port}, async (request: Request) => {
 				download: () => mockRes,
 				format: () => mockRes,
 				get: () => undefined,
-				header: () => mockRes,
+				header: (name?: any, value?: any) => {
+					if (typeof name === 'string' && typeof value === 'string') {
+						return (mockRes as any).setHeader(name, value);
+					}
+					if (name && typeof name === 'object') {
+						for (const [k, v] of Object.entries(name)) {
+							(mockRes as any).setHeader(k, String(v));
+						}
+					}
+					return mockRes;
+				},
 				links: () => mockRes,
 				location: () => mockRes,
 				redirect: () => mockRes,
 				render: () => mockRes,
 				sendFile: () => mockRes,
 				sendStatus: () => mockRes,
-				set: () => mockRes,
-				type: () => mockRes,
+				set: (name: any, value?: any) => {
+					if (typeof name === 'string' && typeof value === 'string') {
+						return (mockRes as any).setHeader(name, value);
+					}
+					if (name && typeof name === 'object') {
+						for (const [k, v] of Object.entries(name)) {
+							(mockRes as any).setHeader(k, String(v));
+						}
+					}
+					return mockRes;
+				},
+				type: (mime: string) => {
+					if (mime) {
+						(mockRes as any).setHeader('Content-Type', mime);
+					}
+					return mockRes;
+				},
 				vary: () => mockRes,
+				// Add missing Express response methods that A2A might need
+				flushHeaders: () => {
+					console.log('🔍 MockRes.flushHeaders called');
+					return mockRes;
+				},
+				flush: () => {
+					console.log('🔍 MockRes.flush called');
+					return mockRes;
+				},
+				on: (_event: string, _handler: (...args: any[]) => void) => {
+					// No-op bridge for event listeners
+					return mockRes;
+				},
+				write: (data: any) => {
+					console.log(`🔍 MockRes.write called with data:`, data);
+					if (responseData === null) {
+						responseData = '';
+					}
+					const enc = new TextEncoder();
+					const chunkUint8 =
+						data instanceof Uint8Array
+							? data
+							: enc.encode(typeof data === 'string' ? data : String(data));
+					responseData += new TextDecoder().decode(chunkUint8);
+					if (streamController) {
+						streamController.enqueue(chunkUint8);
+					}
+					return true;
+				},
+				writeHead: (
+					statusCode: number,
+					statusMessage?: string,
+					headers?: any,
+				) => {
+					console.log(
+						`🔍 MockRes.writeHead called with status: ${statusCode}, message: ${statusMessage}, headers:`,
+						headers,
+					);
+					responseStatus = statusCode;
+					if (headers) {
+						Object.assign(responseHeaders, headers);
+						const ct = Object.entries(headers).find(
+							([k]) => k.toLowerCase() === 'content-type',
+						);
+						if (
+							ct &&
+							typeof ct[1] === 'string' &&
+							ct[1].includes('text/event-stream')
+						) {
+							isStreaming = true;
+							ensureStream();
+							if (responseResolve)
+								responseResolve({
+									type: 'stream',
+									status: responseStatus,
+									headers: responseHeaders,
+								});
+						}
+					}
+					return mockRes;
+				},
+				finished: false,
+				writable: true,
+				writableEnded: false,
+				writableFinished: false,
+				writableHighWaterMark: 16384,
+				writableLength: 0,
+				writableObjectMode: false,
+				writableCorked: 0,
+				destroyed: false,
+				readable: false,
+				readableEnded: false,
+				readableFlowing: null,
+				readableHighWaterMark: 16384,
+				readableLength: 0,
+				readableObjectMode: false,
+				readableAborted: false,
+				readableDidRead: false,
+				readableEncoding: null,
+				readablePaused: false,
+				readablePipes: [],
+				readablePipesCount: 0,
+				readableReadable: false,
+				readableResumeScheduled: false,
+				readableDestroyed: false,
+				// Add a catch-all method to see if any other methods are being called
+				[Symbol.iterator]: function* () {
+					yield* [];
+				},
 			} as any;
 
-			const mockNext = () => {};
+			const mockNext = (err?: any) => {
+				console.log(`🔍 MockNext called with error:`, err);
+				if (err) {
+					console.error(`🔍 MockNext error:`, err);
+				}
+			};
 
 			try {
 				// Check if agent exists first
 				const {isAgentAvailable} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
+					'npm:@timestep-ai/timestep@2025.9.211249'
 				);
 				if (!(await isAgentAvailable(agentId, repositories as any))) {
 					console.log(`❌ Agent ${agentId} not found`);
@@ -1273,112 +1544,226 @@ Deno.serve({port}, async (request: Request) => {
 					? 443
 					: 80;
 
-				// Create request handler directly - import from source since it's not exported yet
-				const {createAgentRequestHandler} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211041'
-				);
-				const requestHandler = await createAgentRequestHandler(
-					agentId,
-					taskStore,
-					agentExecutor,
-					port,
-					repositories as any,
+				// For Supabase, the agent base URL should point to the function URL
+				const supabaseAgentBaseUrl = agentBaseUrl.replace(
+					'/server',
+					'/functions/v1/server',
 				);
 
-				// Handle specific routes directly
+				// Use handleAgentMessage directly for messaging
+
+				// Check if this is an agent card request - handle it separately
 				if (cleanPath.endsWith('/.well-known/agent-card.json')) {
-					// Get agent card directly
-					const agentCard = await requestHandler.getAgentCard();
-					return new Response(JSON.stringify(agentCard), {
-						status: 200,
-						headers: {...headers, 'Content-Type': 'application/json'},
+					console.log(`🔍 Handling agent card request directly`);
+
+					// Get the agent card directly
+					const agentCard = await getAgentCardForSupabase(
+						agentId,
+						supabaseAgentBaseUrl,
+						repositories as any,
+					);
+
+					console.log(`🔍 Agent card generated:`, agentCard);
+
+					// Set response data directly
+					responseData = agentCard;
+					responseStatus = 200;
+					responseHeaders['Content-Type'] = 'application/json';
+					responseEnded = true;
+				} else {
+					console.log(`🔍 Handling A2A request: ${cleanPath}`);
+					// Handle JSON-RPC message/stream request
+					console.log(`🔍 Processing JSON-RPC request for agent ${agentId}`);
+					console.log(`🔍 Request body:`, mockReq.body);
+
+					const jsonRpcRequest = mockReq.body;
+					if (jsonRpcRequest.method === 'message/stream') {
+						// Use the actual A2A SDK streaming logic
+						try {
+							// Create the request handler for this agent
+							const {createAgentRequestHandler} = await import(
+								'npm:@timestep-ai/timestep@2025.9.211249'
+							);
+							const requestHandler = await createAgentRequestHandler(
+								agentId,
+								taskStore,
+								agentExecutor,
+								port,
+								repositories as any,
+							);
+
+							// Extract message params from JSON-RPC request
+							const messageParams = jsonRpcRequest.params;
+
+							// Set up SSE response headers
+							responseHeaders['Content-Type'] = 'text/event-stream';
+							responseHeaders['Cache-Control'] = 'no-cache';
+							responseHeaders['Connection'] = 'keep-alive';
+							responseHeaders['Access-Control-Allow-Origin'] = '*';
+							responseHeaders['Access-Control-Allow-Methods'] =
+								'GET, POST, PUT, DELETE, OPTIONS';
+							responseHeaders['Access-Control-Allow-Headers'] =
+								'authorization, x-client-info, apikey, content-type';
+
+							// Start the streaming response
+							responseStatus = 200;
+							isStreaming = true;
+
+							// Create a ReadableStream that yields the actual stream events
+							stream = new ReadableStream<Uint8Array>({
+								async start(controller) {
+									try {
+										console.log(
+											`🔍 Starting message stream for agent ${agentId}`,
+										);
+
+										// Call sendMessageStream and iterate over the events
+										for await (const event of requestHandler.sendMessageStream(
+											messageParams,
+										)) {
+											console.log(`🔍 Stream event:`, event);
+
+											// Format as SSE data (just the event object, not wrapped in JSON-RPC)
+											const sseData = `data: ${JSON.stringify(event)}\n\n`;
+											const encoder = new TextEncoder();
+											controller.enqueue(encoder.encode(sseData));
+										}
+
+										console.log(`🔍 Stream completed for agent ${agentId}`);
+										controller.close();
+									} catch (error) {
+										console.error(
+											`🔍 Error in stream for agent ${agentId}:`,
+											error,
+										);
+										const errorEvent = {
+											kind: 'error',
+											message:
+												error instanceof Error
+													? error.message
+													: 'Unknown error',
+											agentId: agentId,
+										};
+										const sseData = `data: ${JSON.stringify(errorEvent)}\n\n`;
+										const encoder = new TextEncoder();
+										controller.enqueue(encoder.encode(sseData));
+										controller.close();
+									}
+								},
+							});
+
+							responseEnded = true;
+						} catch (error) {
+							console.error(
+								`🔍 Error setting up stream for agent ${agentId}:`,
+								error,
+							);
+							const errorResponse = {
+								jsonrpc: '2.0',
+								id: jsonRpcRequest.id,
+								error: {
+									code: -32603,
+									message: 'Internal error',
+									data:
+										error instanceof Error ? error.message : 'Unknown error',
+								},
+							};
+							responseData = errorResponse;
+							responseStatus = 500;
+							responseHeaders['Content-Type'] = 'application/json';
+							responseEnded = true;
+						}
+					} else {
+						// Unknown method
+						const errorResponse = {
+							jsonrpc: '2.0',
+							id: jsonRpcRequest.id,
+							error: {
+								code: -32601,
+								message: 'Method not found',
+							},
+						};
+						responseData = errorResponse;
+						responseStatus = 200;
+						responseHeaders['Content-Type'] = 'application/json';
+						responseEnded = true;
+					}
+				}
+
+				console.log(`🔍 Response ended: ${responseEnded}, data:`, responseData);
+				console.log(
+					`🔍 Response status: ${responseStatus}, headers:`,
+					responseHeaders,
+				);
+				console.log(`🔍 Is streaming: ${isStreaming}`);
+
+				// If streaming, return a streaming Response and bypass default JSON header
+				if (isStreaming && stream) {
+					const sseHeaders: Record<string, string> = {
+						'Content-Type': 'text/event-stream',
+						'Cache-Control': 'no-cache',
+						Connection: 'keep-alive',
+						...Object.fromEntries(
+							Object.entries(responseHeaders).filter(
+								([k]) => k.toLowerCase() !== 'content-type',
+							),
+						),
+					};
+					console.log('🔍 Returning SSE stream with headers:', sseHeaders);
+					// Mark as ended for non-stream return paths
+					responseEnded = true;
+					return new Response(stream as any, {
+						status: responseStatus,
+						headers: sseHeaders,
 					});
 				}
 
-				// For other routes, we need to handle them through the A2A Express app
-				// But since we can't easily mock Express, let's try a different approach
-				// Let's create a real Express app and capture its response
-				const express = await import('npm:express@5.1.0');
-				const {A2AExpressApp} = await import(
-					'npm:@a2a-js/sdk@0.3.4/server/express'
-				);
+				// If no response data was captured, fail fast - no fallbacks
+				if (!responseData && !responseEnded) {
+					console.error(
+						`❌ No response data captured from handleAgentRequest for agent ${agentId}`,
+					);
+					return new Response(
+						JSON.stringify({
+							error: 'Agent request failed',
+							message: 'No response data captured from agent handler',
+							agentId: agentId,
+						}),
+						{status: 500, headers},
+					);
+				}
 
-				const agentApp = express.default();
-				const agentAppBuilder = new A2AExpressApp(requestHandler);
-				agentAppBuilder.setupRoutes(agentApp);
-
-				// Create a promise that resolves when the response is sent
-				let responseResolve: (value: {
-					data: any;
-					status: number;
-					headers: Record<string, string>;
-				}) => void;
-				let responseReject: (reason: any) => void;
-				const responsePromise = new Promise<{
-					data: any;
-					status: number;
-					headers: Record<string, string>;
-				}>((resolve, reject) => {
-					responseResolve = resolve;
-					responseReject = reject;
-				});
-
-				// Create a response object that captures the response
-				const captureRes = {
-					...mockRes,
-					json: (data: any) => {
-						console.log(`🔍 CaptureRes.json called with data:`, data);
-						responseData = data;
-						responseEnded = true;
-						responseResolve({
-							data,
-							status: responseStatus,
-							headers: responseHeaders,
-						});
-						return captureRes;
-					},
-					send: (data: any) => {
-						console.log(`🔍 CaptureRes.send called with data:`, data);
-						responseData = data;
-						responseEnded = true;
-						responseResolve({
-							data,
-							status: responseStatus,
-							headers: responseHeaders,
-						});
-						return captureRes;
-					},
-					end: (data?: any) => {
-						console.log(`🔍 CaptureRes.end called with data:`, data);
-						if (data !== undefined) {
-							responseData = data;
-						}
-						responseEnded = true;
-						responseResolve({
-							data: responseData,
-							status: responseStatus,
-							headers: responseHeaders,
-						});
-						return captureRes;
-					},
+				// Return the response from handleAgentRequest
+				// Avoid forcing JSON header if upstream set something else
+				const finalHeaders = {
+					...responseHeaders,
 				};
-
-				// Call the Express app
-				agentApp(mockReq, captureRes, mockNext);
-
-				// Wait for the response
-				const result = await responsePromise;
-
-				console.log(`🔍 Response captured:`, result);
-
-				// Return the actual response from the A2A Express app
+				// If upstream intended streaming but didn't call writeHead earlier, infer from headers
+				const ctHeader = Object.entries(finalHeaders).find(
+					([k]) => k.toLowerCase() === 'content-type',
+				);
+				if (
+					!isStreaming &&
+					ctHeader &&
+					typeof ctHeader[1] === 'string' &&
+					ctHeader[1].includes('text/event-stream') &&
+					stream
+				) {
+					console.log(
+						'🔍 Upstream indicated SSE via headers; returning stream',
+					);
+					return new Response(stream as any, {
+						status: responseStatus,
+						headers: finalHeaders,
+					});
+				}
 				return new Response(
-					typeof result.data === 'string'
-						? result.data
-						: JSON.stringify(result.data),
+					typeof responseData === 'string'
+						? responseData
+						: JSON.stringify(responseData),
 					{
-						status: result.status,
-						headers: result.headers,
+						status: responseStatus,
+						headers: finalHeaders,
 					},
 				);
 			} catch (error) {
@@ -1394,6 +1779,9 @@ Deno.serve({port}, async (request: Request) => {
 			}
 		}
 
+		console.log(
+			`🔍 No route matched for path: ${cleanPath}, method: ${request.method}`,
+		);
 		return new Response('Not found', {status: 404, headers});
 	} catch (error) {
 		console.error('Error in Supabase Edge Function:', error);

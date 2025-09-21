@@ -78,7 +78,9 @@ interface CliArgs {
 	agentId?: string;
 	autoApprove?: boolean;
 	userInput?: string;
-	baseUrl?: string;
+	baseUrl?: string; // legacy positional
+	baseServerUrl?: string; // new named flag
+	authToken?: string; // new named flag
 }
 
 function parseCliArgs(): CliArgs {
@@ -95,6 +97,25 @@ function parseCliArgs(): CliArgs {
 			args.userInput = process.argv[++i];
 		} else if (arg === '--base-url' && i + 1 < process.argv.length) {
 			args.baseUrl = process.argv[++i];
+		} else if (
+			(arg === '--baseServerUrl' || arg === '--base-server-url') &&
+			i + 1 < process.argv.length
+		) {
+			args.baseServerUrl = process.argv[++i];
+		} else if (
+			(arg === '--authToken' || arg === '--auth-token') &&
+			i + 1 < process.argv.length
+		) {
+			args.authToken = process.argv[++i];
+		} else if (
+			(arg === 'baseServerUrl' || arg === 'base-server-url') &&
+			i + 1 < process.argv.length
+		) {
+			// Support positional style: baseServerUrl <url>
+			args.baseServerUrl = process.argv[++i];
+		} else if (arg === 'authToken' && i + 1 < process.argv.length) {
+			// Support positional style: authToken <token>
+			args.authToken = process.argv[++i];
 		} else if (!arg.startsWith('--') && !args.baseUrl) {
 			// First non-flag argument is base URL for backward compatibility
 			args.baseUrl = arg;
@@ -105,15 +126,48 @@ function parseCliArgs(): CliArgs {
 }
 
 const cliArgs = parseCliArgs();
-if (cliArgs.baseUrl) {
-	baseServerUrl = cliArgs.baseUrl;
-}
+// Prioritize named flag, then legacy baseUrl, then env override
+baseServerUrl = cliArgs.baseServerUrl || cliArgs.baseUrl || baseServerUrl;
+
+// Resolve auth token from CLI or env
+const authToken = cliArgs.authToken;
+
+// Inject Authorization header for all requests to baseServerUrl
+try {
+	const originalFetch = globalThis.fetch.bind(globalThis);
+	globalThis.fetch = (input: any, init?: any) => {
+		try {
+			const url =
+				typeof input === 'string' ? input : input?.url ?? String(input);
+			if (
+				authToken &&
+				typeof url === 'string' &&
+				baseServerUrl &&
+				url.startsWith(baseServerUrl)
+			) {
+				const headers = new Headers(
+					init?.headers ||
+						(typeof input?.headers !== 'function'
+							? input?.headers
+							: undefined) ||
+						{},
+				);
+				if (!headers.has('Authorization')) {
+					headers.set('Authorization', `Bearer ${authToken}`);
+				}
+				return originalFetch(input, {...init, headers});
+			}
+		} catch {}
+		return originalFetch(input, init);
+	};
+} catch {}
 
 // Context manager import removed - not used
 
 // Debug logging
 console.log('🔍 Debug - process.argv:', process.argv);
 console.log('🔍 Debug - baseServerUrl:', baseServerUrl);
+console.log('🔍 Debug - authToken present:', Boolean(authToken));
 console.log('🔍 Debug - cliArgs:', cliArgs);
 let client: A2AClient; // Will be initialized asynchronously
 let agentName = 'Agent'; // Default, try to get from agent card later
@@ -128,9 +182,12 @@ interface AgentInfo {
 
 async function loadAvailableAgents(): Promise<AgentInfo[]> {
 	try {
-		// Fetch agents from the /agents endpoint
+		// Fetch agents from the /agents endpoint against configured baseServerUrl
 		const response = await fetch(
-			`http://localhost:${appConfig.appPort}/agents`,
+			`${baseServerUrl}/agents`,
+			authToken
+				? {headers: {Authorization: `Bearer ${authToken}`}}
+				: (undefined as any),
 		);
 		if (response.ok) {
 			const agents = await response.json();
@@ -964,6 +1021,7 @@ async function fetchAndDisplayAgentCard() {
 	);
 	try {
 		// client.getAgentCard() uses the agentBaseUrl provided during client construction
+		// getAgentCard takes no options in current SDK; rely on client default headers
 		const card: AgentCard = await client.getAgentCard();
 		agentName = card.name || 'Agent'; // Update global agent name
 		console.log(colorize('green', `✓ Agent Card Found:`));
@@ -1151,12 +1209,8 @@ async function processInput(
 
 	const params: MessageSendParams = {
 		message: messagePayload,
-		// Optional: configuration for streaming, blocking, etc.
-		// configuration: {
-		//   acceptedOutputModes: ['text/plain', 'application/json'], // Example
-		//   blocking: false // Default for streaming is usually non-blocking
-		// }
-	};
+		headers: authToken ? {Authorization: `Bearer ${authToken}`} : undefined,
+	} as any;
 
 	try {
 		console.log(colorize('red', 'Sending message...'));
@@ -1284,13 +1338,15 @@ async function main() {
 	// Select agent first
 	selectedAgentId = await selectAgent();
 
-	// Build the agent-specific URL
+	// Build the agent-specific URL (card URL for discovery)
 	serverUrl = `${baseServerUrl}/agents/${selectedAgentId}/.well-known/agent-card.json`;
 	// serverUrl = `${baseServerUrl}/agents/${selectedAgentId}`;
 	console.log(colorize('dim', `Agent Card URL: ${serverUrl}`));
 
 	// Initialize the client
-	client = await A2AClient.fromCardUrl(serverUrl);
+	client = await A2AClient.fromCardUrl(serverUrl, {
+		headers: authToken ? {Authorization: `Bearer ${authToken}`} : undefined,
+	} as any);
 
 	await fetchAndDisplayAgentCard(); // Fetch the card before starting the loop
 

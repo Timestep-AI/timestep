@@ -186,6 +186,11 @@ export async function createAgentRequestHandler(
 		agentCard,
 		taskStore,
 		agentExecutor,
+		undefined, // eventBusManager
+		undefined, // pushNotificationStore
+		undefined, // pushNotificationSender
+		undefined, // extendedAgentCard
+		repositories, // repositories
 	);
 }
 
