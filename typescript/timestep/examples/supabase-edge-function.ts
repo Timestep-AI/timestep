@@ -36,82 +36,7 @@ import {
 	type ModelProvider,
 	type Repository,
 	type RepositoryContainer,
-} from 'npm:@timestep-ai/timestep@2025.9.211013';
-
-/**
- * Custom getAgentCard function for Supabase Edge Function
- * Uses the correct base URL instead of localhost:port
- */
-async function getAgentCardForSupabase(
-	agentId: string,
-	baseUrl: string,
-	repositories: RepositoryContainer,
-): Promise<any> {
-	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211013');
-	const agent = await getAgent(agentId, repositories as any);
-	if (!agent) {
-		throw new Error(`Agent with ID ${agentId} not found`);
-	}
-
-	// Define agent skills
-	const helloSkill = {
-		id: 'hello_world',
-		name: 'Returns hello world',
-		description: 'just returns hello world',
-		tags: ['hello world'],
-		examples: ['hi', 'hello world'],
-	};
-
-	const publicAgentCard = {
-		name: agent.name,
-		description: `A helpful AI agent powered by ${agent.name}`,
-		url: `${baseUrl}/agents/${agentId}/`,
-		version: '1.0.0',
-		protocolVersion: '0.3.0',
-		preferredTransport: 'JSONRPC',
-		defaultInputModes: ['text'],
-		defaultOutputModes: ['text'],
-		capabilities: {streaming: true},
-		skills: [helloSkill],
-		supportsAuthenticatedExtendedCard: true,
-	};
-
-	return publicAgentCard;
-}
-
-/**
- * Custom createAgentRequestHandler function for Supabase Edge Function
- * Uses the correct base URL for agent cards
- */
-async function createAgentRequestHandlerForSupabase(
-	agentId: string,
-	baseUrl: string,
-	taskStore: any,
-	agentExecutor: any,
-	repositories: RepositoryContainer,
-): Promise<any> {
-	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211013');
-	const agent = await getAgent(agentId, repositories as any);
-	if (!agent) {
-		throw new Error(`Agent with ID ${agentId} not found`);
-	}
-
-	const agentCard = await getAgentCardForSupabase(
-		agentId,
-		baseUrl,
-		repositories as any,
-	);
-
-	const {ContextAwareRequestHandler} = await import(
-		'npm:@timestep-ai/timestep@2025.9.211013'
-	);
-	return new ContextAwareRequestHandler(
-		agentId,
-		agentCard,
-		taskStore,
-		agentExecutor,
-	);
-}
+} from 'npm:@timestep-ai/timestep@2025.9.211041';
 
 /**
  * Supabase Agent Repository Implementation
@@ -136,7 +61,7 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultAgents} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 				const defaultAgents = getDefaultAgents();
 				for (const agent of defaultAgents) {
@@ -336,7 +261,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultMcpServers} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 				const defaults = getDefaultMcpServers(this.baseUrl);
 				for (const server of defaults) {
@@ -406,7 +331,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			enabled: server.enabled,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211013'
+			'npm:@timestep-ai/timestep@2025.9.211041'
 		);
 
 		// Handle auth token - encrypt if provided, set to null if not
@@ -475,7 +400,7 @@ class SupabaseModelProviderRepository
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultModelProviders} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 				const defaults = getDefaultModelProviders();
 				for (const p of defaults) {
@@ -529,7 +454,7 @@ class SupabaseModelProviderRepository
 			models_url: (provider as any).modelsUrl ?? (provider as any).models_url,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211013'
+			'npm:@timestep-ai/timestep@2025.9.211041'
 		);
 		if ((provider as any).apiKey !== undefined) {
 			let key = (provider as any).apiKey as string | undefined;
@@ -964,7 +889,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// Get tool information from the MCP server
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 
 				// First, get the list of tools from the server
@@ -1067,7 +992,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				const [serverId, toolName] = parts;
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 
 				const result = await handleMcpServerRequest(
@@ -1110,7 +1035,7 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 
 				if (request.method === 'POST') {
@@ -1153,7 +1078,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// GET request - return full MCP server record
 				const {getMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 				const server = await getMcpServer(serverId, repositories as any);
 
@@ -1205,15 +1130,129 @@ Deno.serve({port}, async (request: Request) => {
 			}
 		}
 
-		// Handle dynamic agent routes with custom repository
+		// Handle dynamic agent routes - proxy to A2A Express app like server.ts
 		const agentMatch = cleanPath.match(/^\/agents\/([^\/]+)(?:\/.*)?$/);
 		if (agentMatch) {
 			const agentId = agentMatch[1];
 
+			// Create a mock Express-style request object that satisfies the Request interface
+			const mockReq = {
+				method: request.method,
+				path: cleanPath,
+				originalUrl: cleanPath + url.search,
+				params: {agentId: agentId},
+				body:
+					request.method !== 'GET'
+						? await request.json().catch(() => ({}))
+						: {},
+				headers: Object.fromEntries(Array.from(request.headers.entries())),
+				// Add required Express Request methods as stubs
+				get: (name: string) => request.headers.get(name),
+				header: (name: string) => request.headers.get(name),
+				accepts: () => false,
+				acceptsCharsets: () => false,
+				acceptsEncodings: () => false,
+				acceptsLanguages: () => false,
+				range: () => undefined,
+				param: (name: string) => (name === 'agentId' ? agentId : undefined),
+				is: () => false,
+				protocol: 'https',
+				secure: true,
+				ip: '127.0.0.1',
+				ips: [],
+				subdomains: [],
+				hostname: url.hostname,
+				fresh: false,
+				stale: true,
+				xhr: false,
+				route: undefined,
+				signedCookies: {},
+				url: cleanPath + url.search,
+				baseUrl: '',
+				app: {} as any,
+				res: {} as any,
+				next: (() => {}) as any,
+				query: Object.fromEntries(url.searchParams),
+				cookies: {},
+				secret: undefined,
+			} as any;
+
+			// Create a proper response handler that captures the response
+			let responseData: any = null;
+			let responseStatus = 200;
+			let responseHeaders: Record<string, string> = {...headers};
+			let isStreaming = false;
+			let responseEnded = false;
+
+			const mockRes = {
+				status: (code: number) => {
+					console.log(`🔍 MockRes.status called with code: ${code}`);
+					responseStatus = code;
+					return mockRes; // Return self for chaining
+				},
+				json: (data: any) => {
+					console.log(`🔍 MockRes.json called with data:`, data);
+					responseData = data;
+					responseEnded = true;
+					return mockRes;
+				},
+				send: (data: any) => {
+					console.log(`🔍 MockRes.send called with data:`, data);
+					responseData = data;
+					responseEnded = true;
+					return mockRes;
+				},
+				end: (data?: any) => {
+					console.log(`🔍 MockRes.end called with data:`, data);
+					if (data !== undefined) {
+						responseData = data;
+					}
+					responseEnded = true;
+					return mockRes;
+				},
+				setHeader: (name: string, value: string) => {
+					console.log(`🔍 MockRes.setHeader called: ${name} = ${value}`);
+					responseHeaders[name] = value;
+					// Detect streaming responses
+					if (
+						name.toLowerCase() === 'content-type' &&
+						value.includes('text/event-stream')
+					) {
+						isStreaming = true;
+					}
+					return mockRes;
+				},
+				getHeader: (name: string) => responseHeaders[name],
+				removeHeader: (name: string) => {
+					delete responseHeaders[name];
+					return mockRes;
+				},
+				locals: {},
+				append: () => mockRes,
+				attachment: () => mockRes,
+				cookie: () => mockRes,
+				clearCookie: () => mockRes,
+				download: () => mockRes,
+				format: () => mockRes,
+				get: () => undefined,
+				header: () => mockRes,
+				links: () => mockRes,
+				location: () => mockRes,
+				redirect: () => mockRes,
+				render: () => mockRes,
+				sendFile: () => mockRes,
+				sendStatus: () => mockRes,
+				set: () => mockRes,
+				type: () => mockRes,
+				vary: () => mockRes,
+			} as any;
+
+			const mockNext = () => {};
+
 			try {
-				// Check if agent exists
+				// Check if agent exists first
 				const {isAgentAvailable} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211013'
+					'npm:@timestep-ai/timestep@2025.9.211041'
 				);
 				if (!(await isAgentAvailable(agentId, repositories as any))) {
 					console.log(`❌ Agent ${agentId} not found`);
@@ -1226,167 +1265,129 @@ Deno.serve({port}, async (request: Request) => {
 					);
 				}
 
-				// Create request handler with correct base URL
-				const requestHandler = await createAgentRequestHandlerForSupabase(
+				// Extract port from the base URL for agent card generation
+				const urlObj = new URL(agentBaseUrl);
+				const port = urlObj.port
+					? parseInt(urlObj.port)
+					: urlObj.protocol === 'https:'
+					? 443
+					: 80;
+
+				// Create request handler directly - import from source since it's not exported yet
+				const {createAgentRequestHandler} = await import(
+					'npm:@timestep-ai/timestep@2025.9.211041'
+				);
+				const requestHandler = await createAgentRequestHandler(
 					agentId,
-					agentBaseUrl,
 					taskStore,
 					agentExecutor,
+					port,
 					repositories as any,
 				);
 
-				// Create A2A Express app and delegate
-				const {A2AExpressApp} = await import('@a2a-js/sdk/server/express');
-				const agentAppBuilder = new A2AExpressApp(requestHandler);
-				const agentApp = (await import('express')).default();
+				// Handle specific routes directly
+				if (cleanPath.endsWith('/.well-known/agent-card.json')) {
+					// Get agent card directly
+					const agentCard = await requestHandler.getAgentCard();
+					return new Response(JSON.stringify(agentCard), {
+						status: 200,
+						headers: {...headers, 'Content-Type': 'application/json'},
+					});
+				}
 
-				// Set up the agent app routes
+				// For other routes, we need to handle them through the A2A Express app
+				// But since we can't easily mock Express, let's try a different approach
+				// Let's create a real Express app and capture its response
+				const express = await import('npm:express@5.1.0');
+				const {A2AExpressApp} = await import(
+					'npm:@a2a-js/sdk@0.3.4/server/express'
+				);
+
+				const agentApp = express.default();
+				const agentAppBuilder = new A2AExpressApp(requestHandler);
 				agentAppBuilder.setupRoutes(agentApp);
 
-				// Create a mock Express-style request object
-				const mockReq = {
-					method: request.method,
-					path: cleanPath,
-					originalUrl: cleanPath + url.search,
-					params: {agentId: agentId},
-					body:
-						request.method !== 'GET'
-							? await request.json().catch(() => ({}))
-							: {},
-					headers: Object.fromEntries(Array.from(request.headers.entries())),
-					// Add required Express Request methods as stubs
-					get: (name: string) => request.headers.get(name),
-					header: (name: string) => request.headers.get(name),
-					accepts: () => false,
-					acceptsCharsets: () => false,
-					acceptsEncodings: () => false,
-					acceptsLanguages: () => false,
-					range: () => undefined,
-					param: (name: string) => (name === 'agentId' ? agentId : undefined),
-					is: () => false,
-					protocol: 'https',
-					secure: true,
-					ip: '127.0.0.1',
-					ips: [],
-					subdomains: [],
-					hostname: url.hostname,
-					fresh: false,
-					stale: true,
-					xhr: false,
-					route: undefined,
-					signedCookies: {},
-					url: cleanPath + url.search,
-					baseUrl: '',
-					app: {} as any,
-					res: {} as any,
-					next: (() => {}) as any,
-					query: Object.fromEntries(url.searchParams),
-					cookies: {},
-					secret: undefined,
-				} as any;
+				// Create a promise that resolves when the response is sent
+				let responseResolve: (value: {
+					data: any;
+					status: number;
+					headers: Record<string, string>;
+				}) => void;
+				let responseReject: (reason: any) => void;
+				const responsePromise = new Promise<{
+					data: any;
+					status: number;
+					headers: Record<string, string>;
+				}>((resolve, reject) => {
+					responseResolve = resolve;
+					responseReject = reject;
+				});
 
-				// Create a proper response handler that captures the A2A Express app response
-				let responseData: any = null;
-				let responseStatus = 200;
-				const responseHeaders: Record<string, string> = {...headers};
-
-				const mockRes = {
-					status: (code: number) => {
-						responseStatus = code;
-						return {
-							json: (data: any) => {
-								responseData = data;
-								return data;
-							},
-							send: (data: any) => {
-								responseData = data;
-								return data;
-							},
-							end: () => {},
-							setHeader: (name: string, value: string) => {
-								responseHeaders[name] = value;
-							},
-							getHeader: (name: string) => responseHeaders[name],
-							removeHeader: (name: string) => {
-								delete responseHeaders[name];
-							},
-							locals: {},
-							append: () => {},
-							attachment: () => {},
-							cookie: () => {},
-							clearCookie: () => {},
-							download: () => {},
-							format: () => {},
-							get: () => undefined,
-							header: () => {},
-							links: () => {},
-							location: () => {},
-							redirect: () => {},
-							render: () => {},
-							sendFile: () => {},
-							sendStatus: () => {},
-							set: () => {},
-							type: () => {},
-							vary: () => {},
-						};
-					},
+				// Create a response object that captures the response
+				const captureRes = {
+					...mockRes,
 					json: (data: any) => {
+						console.log(`🔍 CaptureRes.json called with data:`, data);
 						responseData = data;
-						return data;
+						responseEnded = true;
+						responseResolve({
+							data,
+							status: responseStatus,
+							headers: responseHeaders,
+						});
+						return captureRes;
 					},
 					send: (data: any) => {
+						console.log(`🔍 CaptureRes.send called with data:`, data);
 						responseData = data;
-						return data;
+						responseEnded = true;
+						responseResolve({
+							data,
+							status: responseStatus,
+							headers: responseHeaders,
+						});
+						return captureRes;
 					},
-					end: () => {},
-					setHeader: (name: string, value: string) => {
-						responseHeaders[name] = value;
+					end: (data?: any) => {
+						console.log(`🔍 CaptureRes.end called with data:`, data);
+						if (data !== undefined) {
+							responseData = data;
+						}
+						responseEnded = true;
+						responseResolve({
+							data: responseData,
+							status: responseStatus,
+							headers: responseHeaders,
+						});
+						return captureRes;
 					},
-					getHeader: (name: string) => responseHeaders[name],
-					removeHeader: (name: string) => {
-						delete responseHeaders[name];
-					},
-					locals: {},
-					append: () => {},
-					attachment: () => {},
-					cookie: () => {},
-					clearCookie: () => {},
-					download: () => {},
-					format: () => {},
-					get: () => undefined,
-					header: () => {},
-					links: () => {},
-					location: () => {},
-					redirect: () => {},
-					render: () => {},
-					sendFile: () => {},
-					sendStatus: () => {},
-					set: () => {},
-					type: () => {},
-					vary: () => {},
-				} as any;
+				};
 
-				const mockNext = () => {};
+				// Call the Express app
+				agentApp(mockReq, captureRes, mockNext);
 
-				// Delegate to the agent-specific app
-				agentApp(mockReq, mockRes, mockNext);
+				// Wait for the response
+				const result = await responsePromise;
+
+				console.log(`🔍 Response captured:`, result);
 
 				// Return the actual response from the A2A Express app
 				return new Response(
-					typeof responseData === 'string'
-						? responseData
-						: JSON.stringify(responseData),
+					typeof result.data === 'string'
+						? result.data
+						: JSON.stringify(result.data),
 					{
-						status: responseStatus,
-						headers: responseHeaders,
+						status: result.status,
+						headers: result.headers,
 					},
 				);
 			} catch (error) {
-				console.error(`Error handling request for agent ${agentId}:`, error);
+				console.error(`Error in agent request handler for ${agentId}:`, error);
 				return new Response(
 					JSON.stringify({
-						error: 'Internal server error',
+						error: 'Agent request failed',
 						message: error instanceof Error ? error.message : 'Unknown error',
+						agentId: agentId,
 					}),
 					{status: 500, headers},
 				);

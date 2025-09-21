@@ -21,6 +21,7 @@ export {
 	isAgentAvailable,
 	handleAgentRequest,
 	handleListAgents,
+	createAgentRequestHandler,
 } from './api/agentsApi.js';
 
 // MCP Server functions

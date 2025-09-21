@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "npm:@a2a-js/sdk@*": "0.3.4_express@4.21.2",
+    "npm:@a2a-js/sdk@0.3.4": "0.3.4_express@4.21.2",
     "npm:@a2a-js/sdk@~0.3.4": "0.3.4_express@4.21.2",
     "npm:@modelcontextprotocol/sdk@*": "1.18.0_express@5.1.0_zod@3.25.76",
     "npm:@modelcontextprotocol/sdk@^1.18.0": "1.18.0_express@5.1.0_zod@3.25.76",
@@ -20,6 +21,7 @@
     "npm:eslint-config-xo-react@0.27": "0.27.0_eslint@9.35.0_eslint-plugin-react@7.37.5__eslint@9.35.0_eslint-plugin-react-hooks@4.6.2__eslint@8.57.1",
     "npm:eslint-plugin-react-hooks@^4.6.0": "4.6.2_eslint@8.57.1",
     "npm:eslint-plugin-react@^7.32.2": "7.37.5_eslint@9.35.0",
+    "npm:express@5.1.0": "5.1.0",
     "npm:express@^4.21.2": "4.21.2",
     "npm:express@^5.1.0": "5.1.0",
     "npm:ink-testing-library@3": "3.0.0_@types+react@18.3.24",
