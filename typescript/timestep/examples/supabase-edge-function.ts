@@ -36,7 +36,7 @@ import {
 	type ModelProvider,
 	type Repository,
 	type RepositoryContainer,
-} from 'npm:@timestep-ai/timestep@2025.9.211334';
+} from 'npm:@timestep-ai/timestep@2025.9.211411';
 
 // Custom function to get agent card with correct Supabase base URL
 async function getAgentCardForSupabase(
@@ -44,7 +44,7 @@ async function getAgentCardForSupabase(
 	baseUrl: string,
 	repositories: any,
 ): Promise<any> {
-	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211334');
+	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.211411');
 	const agent = await getAgent(agentId, repositories);
 	if (!agent) {
 		throw new Error(`Agent ${agentId} not found`);
@@ -98,7 +98,7 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		// Always ensure default agents exist and are up-to-date
 		try {
 			const {getDefaultAgents} = await import(
-				'npm:@timestep-ai/timestep@2025.9.211334'
+				'npm:@timestep-ai/timestep@2025.9.211411'
 			);
 			const defaultAgents = getDefaultAgents();
 
@@ -164,7 +164,13 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 			.select('*')
 			.eq('user_id', this.userId);
 		if (error) throw new Error(`Failed to list agents: ${error.message}`);
-		return data || [];
+
+		// Transform database field names to expected format
+		return (data || []).map((agent: any) => ({
+			...agent,
+			handoffIds: agent.handoff_ids || [],
+			toolIds: agent.tool_ids || [],
+		}));
 	}
 
 	async load(id: string): Promise<Agent | null> {
@@ -177,7 +183,15 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		if (error && error.code !== 'PGRST116') {
 			throw new Error(`Failed to load agent: ${error.message}`);
 		}
-		return data || null;
+
+		if (!data) return null;
+
+		// Transform database field names to expected format
+		return {
+			...data,
+			handoffIds: data.handoff_ids || [],
+			toolIds: data.tool_ids || [],
+		};
 	}
 
 	async save(agent: Agent): Promise<void> {
@@ -383,10 +397,15 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		if (!hasBuiltinServer) {
 			try {
-				const {getBuiltinMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
-				);
-				const builtinServer = getBuiltinMcpServer(this.baseUrl);
+				// For the built-in server, don't set a serverUrl - it's handled internally
+				const builtinServer = {
+					id: '00000000-0000-0000-0000-000000000000',
+					name: 'Built-in MCP Server',
+					description:
+						'Built-in MCP server providing weather data, document tools, and thinking capabilities',
+					serverUrl: '', // Empty for built-in server - handled internally
+					enabled: true,
+				};
 				console.log(`🔌 Creating built-in MCP server:`, builtinServer);
 				await this.save(builtinServer);
 				console.log(`🔌 Created built-in MCP server in database`);
@@ -399,7 +418,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultMcpServers} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
 				const defaults = getDefaultMcpServers(this.baseUrl);
 				// Skip the built-in server since we already handled it above
@@ -427,7 +446,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		// Decrypt auth tokens if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211334'
+			'npm:@timestep-ai/timestep@2025.9.211411'
 		);
 
 		const servers = await Promise.all(
@@ -443,11 +462,13 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 						authToken = null;
 					}
 				}
+				// For built-in server, don't set serverUrl - it's handled internally
+				const isBuiltin = row.id === '00000000-0000-0000-0000-000000000000';
 				return {
 					id: row.id,
 					name: row.name,
 					description: row.description ?? row.name,
-					serverUrl: row.server_url ?? '',
+					serverUrl: isBuiltin ? '' : row.server_url ?? '',
 					enabled: row.enabled ?? true,
 					authToken: authToken,
 				};
@@ -472,7 +493,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		// Decrypt auth token if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211334'
+			'npm:@timestep-ai/timestep@2025.9.211411'
 		);
 
 		let authToken = data.auth_token;
@@ -488,11 +509,13 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 		}
 
 		// Apply the same transformation logic as the list method
+		// For built-in server, don't set serverUrl - it's handled internally
+		const isBuiltin = data.id === '00000000-0000-0000-0000-000000000000';
 		return {
 			id: data.id,
 			name: data.name,
 			description: data.description ?? data.name,
-			serverUrl: data.server_url ?? '',
+			serverUrl: isBuiltin ? '' : data.server_url ?? '',
 			enabled: data.enabled ?? true,
 			authToken: authToken,
 		};
@@ -510,7 +533,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			enabled: server.enabled,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211334'
+			'npm:@timestep-ai/timestep@2025.9.211411'
 		);
 
 		// Handle auth token - encrypt if provided, set to null if not
@@ -584,7 +607,7 @@ class SupabaseModelProviderRepository
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultModelProviders} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
 				const defaults = getDefaultModelProviders();
 				for (const p of defaults) {
@@ -605,7 +628,7 @@ class SupabaseModelProviderRepository
 
 		// Decrypt API keys if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211334'
+			'npm:@timestep-ai/timestep@2025.9.211411'
 		);
 
 		const providers = await Promise.all(
@@ -649,7 +672,7 @@ class SupabaseModelProviderRepository
 
 		// Decrypt API key if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211334'
+			'npm:@timestep-ai/timestep@2025.9.211411'
 		);
 
 		let apiKey = data.api_key;
@@ -682,7 +705,7 @@ class SupabaseModelProviderRepository
 			models_url: (provider as any).models_url ?? (provider as any).modelsUrl,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.211334'
+			'npm:@timestep-ai/timestep@2025.9.211411'
 		);
 		if (
 			(provider as any).api_key !== undefined ||
@@ -771,24 +794,65 @@ class SupabaseRepositoryContainer implements RepositoryContainer {
  * Custom task store for Supabase environment
  */
 class SupabaseTaskStore {
-	private store: Map<string, any> = new Map();
+	constructor(private supabase: any, public userId: string | null) {}
 
 	async load(taskId: string): Promise<any | undefined> {
 		console.log(`📋 SupabaseTaskStore.load(${taskId})`);
-		const entry = this.store.get(taskId);
-		if (entry) {
-			console.log(`📋 SupabaseTaskStore.load(${taskId}) -> FOUND`);
-			return {...entry};
-		} else {
+
+		if (!this.userId) {
+			console.log(
+				`📋 SupabaseTaskStore.load(${taskId}) -> NOT FOUND (no user)`,
+			);
+			return undefined;
+		}
+
+		const {data, error} = await this.supabase
+			.from('tasks')
+			.select('*')
+			.eq('task_id', taskId)
+			.eq('user_id', this.userId)
+			.single();
+
+		if (error && error.code !== 'PGRST116') {
+			console.error(`📋 SupabaseTaskStore.load(${taskId}) -> ERROR:`, error);
+			return undefined;
+		}
+
+		if (!data) {
 			console.log(`📋 SupabaseTaskStore.load(${taskId}) -> NOT FOUND`);
 			return undefined;
 		}
+
+		console.log(`📋 SupabaseTaskStore.load(${taskId}) -> FOUND`);
+		return data.task_data;
 	}
 
 	async save(task: any): Promise<void> {
 		console.log(`📋 SupabaseTaskStore.save(${task.id})`);
-		this.store.set(task.id, {...task});
-		console.log(`📋 SupabaseTaskStore.save(${task.id}) -> SAVED`);
+
+		if (!this.userId) {
+			console.log(`📋 SupabaseTaskStore.save(${task.id}) -> SKIPPED (no user)`);
+			return;
+		}
+
+		const {error} = await this.supabase.from('tasks').upsert(
+			[
+				{
+					task_id: task.id,
+					user_id: this.userId,
+					task_data: task,
+					created_at: new Date().toISOString(),
+					updated_at: new Date().toISOString(),
+				},
+			],
+			{onConflict: 'task_id,user_id'},
+		);
+
+		if (error) {
+			console.error(`📋 SupabaseTaskStore.save(${task.id}) -> ERROR:`, error);
+		} else {
+			console.log(`📋 SupabaseTaskStore.save(${task.id}) -> SAVED`);
+		}
 	}
 }
 
@@ -801,7 +865,7 @@ const supabaseKey =
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Task store and server config
-const taskStore = new SupabaseTaskStore();
+const taskStore = new SupabaseTaskStore(supabase, null); // Will be set per request
 
 // Configure the port from environment or default
 const port = parseInt(Deno.env.get('PORT') || '3000');
@@ -1135,7 +1199,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// Get tool information from the MCP server
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
 
 				// First, get the list of tools from the server
@@ -1238,7 +1302,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				const [serverId, toolName] = parts;
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
 
 				const result = await handleMcpServerRequest(
@@ -1281,7 +1345,7 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
 
 				if (request.method === 'POST') {
@@ -1324,7 +1388,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// GET request - return full MCP server record
 				const {getMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
 				const server = await getMcpServer(serverId, repositories as any);
 
@@ -1717,9 +1781,10 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				// Check if agent exists first
-				const {isAgentAvailable} = await import(
-					'npm:@timestep-ai/timestep@2025.9.211334'
+				const timestepModule = await import(
+					'npm:@timestep-ai/timestep@2025.9.211411'
 				);
+				const isAgentAvailable = timestepModule.isAgentAvailable;
 				if (!(await isAgentAvailable(agentId, repositories as any))) {
 					console.log(`❌ Agent ${agentId} not found`);
 					return new Response(
@@ -1775,10 +1840,36 @@ Deno.serve({port}, async (request: Request) => {
 					if (jsonRpcRequest.method === 'message/stream') {
 						// Use the actual A2A SDK streaming logic
 						try {
-							// Create the request handler for this agent
-							const {createAgentRequestHandler} = await import(
-								'npm:@timestep-ai/timestep@2025.9.211334'
+							// Debug: Log agent details before creating request handler
+							console.log(`🔍 Creating request handler for agent: ${agentId}`);
+							console.log(
+								`🔍 Available agents:`,
+								(await repositories.agents.list()).map(a => ({
+									id: a.id,
+									name: a.name,
+									toolIds: a.toolIds,
+									handoffIds: a.handoffIds,
+								})),
 							);
+							console.log(
+								`🔍 Available MCP servers:`,
+								(await repositories.mcpServers.list()).map(s => ({
+									id: s.id,
+									name: s.name,
+									enabled: s.enabled,
+									serverUrl: s.serverUrl,
+								})),
+							);
+
+							// Set userId for task store
+							taskStore.userId = userId;
+
+							// Create the request handler for this agent
+							const timestepModule = await import(
+								'npm:@timestep-ai/timestep@2025.9.211411'
+							);
+							const createAgentRequestHandler =
+								timestepModule.createAgentRequestHandler;
 							const requestHandler = await createAgentRequestHandler(
 								agentId,
 								taskStore,
@@ -2092,6 +2183,17 @@ CREATE TABLE model_providers (
   PRIMARY KEY (user_id, id)
 );
 
+-- Create tasks table
+CREATE TABLE tasks (
+  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  task_id TEXT NOT NULL,
+  task_data JSONB NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  PRIMARY KEY (user_id, task_id)
+);
+
 -- Create indexes for better performance
 CREATE INDEX idx_agents_user_id ON agents(user_id);
 CREATE INDEX idx_agents_name ON agents(name);
@@ -2102,12 +2204,15 @@ CREATE INDEX idx_mcp_servers_user_id ON mcp_servers(user_id);
 CREATE INDEX idx_mcp_servers_name ON mcp_servers(name);
 CREATE INDEX idx_model_providers_user_id ON model_providers(user_id);
 CREATE INDEX idx_model_providers_provider ON model_providers(provider);
+CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX idx_tasks_task_id ON tasks(task_id);
 
 -- Enable Row Level Security (optional)
 ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contexts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mcp_servers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_providers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -2135,12 +2240,17 @@ CREATE TRIGGER update_model_providers_updated_at
     BEFORE UPDATE ON model_providers 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_tasks_updated_at 
+    BEFORE UPDATE ON tasks 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Create policies for authenticated users (optional)
 -- Basic per-user RLS: require matching user_id
 CREATE POLICY "Users can access agents" ON agents FOR ALL TO authenticated USING (user_id = auth.uid());
 CREATE POLICY "Users can access contexts" ON contexts FOR ALL TO authenticated USING (user_id = auth.uid());
 CREATE POLICY "Users can access mcp_servers" ON mcp_servers FOR ALL TO authenticated USING (user_id = auth.uid());
 CREATE POLICY "Users can access model_providers" ON model_providers FOR ALL TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "Users can access tasks" ON tasks FOR ALL TO authenticated USING (user_id = auth.uid());
 `;
 
 /*
