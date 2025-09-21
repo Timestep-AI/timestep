@@ -680,6 +680,8 @@ Deno.serve({port}, async (request: Request) => {
 					availableEndpoints: [
 						'/agents',
 						'/agents/{agentId}',
+						'/ag-ui/agents/discover',
+						'/ag-ui/agents/{agentId}/run',
 						'/chats',
 						'/health',
 						'/mcp_servers',
@@ -746,6 +748,124 @@ Deno.serve({port}, async (request: Request) => {
 		if (cleanPath === '/agents') {
 			const result = await listAgents(repositories);
 			return new Response(JSON.stringify(result.data), {status: 200, headers});
+		}
+
+		// AG-UI Protocol endpoints
+		if (cleanPath === '/ag-ui/agents/discover') {
+			try {
+				const result = await listAgents(repositories);
+				// Transform agents to AG-UI format
+				const aguiAgents = result.data.map((agent: any) => ({
+					id: agent.id,
+					name: agent.name,
+					description: agent.handoffDescription || agent.instructions.substring(0, 100) + '...',
+					capabilities: ['conversation'], // Basic capability for all agents
+					status: 'available',
+					handoffIds: agent.handoffIds || []
+				}));
+				return new Response(JSON.stringify({agents: aguiAgents}), {status: 200, headers});
+			} catch (error) {
+				return new Response(
+					JSON.stringify({
+						error: error instanceof Error ? error.message : 'Failed to discover agents'
+					}),
+					{status: 500, headers}
+				);
+			}
+		}
+
+		// AG-UI streaming endpoint
+		const agUiRunMatch = cleanPath.match(/^\/ag-ui\/agents\/([^\/]+)\/run$/);
+		if (agUiRunMatch && request.method === 'POST') {
+			const agentId = agUiRunMatch[1];
+			
+			try {
+				const runInput = await request.json();
+				
+				// Set up Server-Sent Events headers
+				const streamHeaders = {
+					'Content-Type': 'text/event-stream',
+					'Cache-Control': 'no-cache',
+					'Connection': 'keep-alive',
+					'Access-Control-Allow-Origin': '*',
+				};
+
+				// Create a streaming response
+				const stream = new ReadableStream({
+					start(controller) {
+						// Helper function to send events
+						const sendEvent = (event: any) => {
+							const data = JSON.stringify(event);
+							controller.enqueue(new TextEncoder().encode(\`data: \${data}\\n\\n\`));
+						};
+
+						// Send initial events
+						sendEvent({
+							type: 'RUN_STARTED',
+							timestamp: new Date().toISOString(),
+							threadId: runInput.threadId || 'ag-ui-thread',
+							runId: runInput.runId || 'ag-ui-run',
+						});
+
+						sendEvent({
+							type: 'TEXT_MESSAGE_START',
+							timestamp: new Date().toISOString(),
+							messageId: 'response-' + Date.now(),
+							role: 'assistant',
+						});
+
+						// Get the user's message
+						const userMessage = runInput.messages?.[runInput.messages.length - 1];
+						const userText = userMessage?.content || '';
+
+						// Simple echo response for Supabase Edge Function
+						const response = \`Hello from Supabase Edge Function! You said: "\${userText}". I'm agent \${agentId}.\`;
+						
+						// Stream the response character by character
+						let charIndex = 0;
+						const streamCharacters = () => {
+							if (charIndex < response.length) {
+								sendEvent({
+									type: 'TEXT_MESSAGE_CONTENT',
+									timestamp: new Date().toISOString(),
+									messageId: 'response-' + Date.now(),
+									delta: response[charIndex],
+								});
+								charIndex++;
+								setTimeout(streamCharacters, 50); // 50ms delay between characters
+							} else {
+								// Send completion events
+								sendEvent({
+									type: 'TEXT_MESSAGE_END',
+									timestamp: new Date().toISOString(),
+									messageId: 'response-' + Date.now(),
+								});
+
+								sendEvent({
+									type: 'RUN_FINISHED',
+									timestamp: new Date().toISOString(),
+									threadId: runInput.threadId || 'ag-ui-thread',
+									runId: runInput.runId || 'ag-ui-run',
+								});
+
+								controller.close();
+							}
+						};
+
+						streamCharacters();
+					}
+				});
+
+				return new Response(stream, {status: 200, headers: streamHeaders});
+
+			} catch (error) {
+				return new Response(
+					JSON.stringify({
+						error: error instanceof Error ? error.message : 'Failed to run AG-UI agent'
+					}),
+					{status: 500, headers}
+				);
+			}
 		}
 
 		if (cleanPath === '/chats') {
@@ -1244,6 +1364,8 @@ console.log('🚀 Timestep Server running with Custom Supabase Repositories');
 console.log('📚 Available endpoints:');
 console.log('  - GET /agents - List agents (using SupabaseAgentRepository)');
 console.log('  - /agents/{agentId}/* - Dynamic agent A2A endpoints');
+console.log('  - GET /ag-ui/agents/discover - AG-UI agent discovery');
+console.log('  - POST /ag-ui/agents/{agentId}/run - AG-UI streaming chat with Server-Sent Events');
 console.log('  - GET /chats - List chats (using SupabaseContextRepository)');
 console.log('  - GET /health - Health check with repository info');
 console.log(
