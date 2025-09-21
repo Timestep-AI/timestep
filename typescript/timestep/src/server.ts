@@ -10,6 +10,7 @@
 import express from 'express';
 import {loadAppConfig} from './utils.js';
 import {handleListAgents, handleAgentRequest} from './api/agentsApi.js';
+import {addAGUIEndpoints} from './api/agUiEndpoints.js';
 import {TimestepAIAgentExecutor} from './core/agentExecutor.js';
 import {Task} from '@a2a-js/sdk';
 import {TaskStore} from '@a2a-js/sdk/server';
@@ -329,6 +330,9 @@ app.use('/agents/:agentId', async (req, res, next) => {
 		repositories,
 	);
 });
+
+// ✨ Add AG-UI endpoints
+addAGUIEndpoints(app, taskStore, agentExecutor, repositories);
 
 // Re-add ordered GET routes
 app.get('/agents', handleListAgents);
