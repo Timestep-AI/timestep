@@ -41,6 +41,8 @@
 	],
 	"dependencies": {
 		"@a2a-js/sdk": "^0.3.4",
+		"@ag-ui/client": "^0.0.38",
+		"@ag-ui/core": "^0.0.38",
 		"@modelcontextprotocol/sdk": "^1.18.0",
 		"@openai/agents": "^0.1.2",
 		"@openai/agents-core": "^0.1.2",
@@ -52,6 +54,7 @@
 		"ollama": "^0.5.17",
 		"openai": "^5.20.2",
 		"react": "^18.2.0",
+		"rxjs": "^7.8.2",
 		"uuid": "^13.0.0",
 		"zod": "^3.25.76"
 	},

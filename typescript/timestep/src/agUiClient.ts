@@ -12,19 +12,14 @@ import crypto from 'node:crypto';
 import process from 'node:process';
 import {loadAppConfig} from './utils.js';
 
-// --- AG-UI Types ---
-interface AGUIMessage {
-	role: 'user' | 'assistant';
-	content: string;
-	messageId?: string;
-}
+// Import official AG-UI SDK types
+import {
+	RunAgentInput,
+	EventType,
+	UserMessage,
+} from '@ag-ui/core';
 
-interface AGUIRunInput {
-	runId: string;
-	threadId: string;
-	messages: AGUIMessage[];
-}
-
+// --- AG-UI Types using official SDK ---
 interface AGUIAgent {
 	id: string;
 	name: string;
@@ -160,15 +155,20 @@ async function selectAgent(): Promise<string> {
 async function runAgent(userInput: string): Promise<void> {
 	if (!selectedAgentId) throw new Error('No agent selected');
 
-	const runInput: AGUIRunInput = {
+	// Use official SDK RunAgentInput type
+	const runInput: RunAgentInput = {
 		runId: generateId(),
 		threadId: 'cli-thread',
+		state: {},
+		tools: [],
+		context: [],
+		forwardedProps: {},
 		messages: [
 			{
+				id: generateId(),
 				role: 'user',
 				content: userInput,
-				messageId: generateId(),
-			},
+			} as UserMessage,
 		],
 	};
 
@@ -203,25 +203,25 @@ async function runAgent(userInput: string): Promise<void> {
 						const event = JSON.parse(line.slice(6));
 
 						switch (event.type) {
-							case 'RUN_STARTED':
+							case EventType.RUN_STARTED:
 								console.log(`${prefix} ${colorize('blue', '⏳ Starting...')}`);
 								break;
-							case 'TEXT_MESSAGE_START':
+							case EventType.TEXT_MESSAGE_START:
 								process.stdout.write(`${prefix} ${colorize('green', '')}`);
 								break;
-							case 'TEXT_MESSAGE_CONTENT':
+							case EventType.TEXT_MESSAGE_CONTENT:
 								if (event.delta)
 									process.stdout.write(colorize('green', event.delta));
 								break;
-							case 'TEXT_MESSAGE_END':
+							case EventType.TEXT_MESSAGE_END:
 								console.log(); // New line
 								break;
-							case 'RUN_FINISHED':
+							case EventType.RUN_FINISHED:
 								console.log(`${prefix} ${colorize('green', '✅ Completed')}`);
 								break;
-							case 'RUN_ERROR':
+							case EventType.RUN_ERROR:
 								console.log(
-									`${prefix} ${colorize('red', `❌ Error: ${event.error}`)}`,
+									`${prefix} ${colorize('red', `❌ Error: ${event.message}`)}`,
 								);
 								break;
 						}

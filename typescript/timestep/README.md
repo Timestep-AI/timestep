@@ -78,7 +78,7 @@ timestep --help
 
 ### AG-UI Protocol (Real-time Frontend Interaction)
 
-The AG-UI (Agent User Interaction Protocol) provides real-time streaming interfaces for frontend applications following the official AG-UI specification:
+The AG-UI (Agent User Interaction Protocol) provides real-time streaming interfaces for frontend applications using the **official AG-UI TypeScript SDK** (`@ag-ui/core`, `@ag-ui/client`):
 
 ```bash
 # Start AG-UI interactive client
@@ -87,7 +87,7 @@ node dist/agUiClient.js
 # Direct message to specific agent
 node dist/agUiClient.js --agentId 00000000-0000-0000-0000-000000000000 --user-input "Hello!"
 
-# AG-UI REST endpoints (compliant with official specification)
+# AG-UI REST endpoints (using official @ag-ui/core types and events)
 curl http://localhost:8080/ag-ui/agents/discover
 curl -X POST http://localhost:8080/ag-ui/agents/AGENT_ID/run \
   -H "Content-Type: application/json" \
@@ -95,10 +95,10 @@ curl -X POST http://localhost:8080/ag-ui/agents/AGENT_ID/run \
 ```
 
 The AG-UI protocol features:
-- **Real-time streaming** with Server-Sent Events following official specification
+- **Real-time streaming** with Server-Sent Events using official @ag-ui/core events
 - **Agent discovery** with capabilities and status information
-- **Event-driven communication** (RUN_STARTED, TEXT_MESSAGE_START/CONTENT/END, RUN_FINISHED, RUN_ERROR)
-- **Official protocol compliance** with proper message formats and event types
+- **Event-driven communication** using official EventType enum (RUN_STARTED, TEXT_MESSAGE_START/CONTENT/END, RUN_FINISHED, RUN_ERROR)
+- **Official TypeScript SDK integration** with @ag-ui/core types and interfaces
 - **Side-by-side operation** with existing A2A protocol
 
 ### Library Usage (Node.js)

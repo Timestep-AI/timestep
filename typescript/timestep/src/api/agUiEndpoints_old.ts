@@ -2,7 +2,7 @@
  * AG-UI (Agent User Interaction Protocol) Endpoints
  *
  * This module provides AG-UI endpoints for real-time frontend interaction with agents,
- * using the official @ag-ui/core and @ag-ui/client TypeScript SDK.
+ * working alongside existing A2A endpoints without modifying them.
  */
 
 import {Request, Response} from 'express';
@@ -14,20 +14,73 @@ import {
 	DefaultRepositoryContainer,
 } from '../services/backing/repositoryContainer.js';
 
-// Import official AG-UI SDK types and classes
-import {
-	RunAgentInput,
-	EventType,
-	BaseEvent,
-	RunStartedEvent,
-	TextMessageStartEvent,
-	TextMessageContentEvent,
-	TextMessageEndEvent,
-	RunFinishedEvent,
-	RunErrorEvent,
-} from '@ag-ui/core';
+// AG-UI Protocol Types - Based on official specification
+interface AGUIMessage {
+	role: 'user' | 'assistant';
+	content: string;
+	messageId?: string;
+}
 
-// Official AG-UI Agent Discovery Response
+interface AGUIRunInput {
+	runId: string;
+	threadId: string;
+	messages: AGUIMessage[];
+}
+
+// Official AG-UI Event Types
+enum EventType {
+	RUN_STARTED = 'RUN_STARTED',
+	TEXT_MESSAGE_START = 'TEXT_MESSAGE_START',
+	TEXT_MESSAGE_CONTENT = 'TEXT_MESSAGE_CONTENT',
+	TEXT_MESSAGE_END = 'TEXT_MESSAGE_END',
+	RUN_FINISHED = 'RUN_FINISHED',
+	RUN_ERROR = 'RUN_ERROR',
+}
+
+interface BaseEvent {
+	type: EventType;
+	threadId?: string;
+	runId?: string;
+}
+
+interface RunStartedEvent extends BaseEvent {
+	type: EventType.RUN_STARTED;
+	threadId: string;
+	runId: string;
+}
+
+interface TextMessageStartEvent extends BaseEvent {
+	type: EventType.TEXT_MESSAGE_START;
+	messageId: string;
+	role: 'assistant';
+}
+
+interface TextMessageContentEvent extends BaseEvent {
+	type: EventType.TEXT_MESSAGE_CONTENT;
+	messageId: string;
+	delta: string;
+}
+
+interface TextMessageEndEvent extends BaseEvent {
+	type: EventType.TEXT_MESSAGE_END;
+	messageId: string;
+}
+
+interface RunFinishedEvent extends BaseEvent {
+	type: EventType.RUN_FINISHED;
+	threadId: string;
+	runId: string;
+}
+
+interface RunErrorEvent extends BaseEvent {
+	type: EventType.RUN_ERROR;
+	threadId: string;
+	runId: string;
+	error: string;
+}
+
+type AGUIEvent = RunStartedEvent | TextMessageStartEvent | TextMessageContentEvent | TextMessageEndEvent | RunFinishedEvent | RunErrorEvent;
+
 interface AGUIAgent {
 	id: string;
 	name: string;
@@ -69,10 +122,10 @@ export class AGUIEndpoints {
 		}
 	};
 
-	// AG-UI Run Endpoint (Server-Sent Events) using official SDK types
+	// AG-UI Run Endpoint (Server-Sent Events)
 	handleRun = async (req: Request, res: Response): Promise<void> => {
 		try {
-			const runInput: RunAgentInput = req.body;
+			const runInput: AGUIRunInput = req.body;
 			const {agentId} = req.params;
 
 			if (!runInput.messages || !Array.isArray(runInput.messages)) {
@@ -88,11 +141,11 @@ export class AGUIEndpoints {
 				'Access-Control-Allow-Origin': '*',
 			});
 
-			const sendEvent = (event: BaseEvent) => {
+			const sendEvent = (event: AGUIEvent) => {
 				res.write(`data: ${JSON.stringify(event)}\n\n`);
 			};
 
-			// Send RUN_STARTED event using official SDK type
+			// Send RUN_STARTED event
 			const runStartedEvent: RunStartedEvent = {
 				type: EventType.RUN_STARTED,
 				threadId: runInput.threadId,
@@ -108,7 +161,7 @@ export class AGUIEndpoints {
 				// Generate message ID
 				const messageId = `msg_${Date.now()}`;
 
-				// Send TEXT_MESSAGE_START event using official SDK type
+				// Send TEXT_MESSAGE_START event
 				const messageStartEvent: TextMessageStartEvent = {
 					type: EventType.TEXT_MESSAGE_START,
 					messageId,
@@ -117,9 +170,9 @@ export class AGUIEndpoints {
 				sendEvent(messageStartEvent);
 
 				// Generate response
-				const response = `Hello! You said: "${userText}". I'm agent ${agentId} using official AG-UI SDK.`;
+				const response = `Hello! You said: "${userText}". I'm agent ${agentId}.`;
 
-				// Stream the response character by character using official SDK events
+				// Stream the response character by character
 				for (let i = 0; i < response.length; i++) {
 					const contentEvent: TextMessageContentEvent = {
 						type: EventType.TEXT_MESSAGE_CONTENT,
@@ -131,14 +184,14 @@ export class AGUIEndpoints {
 					await new Promise(resolve => setTimeout(resolve, 50));
 				}
 
-				// Send TEXT_MESSAGE_END event using official SDK type
+				// Send TEXT_MESSAGE_END event
 				const messageEndEvent: TextMessageEndEvent = {
 					type: EventType.TEXT_MESSAGE_END,
 					messageId,
 				};
 				sendEvent(messageEndEvent);
 
-				// Send RUN_FINISHED event using official SDK type
+				// Send RUN_FINISHED event
 				const runFinishedEvent: RunFinishedEvent = {
 					type: EventType.RUN_FINISHED,
 					threadId: runInput.threadId,
@@ -148,7 +201,9 @@ export class AGUIEndpoints {
 			} catch (error) {
 				const runErrorEvent: RunErrorEvent = {
 					type: EventType.RUN_ERROR,
-					message: error instanceof Error ? error.message : 'Unknown error',
+					threadId: runInput.threadId,
+					runId: runInput.runId,
+					error: error instanceof Error ? error.message : 'Unknown error',
 				};
 				sendEvent(runErrorEvent);
 			}
@@ -199,12 +254,16 @@ export function addAGUIEndpoints(
 	agentExecutor: AgentExecutor,
 	repositories?: RepositoryContainer,
 ): void {
-	const aguiEndpoints = new AGUIEndpoints(taskStore, agentExecutor, repositories);
+	const aguiEndpoints = new AGUIEndpoints(
+		taskStore,
+		agentExecutor,
+		repositories,
+	);
 
 	app.get('/ag-ui/agents/discover', aguiEndpoints.handleDiscover);
 	app.post('/ag-ui/agents/:agentId/run', aguiEndpoints.handleRun);
 
-	console.log('🎯 AG-UI endpoints added (using official SDK):');
+	console.log('🎯 AG-UI endpoints added:');
 	console.log('   GET  /ag-ui/agents/discover');
 	console.log('   POST /ag-ui/agents/:agentId/run');
 }
