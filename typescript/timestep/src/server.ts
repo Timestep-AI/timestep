@@ -90,90 +90,6 @@ app.use((_req, res, next) => {
 	next();
 });
 
-app.get('/agents', handleListAgents);
-
-app.get('/chats', async (_req, res) => {
-	try {
-		const {listContexts} = await import('./api/contextsApi.js');
-		const result = await listContexts(repositories);
-		res.json(result.data);
-	} catch (error) {
-		console.error('Error listing contexts:', error);
-		res.status(500).json({
-			error: error instanceof Error ? error.message : 'Failed to list contexts',
-		});
-	}
-});
-
-app.get('/mcp_servers', async (_req, res) => {
-	try {
-		const {listMcpServers} = await import('./api/mcpServersApi.js');
-		const result = await listMcpServers(repositories);
-		res.json(result.data);
-	} catch (error) {
-		console.error('Error listing MCP servers:', error);
-		res.status(500).json({
-			error:
-				error instanceof Error ? error.message : 'Failed to list MCP servers',
-		});
-	}
-});
-
-app.get('/model_providers', async (_req, res) => {
-	try {
-		const {listModelProviders} = await import('./api/modelProvidersApi.js');
-		const result = await listModelProviders(repositories);
-		res.json(result.data);
-	} catch (error) {
-		console.error('Error listing model providers:', error);
-		res.status(500).json({
-			error:
-				error instanceof Error
-					? error.message
-					: 'Failed to list model providers',
-		});
-	}
-});
-
-app.get('/models', async (_req, res) => {
-	try {
-		const {listModels} = await import('./api/modelsApi.js');
-		const result = await listModels(repositories);
-		res.json(result.data);
-	} catch (error) {
-		console.error('Error listing models:', error);
-		res.status(500).json({
-			error: error instanceof Error ? error.message : 'Failed to list models',
-		});
-	}
-});
-
-app.get('/tools', async (_req, res) => {
-	try {
-		const {listTools} = await import('./api/toolsApi.js');
-		const result = await listTools(repositories);
-		res.json(result.data);
-	} catch (error) {
-		console.error('Error listing tools:', error);
-		res.status(500).json({
-			error: error instanceof Error ? error.message : 'Failed to list tools',
-		});
-	}
-});
-
-app.get('/traces', async (_req, res) => {
-	try {
-		const {listTraces} = await import('./api/tracesApi.js');
-		const result = await listTraces();
-		res.json(result.data);
-	} catch (error) {
-		console.error('Error listing traces:', error);
-		res.status(500).json({
-			error: error instanceof Error ? error.message : 'Failed to list traces',
-		});
-	}
-});
-
 // version added at end to keep path order
 
 // MCP Routes
@@ -330,7 +246,6 @@ app.use('/agents/:agentId', async (req, res, next) => {
 	);
 });
 
-// Re-add ordered GET routes
 app.get('/agents', handleListAgents);
 app.get('/chats', async (_req, res) => {
 	try {
