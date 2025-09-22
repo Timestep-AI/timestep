@@ -262,6 +262,8 @@ async function getAgentInput(
 			'🔍 User message is tool approval - loading saved state from context service',
 		);
 		const savedState = await contextService.getTaskState(contextId, taskId);
+		console.log('🔍 Retrieved savedState type:', typeof savedState);
+		console.log('🔍 Retrieved savedState preview:', savedState ? JSON.stringify(savedState, null, 2).substring(0, 500) + '...' : 'null');
 		if (!savedState) {
 			throw new Error(
 				`No saved state found for tool approval. ContextId: ${contextId}, TaskId: ${taskId}`,
@@ -442,23 +444,78 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 					this.contextService,
 				);
 
-				const result = await runner.run(agent, agentInput);
+				// Use streaming mode from the Agents SDK
+				let stream;
+				if (agentInput instanceof RunState) {
+					// Resume from existing state (tool approval scenario)
+					console.log('🔄 Resuming execution from saved RunState');
+					stream = await runner.run(agent, agentInput, { stream: true });
+				} else {
+					// Start new execution
+					console.log('🚀 Starting new execution');
+					stream = await runner.run(agent, agentInput, { stream: true });
+				}
 
-				const hasInterruptions = result.interruptions?.length > 0;
+				// Convert the text stream to individual events and publish them
+				let currentMessage = '';
 
-				if (hasInterruptions) {
-					console.log('Interruptions found, saving state to context service');
+				const textStream = stream.toTextStream({ compatibleWithNodeStreams: false });
 
+				// Process the streaming text as it comes in
+				for await (const chunk of textStream) {
+					currentMessage += chunk;
+
+					// Publish incremental status updates for streaming
+					const streamingStatusUpdate: TaskStatusUpdateEvent = {
+						kind: 'status-update',
+						taskId: taskId,
+						contextId: contextId,
+						status: {
+							state: 'working',
+							message: {
+								messageId: crypto.randomUUID(),
+								kind: 'message',
+								role: 'agent',
+								parts: [
+									{
+										kind: 'text',
+										text: currentMessage,
+									},
+								],
+								contextId: contextId,
+								timestamp: new Date().toISOString(),
+							},
+							timestamp: new Date().toISOString(),
+						},
+						final: false,
+					};
+					eventBus.publish(streamingStatusUpdate);
+				}
+
+				// Wait for the stream to complete
+				await stream.completed;
+
+				// Handle interruptions following the exact pattern from the example
+				while (stream.interruptions?.length) {
+					console.log('Interruptions found, requesting human approval');
+
+					console.log('🔍 Saving RunState for interruption. State type:', typeof stream.state);
+					console.log('🔍 RunState preview:', JSON.stringify(stream.state, null, 2).substring(0, 500) + '...');
+
+					// Pass the StreamedRunResult directly since it implements the RunResult interface
 					await this.contextService.updateFromRunResult(
 						contextId,
 						taskId,
-						result,
+						stream,
 					);
 
+					const state = stream.state;
+
+					// Publish a single input-required status update for all interruptions
 					const inputRequiredStatusUpdate = createInputRequiredStatusUpdate(
 						taskId,
 						context.contextId,
-						result.interruptions,
+						stream.interruptions,
 					);
 					console.log(
 						'🔍 Publishing input-required status update:',
@@ -466,21 +523,26 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 					);
 					eventBus.publish(inputRequiredStatusUpdate);
 
+					// Wait for approval - the approvals will trigger a new execution
+					// Similar to the example: "stream = await run(mainAgent, state, { stream: true });"
+					// But in our A2A context, we return and wait for the approval to come back
 					eventBus.finished();
 					return;
-				} else {
-					console.log('No interruptions, saving history to context service');
-
-					console.log(`[${agent.name}] ${result.finalOutput}`);
-
-					await this.contextService.updateFromRunResult(
-						contextId,
-						taskId,
-						result,
-					);
 				}
 
-				const finalOutput = result.finalOutput || '';
+				// No interruptions, execution completed successfully
+				console.log('No interruptions, saving history to context service');
+
+				console.log(`[${agent.name}] ${currentMessage}`);
+
+				// Pass the StreamedRunResult directly since it implements the RunResult interface
+				await this.contextService.updateFromRunResult(
+					contextId,
+					taskId,
+					stream,
+				);
+
+				const finalOutput = currentMessage || '';
 
 				// For task-generating agents, publish the completed Task object (not just status)
 				// Retrieve the updated task from the context service

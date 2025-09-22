@@ -337,9 +337,27 @@ export class OllamaModel implements Model {
 		}
 
 		// Convert Ollama response to OpenAI format for compatibility
+		console.log('🔍 Raw Ollama response:', JSON.stringify(responseData, null, 2));
 		const ret = this._convertOllamaToOpenai(responseData);
+		console.log('🔍 Converted OpenAI response:', JSON.stringify(ret, null, 2));
 
 		return ret;
+	}
+
+	private toResponseUsage(usage: any) {
+		return {
+			requests: 1,
+			input_tokens: usage.prompt_tokens || 0,
+			output_tokens: usage.completion_tokens || 0,
+			total_tokens: usage.total_tokens || 0,
+			input_tokens_details: {
+				cached_tokens: usage.prompt_tokens_details?.cached_tokens || 0,
+			},
+			output_tokens_details: {
+				reasoning_tokens:
+					usage.completion_tokens_details?.reasoning_tokens || 0,
+			},
+		};
 	}
 
 	async getResponse(request: ModelRequest): Promise<ModelResponse> {
@@ -425,25 +443,13 @@ export class OllamaModel implements Model {
 			}
 		}
 
-		function toResponseUsage(usage: any) {
-			return {
-				requests: 1,
-				input_tokens: usage.prompt_tokens,
-				output_tokens: usage.completion_tokens,
-				total_tokens: usage.total_tokens,
-				input_tokens_details: {
-					cached_tokens: usage.prompt_tokens_details?.cached_tokens || 0,
-				},
-				output_tokens_details: {
-					reasoning_tokens:
-						usage.completion_tokens_details?.reasoning_tokens || 0,
-				},
-			};
-		}
+		// Debug: Log the output to understand why it might be empty
+		console.log('🔍 OllamaModel response output:', JSON.stringify(output, null, 2));
+		console.log('🔍 OllamaModel response.choices:', JSON.stringify(response.choices, null, 2));
 
 		const modelResponse: ModelResponse = {
 			usage: response.usage
-				? new Usage(toResponseUsage(response.usage))
+				? new Usage(this.toResponseUsage(response.usage))
 				: new Usage(),
 			output,
 			responseId: response.id,
@@ -464,63 +470,10 @@ export class OllamaModel implements Model {
 			}
 			const stream = await this.#fetchResponse(request, span, true);
 
-			// For Ollama streaming, we need to convert the stream format
-			// This is a simplified implementation - real implementation would need
-			// proper stream conversion similar to convertChatCompletionsStreamToResponses
-			const response = {
-				id: `ollama-${Math.floor(Date.now() / 1000)}`,
-				created: Math.floor(Date.now() / 1000),
-				model: this.#model,
-				object: 'chat.completion',
-				choices: [],
-				usage: {
-					prompt_tokens: 0,
-					completion_tokens: 0,
-					total_tokens: 0,
-				},
-			};
+			yield* this.convertOllamaStreamToResponses(stream);
 
-			// Yield stream events - simplified for Ollama
-			for await (const chunk of stream as any) {
-				if (chunk.message && chunk.message.content) {
-					yield {
-						type: 'output_text_delta',
-						delta: chunk.message.content || '',
-					} as ResponseStreamEvent;
-				}
-
-				if (chunk.done) {
-					yield {
-						type: 'response_done',
-						response: {
-							id: response.id,
-							output: [
-								{
-									type: 'message' as const,
-									role: 'assistant' as const,
-									status: 'completed' as const,
-									content: [
-										{
-											type: 'text' as const,
-											text: response.choices[0]?.message?.content || '',
-										},
-									],
-								},
-							],
-							usage: new Usage({
-								requests: 1,
-								input_tokens: response.usage.prompt_tokens,
-								output_tokens: response.usage.completion_tokens,
-								total_tokens: response.usage.total_tokens,
-							}),
-						},
-					} as ResponseStreamEvent;
-					break;
-				}
-			}
-
-			if (span && response && request.tracing === true) {
-				span.spanData.output = [response];
+			if (span && request.tracing === true) {
+				span.spanData.output = [];
 			}
 		} catch (error) {
 			if (span) {
@@ -541,6 +494,140 @@ export class OllamaModel implements Model {
 			if (span) {
 				span.end();
 				resetCurrentSpan();
+			}
+		}
+	}
+
+	private async *convertOllamaStreamToResponses(
+		stream: any,
+	): AsyncIterable<ResponseStreamEvent> {
+		let usage: any = undefined;
+		let started = false;
+		let accumulatedText = '';
+		const responseId = `ollama-${Math.floor(Date.now() / 1000)}`;
+
+		console.log('🔧 Starting Ollama stream conversion, responseId:', responseId);
+
+		for await (const chunk of stream) {
+			console.log('🔧 Received chunk:', JSON.stringify(chunk, null, 2));
+			if (!started) {
+				started = true;
+				yield {
+					type: 'response_started',
+					providerData: chunk,
+				};
+			}
+
+			// Always yield the raw event
+			yield {
+				type: 'model',
+				event: chunk,
+			};
+
+			// Extract usage if available
+			if (chunk.eval_count || chunk.prompt_eval_count) {
+				usage = {
+					prompt_tokens: chunk.prompt_eval_count || 0,
+					completion_tokens: chunk.eval_count || 0,
+					total_tokens: (chunk.prompt_eval_count || 0) + (chunk.eval_count || 0),
+				};
+			}
+
+			// Handle text content
+			if (chunk.message && chunk.message.content) {
+				yield {
+					type: 'output_text_delta',
+					delta: chunk.message.content,
+					providerData: chunk,
+				};
+				accumulatedText += chunk.message.content;
+			}
+
+			// Handle tool calls immediately when they arrive
+			if (chunk.message && chunk.message.tool_calls) {
+				console.log('🔧 Tool calls detected in streaming chunk:', JSON.stringify(chunk.message.tool_calls, null, 2));
+				for (const tool_call of chunk.message.tool_calls) {
+					if (tool_call.function) {
+						console.log('🔧 Processing function call:', tool_call.function.name, 'with args:', tool_call.function.arguments);
+
+						// Generate a call ID if Ollama doesn't provide one (consistent with non-streaming version)
+						const callId = tool_call.id || `call_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+
+						// Yield function call as a proper ResponseStreamEvent
+						const functionCallEvent = {
+							type: 'response_done',
+							response: {
+								id: responseId,
+								usage: {
+									inputTokens: usage?.prompt_tokens ?? 0,
+									outputTokens: usage?.completion_tokens ?? 0,
+									totalTokens: usage?.total_tokens ?? 0,
+									inputTokensDetails: { cached_tokens: 0 },
+									outputTokensDetails: { reasoning_tokens: 0 },
+								},
+								output: [{
+									id: responseId,
+									type: 'function_call',
+									arguments: JSON.stringify(tool_call.function.arguments),
+									name: tool_call.function.name,
+									callId: callId,
+									status: 'completed',
+									providerData: tool_call,
+								}],
+							},
+						};
+
+						console.log('🔧 Yielding function call event:', JSON.stringify(functionCallEvent, null, 2));
+						yield functionCallEvent;
+						console.log('🔧 Function call event yielded, returning early');
+						return; // Exit early when tool call is found
+					}
+				}
+			}
+
+			// Check if this is the final chunk
+			if (chunk.done) {
+				// Prepare final outputs
+				const outputs: protocol.OutputModelItem[] = [];
+
+				if (accumulatedText) {
+					outputs.push({
+						id: responseId,
+						type: 'message',
+						role: 'assistant',
+						content: [
+							{
+								type: 'output_text',
+								text: accumulatedText,
+							},
+						],
+						status: 'completed',
+					});
+				}
+
+				// Tool calls are now processed immediately when they arrive (above),
+				// so no need to process them again in the final chunk
+
+				// Final response event
+				yield {
+					type: 'response_done',
+					response: {
+						id: responseId,
+						usage: {
+							inputTokens: usage?.prompt_tokens ?? 0,
+							outputTokens: usage?.completion_tokens ?? 0,
+							totalTokens: usage?.total_tokens ?? 0,
+							inputTokensDetails: {
+								cached_tokens: 0,
+							},
+							outputTokensDetails: {
+								reasoning_tokens: 0,
+							},
+						},
+						output: outputs,
+					},
+				};
+				break;
 			}
 		}
 	}
