@@ -337,7 +337,10 @@ export class OllamaModel implements Model {
 		}
 
 		// Convert Ollama response to OpenAI format for compatibility
-		console.log('🔍 Raw Ollama response:', JSON.stringify(responseData, null, 2));
+		console.log(
+			'🔍 Raw Ollama response:',
+			JSON.stringify(responseData, null, 2),
+		);
 		const ret = this._convertOllamaToOpenai(responseData);
 		console.log('🔍 Converted OpenAI response:', JSON.stringify(ret, null, 2));
 
@@ -444,8 +447,14 @@ export class OllamaModel implements Model {
 		}
 
 		// Debug: Log the output to understand why it might be empty
-		console.log('🔍 OllamaModel response output:', JSON.stringify(output, null, 2));
-		console.log('🔍 OllamaModel response.choices:', JSON.stringify(response.choices, null, 2));
+		console.log(
+			'🔍 OllamaModel response output:',
+			JSON.stringify(output, null, 2),
+		);
+		console.log(
+			'🔍 OllamaModel response.choices:',
+			JSON.stringify(response.choices, null, 2),
+		);
 
 		const modelResponse: ModelResponse = {
 			usage: response.usage
@@ -506,7 +515,10 @@ export class OllamaModel implements Model {
 		let accumulatedText = '';
 		const responseId = `ollama-${Math.floor(Date.now() / 1000)}`;
 
-		console.log('🔧 Starting Ollama stream conversion, responseId:', responseId);
+		console.log(
+			'🔧 Starting Ollama stream conversion, responseId:',
+			responseId,
+		);
 
 		for await (const chunk of stream) {
 			console.log('🔧 Received chunk:', JSON.stringify(chunk, null, 2));
@@ -529,7 +541,8 @@ export class OllamaModel implements Model {
 				usage = {
 					prompt_tokens: chunk.prompt_eval_count || 0,
 					completion_tokens: chunk.eval_count || 0,
-					total_tokens: (chunk.prompt_eval_count || 0) + (chunk.eval_count || 0),
+					total_tokens:
+						(chunk.prompt_eval_count || 0) + (chunk.eval_count || 0),
 				};
 			}
 
@@ -545,13 +558,23 @@ export class OllamaModel implements Model {
 
 			// Handle tool calls immediately when they arrive
 			if (chunk.message && chunk.message.tool_calls) {
-				console.log('🔧 Tool calls detected in streaming chunk:', JSON.stringify(chunk.message.tool_calls, null, 2));
+				console.log(
+					'🔧 Tool calls detected in streaming chunk:',
+					JSON.stringify(chunk.message.tool_calls, null, 2),
+				);
 				for (const tool_call of chunk.message.tool_calls) {
 					if (tool_call.function) {
-						console.log('🔧 Processing function call:', tool_call.function.name, 'with args:', tool_call.function.arguments);
+						console.log(
+							'🔧 Processing function call:',
+							tool_call.function.name,
+							'with args:',
+							tool_call.function.arguments,
+						);
 
 						// Generate a call ID if Ollama doesn't provide one (consistent with non-streaming version)
-						const callId = tool_call.id || `call_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+						const callId =
+							tool_call.id ||
+							`call_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
 
 						// Yield function call as a proper ResponseStreamEvent
 						const functionCallEvent = {
@@ -562,22 +585,27 @@ export class OllamaModel implements Model {
 									inputTokens: usage?.prompt_tokens ?? 0,
 									outputTokens: usage?.completion_tokens ?? 0,
 									totalTokens: usage?.total_tokens ?? 0,
-									inputTokensDetails: { cached_tokens: 0 },
-									outputTokensDetails: { reasoning_tokens: 0 },
+									inputTokensDetails: {cached_tokens: 0},
+									outputTokensDetails: {reasoning_tokens: 0},
 								},
-								output: [{
-									id: responseId,
-									type: 'function_call',
-									arguments: JSON.stringify(tool_call.function.arguments),
-									name: tool_call.function.name,
-									callId: callId,
-									status: 'completed',
-									providerData: tool_call,
-								}],
+								output: [
+									{
+										id: responseId,
+										type: 'function_call',
+										arguments: JSON.stringify(tool_call.function.arguments),
+										name: tool_call.function.name,
+										callId: callId,
+										status: 'completed',
+										providerData: tool_call,
+									},
+								],
 							},
 						};
 
-						console.log('🔧 Yielding function call event:', JSON.stringify(functionCallEvent, null, 2));
+						console.log(
+							'🔧 Yielding function call event:',
+							JSON.stringify(functionCallEvent, null, 2),
+						);
 						yield functionCallEvent;
 						console.log('🔧 Function call event yielded, returning early');
 						return; // Exit early when tool call is found

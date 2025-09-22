@@ -349,9 +349,10 @@ async function printAgentEvent(
 		const isStreaming = state === 'working' && !update.final;
 		if (!isStreaming || update.final) {
 			console.log(
-				`${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${
-					update.taskId
-				}, Context: ${update.contextId}) ${
+				`${prefix} ${stateEmoji} Status: ${colorize(
+					stateColor,
+					state,
+				)} (Task: ${update.taskId}, Context: ${update.contextId}) ${
 					update.final ? colorize('bright', '[FINAL]') : ''
 				}`,
 			);
@@ -399,9 +400,10 @@ async function printAgentEvent(
 				if (lastDisplayedMessage === '') {
 					// This is the first streaming chunk, show the initial status prefix
 					console.log(
-						`${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${
-							update.taskId
-						}, Context: ${update.contextId})`,
+						`${prefix} ${stateEmoji} Status: ${colorize(
+							stateColor,
+							state,
+						)} (Task: ${update.taskId}, Context: ${update.contextId})`,
 					);
 					process.stdout.write(colorize('green', `     📝 `)); // Show prefix without newline
 					isCurrentlyStreaming = true;
@@ -537,14 +539,19 @@ function printMessageContent(message: Message) {
 	});
 }
 
-function printMessageContentStreaming(message: Message, isStreaming: boolean = false) {
+function printMessageContentStreaming(
+	message: Message,
+	isStreaming: boolean = false,
+) {
 	message.parts.forEach((part: Part, index: number) => {
 		if (part.kind === 'text') {
 			if (isStreaming) {
 				// For streaming, only show the delta (new content)
 				const currentText = part.text;
-				if (currentText.length > lastDisplayedMessage.length &&
-					currentText.startsWith(lastDisplayedMessage)) {
+				if (
+					currentText.length > lastDisplayedMessage.length &&
+					currentText.startsWith(lastDisplayedMessage)
+				) {
 					// Show only the new content
 					const delta = currentText.slice(lastDisplayedMessage.length);
 					if (delta) {

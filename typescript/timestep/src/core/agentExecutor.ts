@@ -263,7 +263,12 @@ async function getAgentInput(
 		);
 		const savedState = await contextService.getTaskState(contextId, taskId);
 		console.log('🔍 Retrieved savedState type:', typeof savedState);
-		console.log('🔍 Retrieved savedState preview:', savedState ? JSON.stringify(savedState, null, 2).substring(0, 500) + '...' : 'null');
+		console.log(
+			'🔍 Retrieved savedState preview:',
+			savedState
+				? JSON.stringify(savedState, null, 2).substring(0, 500) + '...'
+				: 'null',
+		);
 		if (!savedState) {
 			throw new Error(
 				`No saved state found for tool approval. ContextId: ${contextId}, TaskId: ${taskId}`,
@@ -449,17 +454,19 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 				if (agentInput instanceof RunState) {
 					// Resume from existing state (tool approval scenario)
 					console.log('🔄 Resuming execution from saved RunState');
-					stream = await runner.run(agent, agentInput, { stream: true });
+					stream = await runner.run(agent, agentInput, {stream: true});
 				} else {
 					// Start new execution
 					console.log('🚀 Starting new execution');
-					stream = await runner.run(agent, agentInput, { stream: true });
+					stream = await runner.run(agent, agentInput, {stream: true});
 				}
 
 				// Convert the text stream to individual events and publish them
 				let currentMessage = '';
 
-				const textStream = stream.toTextStream({ compatibleWithNodeStreams: false });
+				const textStream = stream.toTextStream({
+					compatibleWithNodeStreams: false,
+				});
 
 				// Process the streaming text as it comes in
 				for await (const chunk of textStream) {
@@ -499,8 +506,14 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 				while (stream.interruptions?.length) {
 					console.log('Interruptions found, requesting human approval');
 
-					console.log('🔍 Saving RunState for interruption. State type:', typeof stream.state);
-					console.log('🔍 RunState preview:', JSON.stringify(stream.state, null, 2).substring(0, 500) + '...');
+					console.log(
+						'🔍 Saving RunState for interruption. State type:',
+						typeof stream.state,
+					);
+					console.log(
+						'🔍 RunState preview:',
+						JSON.stringify(stream.state, null, 2).substring(0, 500) + '...',
+					);
 
 					// Pass the StreamedRunResult directly since it implements the RunResult interface
 					await this.contextService.updateFromRunResult(
