@@ -69,6 +69,9 @@ let currentContextId: string | undefined = undefined; // Initialize as undefined
 let pendingToolCalls: ToolCall[] = []; // Track pending tool calls awaiting approval
 let isWaitingForApproval = false; // Track if we're waiting for user approval
 let selectedAgentId: string | undefined = undefined; // Track selected agent ID
+let lastDisplayedMessage: string = ''; // Track last displayed message content for delta handling
+let isCurrentlyStreaming: boolean = false; // Track if we're currently in streaming mode
+let streamedTaskIds: Set<string> = new Set(); // Track which tasks we've streamed content for
 const appConfig = loadAppConfig();
 let baseServerUrl = `http://localhost:${appConfig.appPort}`; // Base server URL without agent-specific path
 let serverUrl: string; // Will be set after agent selection
@@ -342,19 +345,26 @@ async function printAgentEvent(
 				break;
 		}
 
-		console.log(
-			`${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${
-				update.taskId
-			}, Context: ${update.contextId}) ${
-				update.final ? colorize('bright', '[FINAL]') : ''
-			}`,
-		);
+		// Only show status line for non-streaming updates or final updates
+		const isStreaming = state === 'working' && !update.final;
+		if (!isStreaming || update.final) {
+			console.log(
+				`${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${
+					update.taskId
+				}, Context: ${update.contextId}) ${
+					update.final ? colorize('bright', '[FINAL]') : ''
+				}`,
+			);
+		}
 
 		// Clear task ID when task is final and completed (not just working or input-required)
 		if (update.final && state === 'completed') {
 			currentTaskId = undefined;
 			isWaitingForApproval = false;
 			pendingToolCalls = [];
+			lastDisplayedMessage = ''; // Reset for next task
+			isCurrentlyStreaming = false; // Reset streaming state
+			// Note: Don't clean streamedTaskIds here - let the task event handle cleanup
 		}
 
 		// Update currentTaskId and currentContextId from status update
@@ -365,6 +375,8 @@ async function printAgentEvent(
 			!(update.final && state === 'completed')
 		) {
 			currentTaskId = update.taskId;
+			lastDisplayedMessage = ''; // Reset for new task
+			isCurrentlyStreaming = false; // Reset streaming state for new task
 		}
 		if (update.contextId && update.contextId !== currentContextId) {
 			console.log(
@@ -379,7 +391,36 @@ async function printAgentEvent(
 		}
 
 		if (update.status.message) {
-			printMessageContent(update.status.message);
+			// Detect if this is streaming mode (working state and not final)
+			const isStreaming = state === 'working' && !update.final;
+
+			if (isStreaming) {
+				// For streaming mode, first show the status line if it's the first chunk
+				if (lastDisplayedMessage === '') {
+					// This is the first streaming chunk, show the initial status prefix
+					console.log(
+						`${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${
+							update.taskId
+						}, Context: ${update.contextId})`,
+					);
+					process.stdout.write(colorize('green', `     📝 `)); // Show prefix without newline
+					isCurrentlyStreaming = true;
+					streamedTaskIds.add(update.taskId); // Mark this task as having streamed content
+				}
+				printMessageContentStreaming(update.status.message, true);
+			} else {
+				// For non-streaming mode, check if we were just streaming
+				if (isCurrentlyStreaming && state === 'completed') {
+					// We were streaming and now we're done - replace the streamed content with clean final version
+					// Move to a new line after streaming and show clean final message
+					console.log('\n'); // Move to new line after streaming
+					// Don't show the message content again since it was already streamed
+					isCurrentlyStreaming = false;
+				} else {
+					// Regular non-streaming message
+					printMessageContentStreaming(update.status.message, false);
+				}
+			}
 
 			// Check if this is a tool call approval request
 			if (state === 'input-required' && update.status.message.parts) {
@@ -476,6 +517,64 @@ function printMessageContent(message: Message) {
 			);
 		} else if (part.kind === 'data') {
 			// Check kind property
+			const dataPart = part as DataPart;
+			console.log(
+				`${colorize('red', `  Part ${index + 1}:`)} ${colorize(
+					'yellow',
+					'📊 Data:',
+				)}`,
+				JSON.stringify(dataPart.data, null, 2),
+			);
+		} else {
+			console.log(
+				`${colorize('red', `  Part ${index + 1}:`)} ${colorize(
+					'yellow',
+					'Unsupported part kind:',
+				)}`,
+				part,
+			);
+		}
+	});
+}
+
+function printMessageContentStreaming(message: Message, isStreaming: boolean = false) {
+	message.parts.forEach((part: Part, index: number) => {
+		if (part.kind === 'text') {
+			if (isStreaming) {
+				// For streaming, only show the delta (new content)
+				const currentText = part.text;
+				if (currentText.length > lastDisplayedMessage.length &&
+					currentText.startsWith(lastDisplayedMessage)) {
+					// Show only the new content
+					const delta = currentText.slice(lastDisplayedMessage.length);
+					if (delta) {
+						// Use process.stdout.write for streaming without newlines
+						process.stdout.write(colorize('green', delta));
+					}
+					lastDisplayedMessage = currentText;
+				} else if (currentText !== lastDisplayedMessage) {
+					// Content changed completely, show with prefix
+					console.log(colorize('green', `     📝 ${currentText}`));
+					lastDisplayedMessage = currentText;
+				}
+			} else {
+				// For non-streaming, show complete message
+				console.log(colorize('green', `     📝 ${part.text}`));
+				lastDisplayedMessage = part.text;
+			}
+		} else if (part.kind === 'file') {
+			const filePart = part as FilePart;
+			console.log(
+				`${colorize('red', `  Part ${index + 1}:`)} ${colorize(
+					'blue',
+					'📄 File:',
+				)} Name: ${filePart.file.name || 'N/A'}, Type: ${
+					filePart.file.mimeType || 'N/A'
+				}, Source: ${
+					'bytes' in filePart.file ? 'Inline (bytes)' : filePart.file.uri
+				}`,
+			);
+		} else if (part.kind === 'data') {
 			const dataPart = part as DataPart;
 			console.log(
 				`${colorize('red', `  Part ${index + 1}:`)} ${colorize(
@@ -979,8 +1078,15 @@ async function handleToolApproval(
 			} else if (event.kind === 'task') {
 				const task = event as Task;
 				console.log(colorize('blue', `\n📋 Task Update: ${task.status.state}`));
+
+				// For completed tasks, skip the message content since it was already streamed
 				if (task.status.message) {
-					printMessageContent(task.status.message);
+					if (task.status.state === 'completed') {
+						// Skip showing the message content for completed tasks - it was streamed already
+						// Just show a simple note that the task completed
+					} else {
+						printMessageContent(task.status.message);
+					}
 				}
 			}
 		}
