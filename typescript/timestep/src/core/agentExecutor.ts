@@ -523,51 +523,87 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 								final: false,
 							};
 							eventBus.publish(newRunItemEvent);
+						} else if (item instanceof RunToolApprovalItem) {
+							console.log(
+								'🔍 Saving RunState for interruption. State type:',
+								typeof stream.state,
+							);
+							console.log(
+								'🔍 RunState preview:',
+								JSON.stringify(stream.state, null, 2).substring(0, 500) + '...',
+							);
+
+							// Pass the StreamedRunResult directly since it implements the RunResult interface
+							await this.contextService.updateFromRunResult(
+								contextId,
+								taskId,
+								stream,
+							);
+
+							const state = stream.state;
+
+							// Publish a single input-required status update for all interruptions
+							const inputRequiredStatusUpdate = createInputRequiredStatusUpdate(
+								taskId,
+								context.contextId,
+								stream.interruptions, // TODO: just send one interruption at a time?
+							);
+							console.log(
+								'🔍 Publishing input-required status update:',
+								JSON.stringify(inputRequiredStatusUpdate, null, 2),
+							);
+							eventBus.publish(inputRequiredStatusUpdate);
+
+							// Wait for approval - the approvals will trigger a new execution
+							// Similar to the example: "stream = await run(mainAgent, state, { stream: true });"
+							// But in our A2A context, we return and wait for the approval to come back
+							eventBus.finished();
+							return;
 						}
 					}
 				}
 
 				// TODO: just use the RunToolApprovalItem to handle interruptions?
-				while (stream.interruptions?.length) {
-					// TODO: if instead of while
-					console.log('Interruptions found, requesting human approval');
+				// while (stream.interruptions?.length) {
+				// 	// TODO: if instead of while
+				// 	console.log('Interruptions found, requesting human approval');
 
-					console.log(
-						'🔍 Saving RunState for interruption. State type:',
-						typeof stream.state,
-					);
-					console.log(
-						'🔍 RunState preview:',
-						JSON.stringify(stream.state, null, 2).substring(0, 500) + '...',
-					);
+				// 	console.log(
+				// 		'🔍 Saving RunState for interruption. State type:',
+				// 		typeof stream.state,
+				// 	);
+				// 	console.log(
+				// 		'🔍 RunState preview:',
+				// 		JSON.stringify(stream.state, null, 2).substring(0, 500) + '...',
+				// 	);
 
-					// Pass the StreamedRunResult directly since it implements the RunResult interface
-					await this.contextService.updateFromRunResult(
-						contextId,
-						taskId,
-						stream,
-					);
+				// 	// Pass the StreamedRunResult directly since it implements the RunResult interface
+				// 	await this.contextService.updateFromRunResult(
+				// 		contextId,
+				// 		taskId,
+				// 		stream,
+				// 	);
 
-					const state = stream.state;
+				// 	const state = stream.state;
 
-					// Publish a single input-required status update for all interruptions
-					const inputRequiredStatusUpdate = createInputRequiredStatusUpdate(
-						taskId,
-						context.contextId,
-						stream.interruptions, // TODO: just send one interruption at a time?
-					);
-					console.log(
-						'🔍 Publishing input-required status update:',
-						JSON.stringify(inputRequiredStatusUpdate, null, 2),
-					);
-					eventBus.publish(inputRequiredStatusUpdate);
+				// 	// Publish a single input-required status update for all interruptions
+				// 	const inputRequiredStatusUpdate = createInputRequiredStatusUpdate(
+				// 		taskId,
+				// 		context.contextId,
+				// 		stream.interruptions, // TODO: just send one interruption at a time?
+				// 	);
+				// 	console.log(
+				// 		'🔍 Publishing input-required status update:',
+				// 		JSON.stringify(inputRequiredStatusUpdate, null, 2),
+				// 	);
+				// 	eventBus.publish(inputRequiredStatusUpdate);
 
-					// Wait for approval - the approvals will trigger a new execution
-					// Similar to the example: "stream = await run(mainAgent, state, { stream: true });"
-					// But in our A2A context, we return and wait for the approval to come back
-					eventBus.finished();
-					return;
-				}
+				// 	// Wait for approval - the approvals will trigger a new execution
+				// 	// Similar to the example: "stream = await run(mainAgent, state, { stream: true });"
+				// 	// But in our A2A context, we return and wait for the approval to come back
+				// 	eventBus.finished();
+				// 	return;
+				// }
 
 				// No interruptions, execution completed successfully
 				// console.log('No interruptions, saving history to context service');
