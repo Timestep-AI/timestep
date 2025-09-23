@@ -22,6 +22,24 @@ import type {Stream} from 'openai/streaming';
 import {protocol} from '@openai/agents-core';
 import {Span, GenerationSpanData} from '@openai/agents-core';
 
+function generateOpenAIId(prefix: string, length: number): string {
+	const alphabet =
+		'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	const bytes = new Uint8Array(length);
+	(globalThis as any).crypto.getRandomValues(bytes);
+	let out = '';
+	for (let i = 0; i < length; i++) out += alphabet[bytes[i] % alphabet.length];
+	return `${prefix}${out}`;
+}
+
+function generateToolCallId(): string {
+	return generateOpenAIId('call_', 24);
+}
+
+function generateCompletionId(): string {
+	return generateOpenAIId('chatcmpl-', 29);
+}
+
 // Note: TypeScript SDK has different interfaces than Python, so we need to adapt
 // This implementation maintains the same logic as Python but uses TypeScript SDK patterns
 
@@ -35,62 +53,51 @@ export class OllamaModel implements Model {
 	}
 
 	private _convertOllamaToOpenai(ollamaResponse: any): any {
-		// Convert Ollama response format to OpenAI ChatCompletion format.
-
-		// Extract message from Ollama response
 		const ollamaMessage = ollamaResponse['message'];
 
-		// Create OpenAI-style message
 		const message: any = {
 			role: ollamaMessage['role'],
 			content: ollamaMessage['content'],
 		};
 
-		// Handle tool calls if present
 		if (ollamaMessage['tool_calls'] && ollamaMessage['tool_calls'].length > 0) {
-			// Convert Ollama tool calls to OpenAI format
-			message.tool_calls = ollamaMessage['tool_calls'].map(
-				(toolCall: any, index: number) => {
-					// Generate a more unique ID that matches OpenAI's format
-					const id = `call_${Math.random()
-						.toString(36)
-						.substr(2, 9)}_${Date.now()}_${index}`;
+			message.tool_calls = ollamaMessage['tool_calls'].map((toolCall: any) => {
+				const id =
+					toolCall.id &&
+					typeof toolCall.id === 'string' &&
+					toolCall.id.startsWith('call_')
+						? toolCall.id
+						: generateToolCallId();
 
-					return {
-						id: id,
-						type: 'function',
-						function: {
-							name: toolCall.function.name,
-							arguments: JSON.stringify(toolCall.function.arguments),
-						},
-					};
-				},
-			);
+				return {
+					id: id,
+					type: 'function',
+					function: {
+						name: toolCall.function.name,
+						arguments: JSON.stringify(toolCall.function.arguments),
+					},
+				};
+			});
 		}
 
-		// Create choice
 		const choice = {
 			finish_reason: message.tool_calls ? 'tool_calls' : 'stop',
 			index: 0,
 			message: message,
 		};
 
-		// Extract token usage from Ollama response
-		// Ollama provides eval_count (completion tokens) and prompt_eval_count (prompt tokens)
 		const evalCount = ollamaResponse['eval_count'] || 0;
 		const promptEvalCount = ollamaResponse['prompt_eval_count'] || 0;
 		const totalTokens = evalCount + promptEvalCount;
 
-		// Create usage info with actual token counts from Ollama
 		const usage = {
 			completion_tokens: evalCount,
 			prompt_tokens: promptEvalCount,
 			total_tokens: totalTokens,
 		};
 
-		// Create ChatCompletion response
 		const result = {
-			id: `ollama-${Math.floor(Date.now() / 1000)}`,
+			id: generateCompletionId(),
 			choices: [choice],
 			created: Math.floor(Date.now() / 1000),
 			model: this.#model,
@@ -101,7 +108,6 @@ export class OllamaModel implements Model {
 		return result;
 	}
 
-	// Convert a handoff (agent) into a function tool callable by the model
 	private convertHandoffTool(handoff: any) {
 		return {
 			type: 'function',
@@ -128,7 +134,6 @@ export class OllamaModel implements Model {
 		span: Span<GenerationSpanData> | undefined,
 		stream: boolean,
 	): Promise<Stream<any> | any> {
-		// Convert input to messages - matching Python Converter.items_to_messages logic
 		let convertedMessages: any[] = [];
 
 		if (typeof request.input === 'string') {
@@ -136,18 +141,13 @@ export class OllamaModel implements Model {
 		} else {
 			convertedMessages = request.input
 				.map((item: any) => {
-					// Handle different types of input items
 					if (item.role === 'tool') {
-						// Tool role message - use as is
 						return {
 							role: 'tool',
 							content: item.content || '',
 							tool_call_id: item.tool_call_id || '',
 						};
 					} else if (item.type === 'function_call') {
-						// Convert function call to assistant message with tool_calls
-
-						// Parse arguments string to object for Ollama
 						let parsedArguments;
 						try {
 							parsedArguments = JSON.parse(item.arguments);
@@ -170,9 +170,6 @@ export class OllamaModel implements Model {
 							],
 						};
 					} else if (item.type === 'function_call_result') {
-						// Convert function call result to tool role message
-
-						// Extract text content from output object
 						let content = '';
 						if (typeof item.output === 'string') {
 							content = item.output;
@@ -190,27 +187,24 @@ export class OllamaModel implements Model {
 							tool_call_id: item.callId,
 						};
 					} else if (item.role) {
-						// Standard message with role
 						const msg: any = {
 							role: item.role,
 							content: item.content || item.text || '',
 						};
 
-						// Preserve tool_calls if present (for assistant messages with tool calls)
 						if (item.tool_calls) {
 							msg.tool_calls = item.tool_calls;
 						}
 
 						return msg;
 					} else {
-						// Fallback to user message
 						return {
 							role: 'user',
 							content: item.content || item.text || '',
 						};
 					}
 				})
-				.filter(msg => msg !== null); // Remove null items
+				.filter(msg => msg !== null);
 		}
 
 		if (request.systemInstructions) {
@@ -224,15 +218,12 @@ export class OllamaModel implements Model {
 			span.spanData.input = convertedMessages;
 		}
 
-		// Convert messages to Ollama format
 		const ollamaMessages = [];
 		for (const msg of convertedMessages) {
-			// Extract text content from various formats
 			let content = '';
 			if (typeof msg['content'] === 'string') {
 				content = msg['content'];
 			} else if (Array.isArray(msg['content'])) {
-				// Handle array format with input_text objects
 				for (const part of msg['content']) {
 					if (part.type === 'input_text' && part.text) {
 						content += part.text;
@@ -255,18 +246,14 @@ export class OllamaModel implements Model {
 				content: content,
 			};
 
-			// Add tool_call_id for tool role messages
 			if (msg['role'] === 'tool' && msg['tool_call_id']) {
 				ollamaMsg['tool_call_id'] = msg['tool_call_id'];
 			}
 
-			// Add tool_calls for assistant messages
 			if (msg['role'] === 'assistant' && msg['tool_calls']) {
-				// Ensure arguments are objects, not strings for Ollama
 				ollamaMsg['tool_calls'] = msg['tool_calls'].map((toolCall: any) => {
 					const result = {...toolCall};
 					if (result.function && result.function.arguments) {
-						// Parse arguments string to object if needed
 						if (typeof result.function.arguments === 'string') {
 							try {
 								result.function.arguments = JSON.parse(
@@ -284,7 +271,6 @@ export class OllamaModel implements Model {
 			ollamaMessages.push(ollamaMsg);
 		}
 
-		// Convert tools from SerializedTool format to Ollama format
 		const ollamaTools =
 			(request.tools
 				?.map(tool => {
@@ -298,13 +284,10 @@ export class OllamaModel implements Model {
 							},
 						};
 					}
-					// For other tool types (computer, hosted), we'll skip them for now
-					// as Ollama primarily supports function tools
 					return null;
 				})
 				.filter(tool => tool !== null) as any[]) || [];
 
-		// Also include handoffs as function tools so the model can call them
 		if ((request as any).handoffs && Array.isArray((request as any).handoffs)) {
 			for (const handoff of (request as any).handoffs) {
 				try {
@@ -318,14 +301,12 @@ export class OllamaModel implements Model {
 			}
 		}
 
-		// Use Ollama client
 		const chatOptions: any = {
 			model: this.#model,
 			messages: ollamaMessages,
 			stream: stream as any,
 		};
 
-		// Only add tools if there are any
 		if (ollamaTools.length > 0) {
 			chatOptions.tools = ollamaTools;
 		}
@@ -333,16 +314,10 @@ export class OllamaModel implements Model {
 		const responseData = await this.#client.chat(chatOptions);
 
 		if (stream) {
-			return responseData; // Return stream directly for streaming
+			return responseData;
 		}
 
-		// Convert Ollama response to OpenAI format for compatibility
-		console.log(
-			'🔍 Raw Ollama response:',
-			JSON.stringify(responseData, null, 2),
-		);
 		const ret = this._convertOllamaToOpenai(responseData);
-		console.log('🔍 Converted OpenAI response:', JSON.stringify(ret, null, 2));
 
 		return ret;
 	}
@@ -446,16 +421,6 @@ export class OllamaModel implements Model {
 			}
 		}
 
-		// Debug: Log the output to understand why it might be empty
-		console.log(
-			'🔍 OllamaModel response output:',
-			JSON.stringify(output, null, 2),
-		);
-		console.log(
-			'🔍 OllamaModel response.choices:',
-			JSON.stringify(response.choices, null, 2),
-		);
-
 		const modelResponse: ModelResponse = {
 			usage: response.usage
 				? new Usage(this.toResponseUsage(response.usage))
@@ -513,15 +478,9 @@ export class OllamaModel implements Model {
 		let usage: any = undefined;
 		let started = false;
 		let accumulatedText = '';
-		const responseId = `ollama-${Math.floor(Date.now() / 1000)}`;
-
-		console.log(
-			'🔧 Starting Ollama stream conversion, responseId:',
-			responseId,
-		);
+		const responseId = generateCompletionId();
 
 		for await (const chunk of stream) {
-			console.log('🔧 Received chunk:', JSON.stringify(chunk, null, 2));
 			if (!started) {
 				started = true;
 				yield {
@@ -530,13 +489,11 @@ export class OllamaModel implements Model {
 				};
 			}
 
-			// Always yield the raw event
 			yield {
 				type: 'model',
 				event: chunk,
 			};
 
-			// Extract usage if available
 			if (chunk.eval_count || chunk.prompt_eval_count) {
 				usage = {
 					prompt_tokens: chunk.prompt_eval_count || 0,
@@ -546,7 +503,6 @@ export class OllamaModel implements Model {
 				};
 			}
 
-			// Handle text content
 			if (chunk.message && chunk.message.content) {
 				yield {
 					type: 'output_text_delta',
@@ -556,27 +512,16 @@ export class OllamaModel implements Model {
 				accumulatedText += chunk.message.content;
 			}
 
-			// Handle tool calls immediately when they arrive
 			if (chunk.message && chunk.message.tool_calls) {
-				console.log(
-					'🔧 Tool calls detected in streaming chunk:',
-					JSON.stringify(chunk.message.tool_calls, null, 2),
-				);
 				for (const tool_call of chunk.message.tool_calls) {
 					if (tool_call.function) {
-						console.log(
-							'🔧 Processing function call:',
-							tool_call.function.name,
-							'with args:',
-							tool_call.function.arguments,
-						);
-
-						// Generate a call ID if Ollama doesn't provide one (consistent with non-streaming version)
 						const callId =
-							tool_call.id ||
-							`call_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+							tool_call.id &&
+							typeof tool_call.id === 'string' &&
+							tool_call.id.startsWith('call_')
+								? tool_call.id
+								: generateToolCallId();
 
-						// Yield function call as a proper ResponseStreamEvent
 						const functionCallEvent = {
 							type: 'response_done',
 							response: {
@@ -602,20 +547,13 @@ export class OllamaModel implements Model {
 							},
 						};
 
-						console.log(
-							'🔧 Yielding function call event:',
-							JSON.stringify(functionCallEvent, null, 2),
-						);
 						yield functionCallEvent;
-						console.log('🔧 Function call event yielded, returning early');
-						return; // Exit early when tool call is found
+						return;
 					}
 				}
 			}
 
-			// Check if this is the final chunk
 			if (chunk.done) {
-				// Prepare final outputs
 				const outputs: protocol.OutputModelItem[] = [];
 
 				if (accumulatedText) {
@@ -633,10 +571,6 @@ export class OllamaModel implements Model {
 					});
 				}
 
-				// Tool calls are now processed immediately when they arrive (above),
-				// so no need to process them again in the final chunk
-
-				// Final response event
 				yield {
 					type: 'response_done',
 					response: {
