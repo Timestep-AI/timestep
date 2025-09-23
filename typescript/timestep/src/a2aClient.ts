@@ -660,7 +660,7 @@ async function printToolCallArtifact(artifact: any) {
 			isWaitingForApproval = true;
 
 			// Automatically handle the tool call
-			await handleToolApproval(decision, reason);
+			await handleToolApproval(decision, reason, toolCallData);
 			return;
 		}
 	}
@@ -845,8 +845,8 @@ async function handleToolCallFromStatusMessage(
 				`\n  🤖 Auto-${decision} enabled for this tool (${reason})`,
 			),
 		);
-		// Automatically handle the tool call
-		await handleToolApproval(decision, reason);
+		// Automatically handle the tool call using the specific parsed call
+		await handleToolApproval(decision, reason, toolCall);
 		return;
 	}
 
@@ -989,8 +989,12 @@ async function executeToolCall(toolCall: ToolCall): Promise<string> {
 async function handleToolApproval(
 	decision: string,
 	reason?: string,
+	specificToolCall?: ToolCall,
 ): Promise<void> {
-	if (pendingToolCalls.length === 0) {
+	// Determine which tool call to process
+	const toolCallToProcess = specificToolCall || pendingToolCalls[0];
+
+	if (!toolCallToProcess) {
 		console.log(colorize('red', 'No pending tool calls to approve.'));
 		return;
 	}
@@ -1010,7 +1014,6 @@ async function handleToolApproval(
 	}
 
 	const isApproved = decision.toLowerCase().startsWith('approve');
-	const toolCall = pendingToolCalls[0]; // Handle the first pending tool call
 
 	console.log(
 		colorize('cyan', `\n🔧 Processing tool call decision: ${decision}`),
@@ -1019,16 +1022,20 @@ async function handleToolApproval(
 	let toolResult: string;
 
 	if (isApproved) {
-		console.log(colorize('green', `✅ Approving tool call: ${toolCall.name}`));
+		console.log(
+			colorize('green', `✅ Approving tool call: ${toolCallToProcess.name}`),
+		);
 		if (reason) {
 			console.log(colorize('dim', `   Reason: ${reason}`));
 		}
 
 		// Execute the tool call
-		toolResult = await executeToolCall(toolCall);
+		toolResult = await executeToolCall(toolCallToProcess);
 		console.log(colorize('green', `   Tool result: ${toolResult}`));
 	} else {
-		console.log(colorize('red', `❌ Rejecting tool call: ${toolCall.name}`));
+		console.log(
+			colorize('red', `❌ Rejecting tool call: ${toolCallToProcess.name}`),
+		);
 		if (reason) {
 			console.log(colorize('dim', `   Reason: ${reason}`));
 		}
@@ -1046,8 +1053,8 @@ async function handleToolApproval(
 				kind: 'data',
 				data: {
 					toolCallResponse: {
-						callId: toolCall.id,
-						artifactId: toolCall.artifactId, // Reference to original tool call artifact
+						callId: toolCallToProcess.id,
+						artifactId: toolCallToProcess.artifactId, // Reference to original tool call artifact
 						status: decision === 'approve' ? 'approved' : 'rejected',
 						decision: decision,
 						reason: reason,
@@ -1098,18 +1105,16 @@ async function handleToolApproval(
 			}
 		}
 
-		// Clear the specific tool call that was just processed
-		const processedToolCallId = pendingToolCalls[0]?.id;
-
 		// Remove the processed tool call but keep any newer ones that may have been added
 		pendingToolCalls = pendingToolCalls.filter(
-			tc => tc.id !== processedToolCallId,
+			tc => tc.id !== toolCallToProcess.id,
 		);
 
 		// Only reset approval state if no more tool calls are pending
 		if (pendingToolCalls.length === 0) {
 			isWaitingForApproval = false;
 		} else {
+			// Keep waiting for approval for remaining tool calls
 		}
 	} catch (error: any) {
 		console.error(
