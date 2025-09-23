@@ -37,7 +37,7 @@ export class JsonlAgentRepository
 		try {
 			const agents = await super.list();
 			if (agents.length > 0) {
-				console.log(`📋 Loaded ${agents.length} agents from ${this.filePath}`);
+				// console.log(`📋 Loaded ${agents.length} agents from ${this.filePath}`);
 				return agents;
 			}
 		} catch (error) {

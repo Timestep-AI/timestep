@@ -45,22 +45,22 @@ export class JsonlContextRepository
 
 	override async save(context: Context): Promise<void> {
 		await super.save(context);
-		console.log(
-			`💾 Saved context ${context.contextId} with ${
-				Object.keys(context.taskHistories).length
-			} tasks`,
-		);
+		// console.log(
+		// 	`💾 Saved context ${context.contextId} with ${
+		// 		Object.keys(context.taskHistories).length
+		// 	} tasks`,
+		// );
 	}
 
 	override async load(contextId: string): Promise<Context | null> {
 		const context = await super.load(contextId);
-		if (context) {
-			console.log(
-				`🔍 Loaded context ${contextId} with ${
-					Object.keys(context.taskHistories || {}).length
-				} tasks`,
-			);
-		}
+		// if (context) {
+		// 	console.log(
+		// 		`🔍 Loaded context ${contextId} with ${
+		// 			Object.keys(context.taskHistories || {}).length
+		// 		} tasks`,
+		// 	);
+		// }
 		return context;
 	}
 }

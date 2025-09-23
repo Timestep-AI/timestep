@@ -38,9 +38,9 @@ export class JsonlModelProviderRepository
 			const providers = await super.list();
 			if (providers.length > 0) {
 				// Mask secrets at rest if any plaintext values exist; migrate to encrypted on next save elsewhere
-				console.log(
-					`🤖 Loaded ${providers.length} model providers from ${this.filePath}`,
-				);
+				// console.log(
+				// 	`🤖 Loaded ${providers.length} model providers from ${this.filePath}`,
+				// );
 				return providers;
 			}
 		} catch (error) {

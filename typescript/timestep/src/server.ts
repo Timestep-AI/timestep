@@ -23,38 +23,38 @@ class LoggingTaskStore implements TaskStore {
 	private store: Map<string, Task> = new Map();
 
 	load(taskId: string): Promise<Task | undefined> {
-		console.log(`📋 TaskStore.load(${taskId})`);
+		// console.log(`📋 TaskStore.load(${taskId})`);
 		const entry = this.store.get(taskId);
 		if (entry) {
-			console.log(`📋 TaskStore.load(${taskId}) -> FOUND:`, {
-				id: entry.id,
-				contextId: entry.contextId,
-				kind: entry.kind,
-				status: entry.status,
-			});
+			// console.log(`📋 TaskStore.load(${taskId}) -> FOUND:`, {
+			// 	id: entry.id,
+			// 	contextId: entry.contextId,
+			// 	kind: entry.kind,
+			// 	status: entry.status,
+			// });
 			// Return copies to prevent external mutation
 			return Promise.resolve({...entry});
 		} else {
-			console.log(`📋 TaskStore.load(${taskId}) -> NOT FOUND`);
-			console.log(`📋 TaskStore current keys:`, Array.from(this.store.keys()));
+			// console.log(`📋 TaskStore.load(${taskId}) -> NOT FOUND`);
+			// console.log(`📋 TaskStore current keys:`, Array.from(this.store.keys()));
 			return Promise.resolve(undefined);
 		}
 	}
 
 	save(task: Task): Promise<void> {
-		console.log(`📋 TaskStore.save(${task.id})`, {
-			id: task.id,
-			contextId: task.contextId,
-			kind: task.kind,
-			status: task.status,
-		});
+		// console.log(`📋 TaskStore.save(${task.id})`, {
+		// 	id: task.id,
+		// 	contextId: task.contextId,
+		// 	kind: task.kind,
+		// 	status: task.status,
+		// });
 		// Store copies to prevent internal mutation if caller reuses objects
 		this.store.set(task.id, {...task});
-		console.log(`📋 TaskStore.save(${task.id}) -> SAVED`);
-		console.log(
-			`📋 TaskStore current keys after save:`,
-			Array.from(this.store.keys()),
-		);
+		// console.log(`📋 TaskStore.save(${task.id}) -> SAVED`);
+		// console.log(
+		// `📋 TaskStore current keys after save:`,
+		// Array.from(this.store.keys()),
+		// );
 		return Promise.resolve();
 	}
 }

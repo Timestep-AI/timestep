@@ -73,9 +73,9 @@ export class TimestepAIModelProvider implements ModelProvider {
 			this.loadingPromise = loadModelProviders(this.repositories).then(
 				providers => {
 					this.modelProviders = providers;
-					console.log(
-						`Model providers loaded: ${JSON.stringify(this.modelProviders)}`,
-					);
+					// console.log(
+					// 	`Model providers loaded: ${JSON.stringify(this.modelProviders)}`,
+					// );
 					return providers;
 				},
 			);

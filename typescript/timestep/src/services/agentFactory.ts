@@ -13,7 +13,7 @@ async function loadAgents(
 ): Promise<AgentConfig[]> {
 	try {
 		const response = await listAgents(repositories);
-		console.log(`📋 Loaded ${response.data.length} agents from agents API`);
+		// console.log(`📋 Loaded ${response.data.length} agents from agents API`);
 		return response.data;
 	} catch (error) {
 		console.error(`Error loading agents from API: ${error}`);

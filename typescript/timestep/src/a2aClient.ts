@@ -194,7 +194,7 @@ async function loadAvailableAgents(): Promise<AgentInfo[]> {
 		);
 		if (response.ok) {
 			const agents = await response.json();
-			console.log(`📋 Loaded ${agents.length} agents from /agents endpoint`);
+			// console.log(`📋 Loaded ${agents.length} agents from /agents endpoint`);
 
 			return agents.map((agent: any) => ({
 				id: agent.id,
