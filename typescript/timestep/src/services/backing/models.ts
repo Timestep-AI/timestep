@@ -444,11 +444,11 @@ export class OllamaModel implements Model {
 			}
 			const stream = await this.#fetchResponse(request, span, true);
 
-			yield* this.convertOllamaStreamToResponses(stream);
-
-			if (span && request.tracing === true) {
-				span.spanData.output = [];
-			}
+			yield* this.convertOllamaStreamToResponses(
+				stream,
+				span,
+				request.tracing === true,
+			);
 		} catch (error) {
 			if (span) {
 				span.setError({
@@ -474,6 +474,8 @@ export class OllamaModel implements Model {
 
 	private async *convertOllamaStreamToResponses(
 		stream: any,
+		span?: Span<GenerationSpanData>,
+		tracingEnabled?: boolean,
 	): AsyncIterable<ResponseStreamEvent> {
 		let usage: any = undefined;
 		let started = false;
@@ -547,6 +549,10 @@ export class OllamaModel implements Model {
 							},
 						};
 
+						if (span && tracingEnabled === true) {
+							span.spanData.output = functionCallEvent.response.output;
+						}
+
 						yield functionCallEvent;
 						return;
 					}
@@ -569,6 +575,10 @@ export class OllamaModel implements Model {
 						],
 						status: 'completed',
 					});
+				}
+
+				if (span && tracingEnabled === true) {
+					span.spanData.output = outputs;
 				}
 
 				yield {
