@@ -70,6 +70,7 @@ interface ToolCallEvent {
 	arguments: string;
 	agent: string;
 	taskId: string;
+	contextId: string;
 }
 
 interface ToolResponseEvent {
@@ -80,6 +81,7 @@ interface ToolResponseEvent {
 	status: 'success' | 'error';
 	agent: string;
 	taskId: string;
+	contextId: string;
 }
 
 type ToolEvent = ToolCallEvent | ToolResponseEvent;
@@ -118,7 +120,8 @@ function checkForToolEvent(message: Message): ToolEvent | null {
 					name: toolName,
 					arguments: toolArgs,
 					agent: agentName,
-					taskId: currentTaskId?.substring(0, 8) || 'unknown',
+					taskId: currentTaskId || 'unknown',
+					contextId: currentContextId || 'unknown',
 				};
 			}
 
@@ -149,7 +152,8 @@ function checkForToolEvent(message: Message): ToolEvent | null {
 							: JSON.stringify(outputText),
 					status: data?.['status'] === 'completed' ? 'success' : 'error',
 					agent: agentName,
-					taskId: currentTaskId?.substring(0, 8) || 'unknown',
+					taskId: currentTaskId || 'unknown',
+					contextId: currentContextId || 'unknown',
 				};
 			}
 		}
@@ -208,7 +212,7 @@ function drawBox(content: string[], width: number = 60): string[] {
 	}
 
 	// Bottom border
-	lines.push(`╰${'─'.repeat(width - 2)}╯`);
+	lines.push(`╰${'─'.repeat(maxContentWidth + 2)}╯`);
 
 	return lines;
 }
@@ -238,7 +242,7 @@ function displayCleanToolEvent(toolEvent: ToolEvent): void {
 
 		// Format the input for the title
 		const formattedInput = formatToolInput(toolEvent.input);
-		const toolTitle = `Tool "${toolEvent.name}(${formattedInput})" (${toolEvent.taskId})`;
+		const toolTitle = `Tool "${toolEvent.name}(${formattedInput})" (Context ID: ${toolEvent.contextId}, Task ID: ${toolEvent.taskId})`;
 
 		// Clean up the output - remove quotes and unescape newlines for better readability
 		let cleanOutput = toolEvent.output;
@@ -252,7 +256,6 @@ function displayCleanToolEvent(toolEvent: ToolEvent): void {
 		const boxLines = drawBox(content, boxWidth);
 		console.log('');
 		boxLines.forEach(line => console.log(colorize('green', line)));
-		console.log('');
 	}
 }
 
@@ -261,12 +264,14 @@ function displayUserMessage(userInput: string): void {
 	const terminalWidth = process.stdout.columns || 80;
 	const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
 
-	const content = [`User`, userInput];
+	const userTitle = `User (Context ID: ${
+		currentContextId || 'unknown'
+	}, Task ID: ${currentTaskId || 'unknown'})`;
+	const content = [userTitle, userInput];
 
 	const boxLines = drawBox(content, boxWidth);
 	console.log('');
 	boxLines.forEach(line => console.log(colorize('blue', line)));
-	console.log('');
 }
 
 function createInteractiveInputBox(promptText?: string): Promise<string> {
@@ -278,11 +283,16 @@ function createInteractiveInputBox(promptText?: string): Promise<string> {
 		if (promptText) {
 			console.log('');
 			console.log(colorize('yellow', promptText));
+			console.log('');
 		}
 
 		// Draw the top of the User input box
-		console.log('');
-		console.log(colorize('blue', `╭─User${'─'.repeat(boxWidth - 6)}╮`));
+		const userTitle = `User (Context ID: ${
+			currentContextId || 'unknown'
+		}, Task ID: ${currentTaskId || 'unknown'})`;
+		const content = [userTitle, ''];
+		const boxLines = drawBox(content, boxWidth);
+		console.log(colorize('blue', boxLines[0]));
 
 		// Create a readline interface for the input box with no automatic output
 		const inputRl = readline.createInterface({
@@ -335,12 +345,14 @@ function displayAssistantMessage(message: string): void {
 	const terminalWidth = process.stdout.columns || 80;
 	const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
 
-	const content = [`Assistant`, message];
+	const assistantTitle = `Assistant (Context ID: ${
+		currentContextId || 'unknown'
+	}, Task ID: ${currentTaskId || 'unknown'})`;
+	const content = [assistantTitle, message];
 
 	const boxLines = drawBox(content, boxWidth);
 	console.log('');
 	boxLines.forEach(line => console.log(colorize('cyan', line)));
-	console.log('');
 }
 
 function checkForHandoffEvent(
@@ -831,9 +843,12 @@ async function printAgentEvent(
 							const terminalWidth = process.stdout.columns || 80;
 							const boxWidth = Math.max(terminalWidth - 2, 60);
 							console.log('');
-							console.log(
-								colorize('cyan', `╭─Assistant${'─'.repeat(boxWidth - 12)}╮`),
-							);
+							const assistantTitle = `Assistant (Context ID: ${
+								currentContextId || 'unknown'
+							}, Task ID: ${currentTaskId || 'unknown'})`;
+							const content = [assistantTitle, ''];
+							const boxLines = drawBox(content, boxWidth);
+							console.log(colorize('cyan', boxLines[0]));
 							process.stdout.write(colorize('cyan', '│ '));
 						}
 						// Display streamed content with borders
@@ -1197,6 +1212,7 @@ async function printToolCallArtifact(artifact: any) {
 
 	// If we reach here, just show the tool information - options will be shown by main loop
 	if (pendingToolCalls.length > 0) {
+		console.log('');
 		console.log(
 			colorize(
 				'yellow',
@@ -1287,6 +1303,7 @@ async function handleToolCallFromStatusData(
 
 		// If we reach here, just show the tool information - options will be shown by main loop
 		if (pendingToolCalls.length > 0) {
+			console.log('');
 			console.log(
 				colorize(
 					'yellow',
@@ -1299,7 +1316,6 @@ async function handleToolCallFromStatusData(
 			console.log(colorize('dim', '  • auto-approve'));
 			console.log(colorize('dim', '  • auto-reject'));
 			console.log(colorize('dim', '  • show-params'));
-			console.log('');
 		}
 	} catch (_err) {
 		console.log(colorize('red', 'Failed to process tool-call status data'));
@@ -1445,7 +1461,7 @@ async function handleToolApproval(
 	// Only show verbose output if not auto-approving
 	if (!isAutoApproval) {
 		console.log(
-			colorize('cyan', `\n🔧 Processing tool call decision: ${decision}`),
+			colorize('cyan', `🔧 Processing tool call decision: ${decision}`),
 		);
 	}
 
@@ -1453,6 +1469,7 @@ async function handleToolApproval(
 
 	if (isApproved) {
 		if (!isAutoApproval) {
+			console.log('');
 			console.log(
 				colorize('green', `✅ Approving tool call: ${toolCallToProcess.name}`),
 			);
@@ -1546,11 +1563,19 @@ async function handleToolApproval(
 						isCurrentlyStreaming = false;
 					}
 					console.log(
-						colorize('blue', `\n📋 Task Update: ${task.status.state}`),
+						`\n${
+							(task.status.state as any) === 'completed'
+								? `Task completed (ID: ${task.id})\n`
+								: colorize('blue', `📋 Task Update: ${task.status.state}`)
+						}`,
 					);
 				} else {
 					console.log(
-						colorize('blue', `\n📋 Task Update: ${task.status.state}`),
+						`\n${
+							(task.status.state as any) === 'completed'
+								? `Task completed (ID: ${task.id})\n`
+								: colorize('blue', `📋 Task Update: ${task.status.state}`)
+						}`,
 					);
 				}
 
@@ -1820,22 +1845,13 @@ async function processInput(
 				);
 			} else if (event.kind === 'task') {
 				const task = event as Task;
-				console.log(
-					`${prefix} ${colorize('blue', 'ℹ️ Task Stream Event:')} ID: ${
-						task.id
-					}, Context: ${task.contextId}, Status: ${task.status.state}`,
-				);
-				if (task.id !== currentTaskId) {
-					console.log(
-						colorize(
-							'dim',
-							`   Task ID updated from ${currentTaskId || 'N/A'} to ${task.id}`,
-						),
-					);
-					currentTaskId = task.id;
-				}
 				if (task.contextId && task.contextId !== currentContextId) {
+					console.log(`Context created (ID: ${task.contextId})`);
 					currentContextId = task.contextId;
+				}
+				if (task.id !== currentTaskId) {
+					console.log(`Task created (ID: ${task.id})`);
+					currentTaskId = task.id;
 				}
 				if (task.status.message) {
 					// Display the task message in an Assistant box
@@ -1958,6 +1974,7 @@ async function main() {
 			`Enter messages, or use '/new' to start a new session. '/exit' to quit.`,
 		),
 	);
+	console.log('');
 
 	// Interactive input loop using custom input box
 	while (true) {

@@ -55,9 +55,6 @@ export class JsonlMcpServerRepository
 		try {
 			const servers = await super.list();
 			if (servers.length > 0) {
-				console.log(
-					`🔌 Loaded ${servers.length} MCP servers from ${this.filePath}`,
-				);
 				return servers;
 			}
 		} catch (error) {
@@ -71,15 +68,9 @@ export class JsonlMcpServerRepository
 		const defaultServers = getDefaultMcpServers(this.baseUrl);
 		try {
 			await this.createDefaultMcpServersFile(defaultServers);
-			console.log(
-				`🔌 Created default MCP servers configuration with ${defaultServers.length} servers`,
-			);
 		} catch (error) {
 			console.warn(
 				`Unable to create default configuration file (restricted environment): ${error}`,
-			);
-			console.log(
-				`🔌 Using in-memory default MCP servers configuration with ${defaultServers.length} servers`,
 			);
 		}
 
@@ -102,9 +93,6 @@ export class JsonlMcpServerRepository
 			// Write the default MCP servers as JSONL
 			const lines = servers.map(server => this.serialize(server));
 			await this.writeLines(lines);
-			console.log(
-				`🔌 Created default MCP servers configuration at: ${this.filePath}`,
-			);
 		} catch (error) {
 			console.warn(
 				`Failed to create default MCP servers configuration at '${this.filePath}': ${error}`,

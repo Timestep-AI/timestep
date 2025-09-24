@@ -223,9 +223,6 @@ export async function handleAgentRequest(
 	serverPort: number,
 	repositories: RepositoryContainer = new DefaultRepositoryContainer(),
 ): Promise<void> {
-	console.log(
-		`🔍 Dynamic route handler called for agent: ${req.params['agentId']}, method: ${req.method}, path: ${req.path}`,
-	);
 	try {
 		const agentId = req.params['agentId'];
 

@@ -145,26 +145,14 @@ export class ContextAwareRequestHandler implements A2ARequestHandler {
 			incomingMessage.contextId || task?.contextId || crypto.randomUUID();
 
 		// Ensure our Context domain object exists before proceeding
-		console.log(
-			`🔍 Ensuring context ${contextId} exists for agent ${this.agentId}`,
-		);
+
 		try {
 			const existingContext = await (
 				this.contextService as any
 			).repository.load(contextId);
 			if (!existingContext) {
-				console.log(
-					`🔍 Creating new context ${contextId} for agent ${this.agentId}`,
-				);
 				const newContext = new Context(contextId, this.agentId);
 				await this.contextService.save(newContext);
-				console.log(
-					`✅ Context ${contextId} created successfully for agent ${this.agentId}`,
-				);
-			} else {
-				console.log(
-					`🔍 Context ${contextId} already exists with agent ${existingContext.agentId}`,
-				);
 			}
 		} catch (error) {
 			console.error(`❌ Error ensuring context ${contextId} exists:`, error);

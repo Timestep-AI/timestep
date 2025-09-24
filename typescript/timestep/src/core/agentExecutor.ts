@@ -511,10 +511,6 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 						};
 					}
 
-					console.log(
-						'🔍 Publishing completed task:',
-						JSON.stringify(completedTask, null, 2),
-					);
 					eventBus.publish(completedTask);
 				} else {
 					console.warn(

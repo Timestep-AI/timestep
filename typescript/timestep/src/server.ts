@@ -226,14 +226,6 @@ app.post('/tools/:toolId/call', async (req, res) => {
 	}
 });
 
-// Version endpoint - dynamically reads from package.json
-// Request logging middleware
-app.use((req, _res, next) => {
-	console.log(`Request: ${req.method} ${req.path}`);
-	next();
-});
-
-// Agent routes middleware with custom repository
 app.use('/agents/:agentId', async (req, res, next) => {
 	await handleAgentRequest(
 		req,

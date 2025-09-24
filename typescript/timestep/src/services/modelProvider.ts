@@ -58,7 +58,6 @@ export class TimestepAIModelProvider implements ModelProvider {
 
 	constructor(repositories?: RepositoryContainer) {
 		this.repositories = repositories || new DefaultRepositoryContainer();
-		console.log(`Model provider service initialized`);
 	}
 
 	private async ensureModelProvidersLoaded(): Promise<
@@ -69,7 +68,6 @@ export class TimestepAIModelProvider implements ModelProvider {
 		}
 
 		if (this.loadingPromise === null) {
-			console.log(`Loading model providers configuration`);
 			this.loadingPromise = loadModelProviders(this.repositories).then(
 				providers => {
 					this.modelProviders = providers;
@@ -88,8 +86,6 @@ export class TimestepAIModelProvider implements ModelProvider {
 		const parts = _modelName?.split('/') || [];
 		const modelProvider = parts.length > 1 ? parts[0] : 'openai';
 		const modelId = parts.length > 1 ? parts.slice(1).join('/') : _modelName;
-
-		console.log(`Getting model ${modelId} from ${modelProvider}`);
 
 		if (!modelProvider) {
 			throw new Error('Model provider not specified');
