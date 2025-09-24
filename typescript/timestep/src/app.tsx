@@ -544,7 +544,7 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		if (loading) {
 			return (
 				<Box flexDirection="column">
-					<Text color="blue">🛑 Stopping Timestep servers...</Text>
+					<Text color="blue">🛑 Stopping Timestep server...</Text>
 					<Text>Checking port {appConfig.appPort}...</Text>
 				</Box>
 			);
@@ -561,7 +561,7 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		if (serverStopped) {
 			return (
 				<Box flexDirection="column">
-					<Text color="green">✅ Timestep servers stopped successfully!</Text>
+					<Text color="green">✅ Timestep server stopped successfully!</Text>
 					<Text>Process on port {appConfig.appPort} has been terminated.</Text>
 				</Box>
 			);

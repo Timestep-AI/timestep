@@ -63,6 +63,258 @@ function generateId(): string {
 	return crypto.randomUUID();
 }
 
+// Tool event types for clean display
+interface ToolCallEvent {
+	type: 'tool_call';
+	name: string;
+	arguments: string;
+	agent: string;
+	taskId: string;
+}
+
+interface ToolResponseEvent {
+	type: 'tool_response';
+	name: string;
+	input: string;
+	output: string;
+	status: 'success' | 'error';
+	agent: string;
+	taskId: string;
+}
+
+type ToolEvent = ToolCallEvent | ToolResponseEvent;
+
+function checkForToolEvent(message: Message): ToolEvent | null {
+	if (!message.parts) return null;
+
+	for (const part of message.parts) {
+		if (part.kind === 'data') {
+			const data = (part as DataPart).data as Record<string, unknown>;
+
+			// Skip handoff events - they should be displayed as Assistant messages, not Tool boxes
+			const eventType = data?.['type'] as string;
+			if (
+				eventType === 'handoff_requested' ||
+				eventType === 'handoff_occurred'
+			) {
+				return null;
+			}
+
+			// Check for tool call
+			if (data?.['name'] && data?.['arguments']) {
+				const toolName = data['name'] as string;
+				const toolArgs = data['arguments'] as string;
+
+				// Skip handoff function calls - they should be handled as Assistant messages only
+				if (toolName.startsWith('transfer_to_')) {
+					return null;
+				}
+
+				// Store the tool call inputs for later use in responses
+				toolCallInputs.set(toolName, toolArgs);
+
+				return {
+					type: 'tool_call',
+					name: toolName,
+					arguments: toolArgs,
+					agent: agentName,
+					taskId: currentTaskId?.substring(0, 8) || 'unknown',
+				};
+			}
+
+			// Check for tool output/response
+			if (
+				data?.['type'] === 'function_call_result' &&
+				data?.['name'] &&
+				data?.['output']
+			) {
+				const toolName = data['name'] as string;
+
+				// Show handoff function results as Tool messages
+				// (they were previously suppressed but should be displayed)
+
+				const output = data?.['output'] as Record<string, unknown>;
+				const outputText = output?.['text'] || JSON.stringify(output);
+
+				// Get the stored input arguments from when the tool was called
+				const storedInput = toolCallInputs.get(toolName) || '{}';
+
+				return {
+					type: 'tool_response',
+					name: toolName,
+					input: storedInput,
+					output:
+						typeof outputText === 'string'
+							? outputText
+							: JSON.stringify(outputText),
+					status: data?.['status'] === 'completed' ? 'success' : 'error',
+					agent: agentName,
+					taskId: currentTaskId?.substring(0, 8) || 'unknown',
+				};
+			}
+		}
+	}
+
+	return null;
+}
+
+function drawBox(content: string[], width: number = 60): string[] {
+	const lines: string[] = [];
+	const maxContentWidth = width - 4; // Account for '│ ' and ' │'
+
+	// Top border
+	lines.push(`╭─${content[0].padEnd(maxContentWidth, '─')}─╮`);
+
+	// Content lines - handle wrapping and multi-line content
+	for (let i = 1; i < content.length; i++) {
+		const contentLines = content[i].split('\n');
+
+		for (const contentLine of contentLines) {
+			if (contentLine.length <= maxContentWidth) {
+				// Line fits, just pad it
+				const padded = contentLine.padEnd(maxContentWidth);
+				lines.push(`│ ${padded} │`);
+			} else {
+				// Line is too long, wrap it
+				const words = contentLine.split(' ');
+				let currentLine = '';
+
+				for (const word of words) {
+					// Check if adding this word would exceed the width
+					const testLine = currentLine + (currentLine ? ' ' : '') + word;
+					if (testLine.length <= maxContentWidth) {
+						currentLine = testLine;
+					} else {
+						// Output current line and start a new one
+						if (currentLine) {
+							const padded = currentLine.padEnd(maxContentWidth);
+							lines.push(`│ ${padded} │`);
+						}
+						// If the word itself is longer than max width, truncate it
+						currentLine =
+							word.length > maxContentWidth
+								? word.substring(0, maxContentWidth - 3) + '...'
+								: word;
+					}
+				}
+
+				// Output any remaining content
+				if (currentLine) {
+					const padded = currentLine.padEnd(maxContentWidth);
+					lines.push(`│ ${padded} │`);
+				}
+			}
+		}
+	}
+
+	// Bottom border
+	lines.push(`╰${'─'.repeat(width - 2)}╯`);
+
+	return lines;
+}
+
+function formatToolInput(input: string): string {
+	try {
+		const parsed = JSON.parse(input);
+		// Format as a more readable object display
+		const entries = Object.entries(parsed);
+		if (entries.length === 0) return '{}';
+		if (entries.length === 1) {
+			const [key, value] = entries[0];
+			return `{'${key}': ${JSON.stringify(value)}}`;
+		}
+		return JSON.stringify(parsed);
+	} catch {
+		return input;
+	}
+}
+
+function displayCleanToolEvent(toolEvent: ToolEvent): void {
+	// This function now only handles tool responses (Tool messages)
+	if (toolEvent.type === 'tool_response') {
+		// Get terminal width, default to 80 if not available
+		const terminalWidth = process.stdout.columns || 80;
+		const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
+
+		// Format the input for the title
+		const formattedInput = formatToolInput(toolEvent.input);
+		const toolTitle = `Tool "${toolEvent.name}(${formattedInput})" (${toolEvent.taskId})`;
+
+		// Clean up the output - remove quotes and unescape newlines for better readability
+		let cleanOutput = toolEvent.output;
+		if (cleanOutput.startsWith("'") && cleanOutput.endsWith("'")) {
+			cleanOutput = cleanOutput.slice(1, -1);
+		}
+		cleanOutput = cleanOutput.replace(/\\n/g, '\n');
+
+		const content = [toolTitle, cleanOutput];
+
+		const boxLines = drawBox(content, boxWidth);
+		console.log('');
+		boxLines.forEach(line => console.log(colorize('green', line)));
+		console.log('');
+	}
+}
+
+function displayUserMessage(userInput: string): void {
+	// Get terminal width, default to 80 if not available
+	const terminalWidth = process.stdout.columns || 80;
+	const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
+
+	const content = [`User`, userInput];
+
+	const boxLines = drawBox(content, boxWidth);
+	console.log('');
+	boxLines.forEach(line => console.log(colorize('blue', line)));
+	console.log('');
+}
+
+function displayAssistantMessage(message: string): void {
+	// Get terminal width, default to 80 if not available
+	const terminalWidth = process.stdout.columns || 80;
+	const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
+
+	const content = [`Assistant`, message];
+
+	const boxLines = drawBox(content, boxWidth);
+	console.log('');
+	boxLines.forEach(line => console.log(colorize('cyan', line)));
+	console.log('');
+}
+
+function checkForHandoffEvent(
+	message: Message,
+): {name: string; arguments: string} | null {
+	if (!message.parts) return null;
+
+	for (const part of message.parts) {
+		if (part.kind === 'data') {
+			const data = (part as DataPart).data as Record<string, unknown>;
+
+			// Check for handoff function calls (transfer_to_*)
+			if (data?.['name'] && data?.['arguments']) {
+				const toolName = data['name'] as string;
+				if (toolName.startsWith('transfer_to_')) {
+					const args = data['arguments'] as string;
+					return {name: toolName, arguments: args};
+				}
+			}
+
+			// Check for handoff_requested events only (Assistant messages)
+			const eventType = data?.['type'] as string;
+			if (eventType === 'handoff_requested') {
+				const name = data?.['name'] as string;
+				const args = data?.['arguments'] as string;
+				if (name && args) {
+					return {name, arguments: args};
+				}
+			}
+		}
+	}
+
+	return null;
+}
+
 // --- State ---
 let currentTaskId: string | undefined = undefined; // Initialize as undefined
 let currentContextId: string | undefined = undefined; // Initialize as undefined
@@ -70,8 +322,10 @@ let pendingToolCalls: ToolCall[] = []; // Track pending tool calls awaiting appr
 let isWaitingForApproval = false; // Track if we're waiting for user approval
 let selectedAgentId: string | undefined = undefined; // Track selected agent ID
 let lastDisplayedMessage: string = ''; // Track last displayed message content for delta handling
+let currentStreamingLine: string = ''; // Track current line being streamed
 let isCurrentlyStreaming: boolean = false; // Track if we're currently in streaming mode
 let streamedTaskIds: Set<string> = new Set(); // Track which tasks we've streamed content for
+let toolCallInputs: Map<string, string> = new Map(); // Track tool call inputs by tool name
 const appConfig = loadAppConfig();
 let baseServerUrl = `http://localhost:${appConfig.appPort}`; // Base server URL without agent-specific path
 let serverUrl: string; // Will be set after agent selection
@@ -345,21 +599,84 @@ async function printAgentEvent(
 				break;
 		}
 
-		// Only show status line for non-streaming updates or final updates
-		const isStreaming = state === 'working' && !update.final;
-		if (!isStreaming || update.final) {
-			console.log(
+		// Always show status line for all updates (streaming or not)
+
+		// Detect and surface handoff events even during streaming
+		let handoffEvent: string | undefined;
+		if (update.status.message?.parts) {
+			for (const p of update.status.message.parts) {
+				if (p.kind === 'data') {
+					const d = (p as DataPart).data as Record<string, unknown> | undefined;
+					const t = (d?.['type'] as string) || undefined;
+					if (t === 'handoff_requested' || t === 'handoff_occurred') {
+						handoffEvent = t;
+						break;
+					}
+				}
+			}
+		}
+		// Check if this is a raw_model_stream_event (suppress completely)
+		let isRawModelStreamEvent = false;
+		if (update.status.message?.parts) {
+			for (const p of update.status.message.parts) {
+				if (p.kind === 'data') {
+					const d = (p as DataPart).data as Record<string, unknown> | undefined;
+					const t = (d?.['type'] as string) || undefined;
+					if (t === 'model') {
+						isRawModelStreamEvent = true;
+						break;
+					}
+				}
+			}
+		}
+
+		// Suppress raw model stream events and most status updates
+		// Only show status for important state changes, but not for tool approval states
+		const isToolApprovalState =
+			state === 'input-required' &&
+			update.status.message?.parts?.some(
+				p =>
+					p.kind === 'data' &&
+					(p as DataPart).data &&
+					typeof (p as DataPart).data === 'object' &&
+					((p as DataPart).data as Record<string, unknown>)?.['name'], // This indicates a tool call
+			);
+
+		if (
+			!isRawModelStreamEvent &&
+			!isToolApprovalState &&
+			(state === 'completed' || state === 'failed' || handoffEvent)
+		) {
+			const statusLine =
 				`${prefix} ${stateEmoji} Status: ${colorize(
 					stateColor,
 					state,
 				)} (Task: ${update.taskId}, Context: ${update.contextId}) ${
 					update.final ? colorize('bright', '[FINAL]') : ''
-				}`,
-			);
+				}` +
+				(handoffEvent
+					? ` ${colorize('blue', '[handoff]')} ${handoffEvent}`
+					: '');
+			console.log(statusLine);
 		}
 
 		// Clear task ID when task is final and completed (not just working or input-required)
 		if (update.final && state === 'completed') {
+			// If we were streaming, close the box
+			if (isCurrentlyStreaming) {
+				// Close the streaming box
+				const terminalWidth = process.stdout.columns || 80;
+				const boxWidth = Math.max(terminalWidth - 2, 60);
+				const currentLineLength = currentStreamingLine.length;
+				const padding = ' '.repeat(
+					Math.max(0, boxWidth - 4 - currentLineLength),
+				);
+				process.stdout.write(
+					colorize('cyan', `${padding} │\n╰${'─'.repeat(boxWidth - 2)}╯\n`),
+				);
+				currentStreamingLine = ''; // Reset for next streaming session
+			}
+
 			currentTaskId = undefined;
 			isWaitingForApproval = false;
 			pendingToolCalls = [];
@@ -391,51 +708,100 @@ async function printAgentEvent(
 			currentContextId = update.contextId;
 		}
 
-		if (update.status.message) {
-			// Detect if this is streaming mode (working state and not final)
-			const isStreaming = state === 'working' && !update.final;
-
-			if (isStreaming) {
-				// For streaming mode, first show the status line if it's the first chunk
-				if (lastDisplayedMessage === '') {
-					// This is the first streaming chunk, show the initial status prefix
-					console.log(
-						`${prefix} ${stateEmoji} Status: ${colorize(
-							stateColor,
-							state,
-						)} (Task: ${update.taskId}, Context: ${update.contextId})`,
-					);
-					process.stdout.write(colorize('green', `     📝 `)); // Show prefix without newline
-					isCurrentlyStreaming = true;
-					streamedTaskIds.add(update.taskId); // Mark this task as having streamed content
-				}
-				printMessageContentStreaming(update.status.message, true);
-			} else {
-				// For non-streaming mode, check if we were just streaming
-				if (isCurrentlyStreaming && state === 'completed') {
-					// We were streaming and now we're done - replace the streamed content with clean final version
-					// Move to a new line after streaming and show clean final message
-					console.log('\n'); // Move to new line after streaming
-					// Don't show the message content again since it was already streamed
-					isCurrentlyStreaming = false;
-				} else {
-					// Regular non-streaming message
-					printMessageContentStreaming(update.status.message, false);
-				}
-			}
-
-			// Check if this is a tool call approval request
+		// Skip message processing for raw_model_stream_event
+		if (update.status.message && !isRawModelStreamEvent) {
+			// Check if this is a tool call approval request (data-based only)
 			if (state === 'input-required' && update.status.message.parts) {
 				for (const part of update.status.message.parts) {
-					if (
-						part.kind === 'text' &&
-						part.text.includes('Human approval required for tool execution:')
-					) {
-						await handleToolCallFromStatusMessage(
-							part.text,
+					if (part.kind === 'data') {
+						const dataPart = part as DataPart;
+						// Silently handle tool approval without displaying verbose output
+						await handleToolCallFromStatusData(
+							dataPart.data as unknown,
 							update.taskId,
 							update.contextId,
 						);
+					}
+				}
+				// Return early to prevent further processing of approval messages
+				return;
+			}
+
+			// Check if this is a tool call or tool output
+			const toolEvent = checkForToolEvent(update.status.message);
+			if (toolEvent) {
+				if (toolEvent.type === 'tool_call') {
+					// Tool calls are Assistant messages
+					displayAssistantMessage(
+						`${toolEvent.name}("${toolEvent.arguments}")`,
+					);
+				} else {
+					// Tool responses are Tool messages
+					displayCleanToolEvent(toolEvent);
+				}
+			} else {
+				// Check if this is a handoff event (should be displayed as Assistant message)
+				const handoffEvent = checkForHandoffEvent(update.status.message);
+				if (handoffEvent) {
+					displayAssistantMessage(
+						`${handoffEvent.name}("${handoffEvent.arguments}")`,
+					);
+				} else {
+					// Handle streaming for output_text_delta
+					const hasOutputTextDelta = update.status.message.parts?.some(
+						p =>
+							p.kind === 'data' &&
+							(p as DataPart).data &&
+							typeof (p as DataPart).data === 'object' &&
+							((p as DataPart).data as Record<string, unknown>)?.['type'] ===
+								'output_text_delta',
+					);
+
+					if (hasOutputTextDelta) {
+						// For streaming, display content with proper box borders
+						if (!isCurrentlyStreaming) {
+							isCurrentlyStreaming = true;
+							streamedTaskIds.add(update.taskId);
+							currentStreamingLine = ''; // Reset current line tracking
+							// Start the streaming box
+							const terminalWidth = process.stdout.columns || 80;
+							const boxWidth = Math.max(terminalWidth - 2, 60);
+							console.log('');
+							console.log(
+								colorize('cyan', `╭─Assistant${'─'.repeat(boxWidth - 12)}╮`),
+							);
+							process.stdout.write(colorize('cyan', '│ '));
+						}
+						// Display streamed content with borders
+						printMessageContentStreaming(update.status.message, true);
+					} else if (
+						state === 'working' &&
+						isCurrentlyStreaming &&
+						!hasOutputTextDelta
+					) {
+						// End of streaming detected - display the collected content
+						if (lastDisplayedMessage && lastDisplayedMessage.trim()) {
+							displayAssistantMessage(lastDisplayedMessage.trim());
+							lastDisplayedMessage = '';
+							isCurrentlyStreaming = false;
+						}
+					} else if (state === 'completed' && isCurrentlyStreaming) {
+						// End streaming - display the collected content in a proper box
+						if (lastDisplayedMessage && lastDisplayedMessage.trim()) {
+							displayAssistantMessage(lastDisplayedMessage.trim());
+						}
+						isCurrentlyStreaming = false;
+					} else {
+						// Regular non-streaming message - check if it has text content
+						const textContent = update.status.message.parts?.find(
+							p => p.kind === 'text',
+						)?.text;
+						if (textContent && textContent.trim()) {
+							displayAssistantMessage(textContent.trim());
+						} else {
+							// Fallback for other types of content
+							printMessageContentStreaming(update.status.message, false);
+						}
 					}
 				}
 			}
@@ -502,8 +868,8 @@ function printMessageContent(message: Message) {
 	message.parts.forEach((part: Part, index: number) => {
 		// Added explicit Part type
 		if (part.kind === 'text') {
-			// Check kind property
-			console.log(colorize('green', `     📝 ${part.text}`));
+			// Check kind property - display in Assistant box
+			displayAssistantMessage(part.text);
 		} else if (part.kind === 'file') {
 			// Check kind property
 			const filePart = part as FilePart;
@@ -518,8 +884,25 @@ function printMessageContent(message: Message) {
 				}`,
 			);
 		} else if (part.kind === 'data') {
-			// Check kind property
 			const dataPart = part as DataPart;
+			const data = dataPart.data as Record<string, unknown> | undefined;
+			const dataType = (data?.['type'] as string) || undefined;
+			const functionName = (data?.['name'] as string) || undefined;
+
+			// Suppress provider model events
+			if (dataType === 'model') {
+				return;
+			}
+
+			// Suppress handoff function call results (transfer_to_*)
+			if (
+				dataType === 'function_call_result' &&
+				functionName?.startsWith('transfer_to_')
+			) {
+				return;
+			}
+
+			// For non-streaming contexts, show other data parts verbosely, except handoff signals
 			console.log(
 				`${colorize('red', `  Part ${index + 1}:`)} ${colorize(
 					'yellow',
@@ -546,27 +929,14 @@ function printMessageContentStreaming(
 	message.parts.forEach((part: Part, index: number) => {
 		if (part.kind === 'text') {
 			if (isStreaming) {
-				// For streaming, only show the delta (new content)
+				// For streaming, silently collect the content without displaying
 				const currentText = part.text;
-				if (
-					currentText.length > lastDisplayedMessage.length &&
-					currentText.startsWith(lastDisplayedMessage)
-				) {
-					// Show only the new content
-					const delta = currentText.slice(lastDisplayedMessage.length);
-					if (delta) {
-						// Use process.stdout.write for streaming without newlines
-						process.stdout.write(colorize('green', delta));
-					}
-					lastDisplayedMessage = currentText;
-				} else if (currentText !== lastDisplayedMessage) {
-					// Content changed completely, show with prefix
-					console.log(colorize('green', `     📝 ${currentText}`));
+				if (currentText !== lastDisplayedMessage) {
 					lastDisplayedMessage = currentText;
 				}
 			} else {
-				// For non-streaming, show complete message
-				console.log(colorize('green', `     📝 ${part.text}`));
+				// For non-streaming, show complete message in Assistant box
+				displayAssistantMessage(part.text);
 				lastDisplayedMessage = part.text;
 			}
 		} else if (part.kind === 'file') {
@@ -583,6 +953,58 @@ function printMessageContentStreaming(
 			);
 		} else if (part.kind === 'data') {
 			const dataPart = part as DataPart;
+			const data = dataPart.data as Record<string, unknown> | undefined;
+			const dataType = (data?.['type'] as string) || undefined;
+			const functionName = (data?.['name'] as string) || undefined;
+
+			if (dataType === 'model') {
+				// Suppress provider model events
+				return;
+			}
+
+			// Suppress handoff function call results (transfer_to_*)
+			if (
+				dataType === 'function_call_result' &&
+				functionName?.startsWith('transfer_to_')
+			) {
+				return;
+			}
+
+			if (dataType === 'output_text_delta') {
+				const delta = (data?.['delta'] as string) || '';
+				if (delta) {
+					const terminalWidth = process.stdout.columns || 80;
+					const boxWidth = Math.max(terminalWidth - 2, 60);
+
+					// Handle line breaks properly with box borders
+					if (delta.includes('\n')) {
+						const lines = delta.split('\n');
+
+						for (let i = 0; i < lines.length; i++) {
+							if (i > 0) {
+								// End current line with proper padding and start new line with border
+								const currentLineLength =
+									currentStreamingLine.length + (i === 0 ? lines[0].length : 0);
+								const padding = ' '.repeat(
+									Math.max(0, boxWidth - 4 - currentLineLength),
+								);
+								process.stdout.write(colorize('cyan', `${padding} │\n│ `));
+								currentStreamingLine = ''; // Reset for new line
+							}
+							if (lines[i]) {
+								process.stdout.write(lines[i]);
+								currentStreamingLine += lines[i];
+							}
+						}
+					} else {
+						process.stdout.write(delta);
+						currentStreamingLine += delta;
+					}
+					lastDisplayedMessage = `${lastDisplayedMessage}${delta}`;
+				}
+				return;
+			}
+			// Fallback: show data
 			console.log(
 				`${colorize('red', `  Part ${index + 1}:`)} ${colorize(
 					'yellow',
@@ -603,13 +1025,7 @@ function printMessageContentStreaming(
 }
 
 async function printToolCallArtifact(artifact: any) {
-	console.log(colorize('cyan', `\n🔧 Tool Call Approval Required:`));
-	console.log(
-		colorize('bright', `  Name: ${artifact.name || 'Unnamed Tool Call'}`),
-	);
-	if (artifact.description) {
-		console.log(colorize('dim', `  Description: ${artifact.description}`));
-	}
+	// Suppress verbose approval display - tool boxes will show the information cleanly
 
 	let toolName = '';
 	let toolCallData: any = null;
@@ -642,12 +1058,6 @@ async function printToolCallArtifact(artifact: any) {
 			const decision = (cliArgs.autoApprove ? 'approve' : autoPreference!) as
 				| 'approve'
 				| 'reject';
-			console.log(
-				colorize(
-					'green',
-					`\n  🤖 Auto-${decision} enabled for this tool (${reason})`,
-				),
-			);
 
 			// Check if we have an active task before proceeding with auto-approval
 			if (!currentTaskId) {
@@ -659,7 +1069,7 @@ async function printToolCallArtifact(artifact: any) {
 			pendingToolCalls = [toolCallData];
 			isWaitingForApproval = true;
 
-			// Automatically handle the tool call
+			// Automatically handle the tool call - suppress verbose output
 			await handleToolApproval(decision, reason, toolCallData);
 			return;
 		}
@@ -721,164 +1131,85 @@ async function printToolCallArtifact(artifact: any) {
 		}
 	});
 
-	console.log(colorize('yellow', `\n  💡 Tool Call Options:`));
-	console.log(
-		colorize('dim', `     • approve [reason] - Execute the tool call as-is`),
-	);
-	console.log(colorize('dim', `     • reject [reason] - Cancel the tool call`));
-	console.log(
-		colorize(
-			'dim',
-			`     • modify <param>=<value> - Change a parameter (e.g., 'modify city=San Francisco')`,
-		),
-	);
-	console.log(
-		colorize(
-			'dim',
-			`     • auto-approve - Approve and remember for future calls to this tool`,
-		),
-	);
-	console.log(
-		colorize(
-			'dim',
-			`     • auto-reject - Reject and remember for future calls to this tool`,
-		),
-	);
-	console.log(
-		colorize(
-			'dim',
-			`     • show-params - Display current parameters for modification`,
-		),
-	);
+	// Tool options are handled automatically for auto-approve scenarios
 }
 
-// --- Tool Call Parsing from Status Message ---
-async function handleToolCallFromStatusMessage(
-	messageText: string,
+// --- Tool Call Parsing from Status Data (preferred) ---
+type RawToolCallPayload = {
+	id?: string;
+	name?: string;
+	arguments?: unknown;
+	args?: unknown;
+	parameters?: Record<string, unknown>;
+	artifactId?: string;
+	tool?: {name?: string} | undefined;
+};
+
+async function handleToolCallFromStatusData(
+	data: unknown,
 	_taskId: string,
 	_contextId: string,
 ): Promise<void> {
-	// Parse tool call information from the status message
-	// Format: "Human approval required for tool execution: get_weather({\"city\":\"Oakland\"})"
-	const toolCallMatch = messageText.match(
-		/Human approval required for tool execution: (.+)/,
-	);
-	if (!toolCallMatch) {
-		console.log(
-			colorize(
-				'red',
-				'Could not parse tool call information from status message',
-			),
-		);
-		return;
-	}
-
-	const toolCallText = toolCallMatch[1];
-	console.log(colorize('cyan', `\n🔧 Tool Call Approval Required:`));
-	console.log(
-		colorize('bright', `  Parsed from status message: ${toolCallText}`),
-	);
-
-	// Parse the tool call (simple regex-based parsing)
-	const toolMatch = toolCallText.match(/^(\w+)\((.+)\)$/);
-	if (!toolMatch) {
-		console.log(colorize('red', 'Could not parse tool call format'));
-		return;
-	}
-
-	const toolName = toolMatch[1];
-	const parametersText = toolMatch[2];
-
-	let parameters: Record<string, any> = {};
 	try {
-		parameters = JSON.parse(parametersText);
-	} catch (error) {
-		console.log(
-			colorize('red', 'Could not parse tool call parameters as JSON'),
-		);
-		return;
+		// Expecting shape similar to item.rawItem { id?, name, arguments }
+		const payload = (data ?? {}) as RawToolCallPayload;
+		const toolName: string | undefined = payload.name || payload.tool?.name;
+		const rawArgs: unknown =
+			payload.arguments ?? payload.args ?? payload.parameters;
+
+		if (!toolName) {
+			return; // Not a tool-call status payload; ignore
+		}
+
+		// Normalize arguments to object
+		let parameters: Record<string, unknown> = {};
+		if (rawArgs !== null && rawArgs !== undefined) {
+			if (typeof rawArgs === 'string') {
+				try {
+					parameters = JSON.parse(rawArgs);
+				} catch {
+					// Fallback: wrap raw string
+					parameters = {value: rawArgs};
+				}
+			} else if (typeof rawArgs === 'object') {
+				parameters = rawArgs as Record<string, unknown>;
+			}
+		}
+
+		// Compose a synthetic artifactId if not present
+		const artifactId = payload.artifactId || `tool-call-${Date.now()}`;
+		const callId = payload.id || `call_${Date.now()}`;
+
+		// Suppress verbose approval display - tool boxes will show the information cleanly
+
+		const toolCall: ToolCall = {
+			id: callId,
+			name: toolName,
+			parameters,
+			artifactId,
+		};
+
+		pendingToolCalls.push(toolCall);
+		isWaitingForApproval = true;
+
+		// Auto preferences
+		const autoPreference = checkAutoPreference(toolName);
+		if (autoPreference || cliArgs.autoApprove) {
+			const reason = cliArgs.autoApprove
+				? 'CLI auto-approve flag'
+				: `Auto-${autoPreference} based on saved preference`;
+			const decision = (cliArgs.autoApprove ? 'approve' : autoPreference!) as
+				| 'approve'
+				| 'reject';
+			// Suppress verbose auto-approval messages - tool boxes will show the clean information
+			await handleToolApproval(decision, reason, toolCall);
+			return;
+		}
+
+		// Tool options are handled automatically for auto-approve scenarios
+	} catch (_err) {
+		console.log(colorize('red', 'Failed to process tool-call status data'));
 	}
-
-	console.log(
-		colorize('yellow', `\n  🛠️  Tool: ${colorize('bright', toolName)}`),
-	);
-	console.log(colorize('dim', `     ID: call_${Date.now()}`));
-
-	if (Object.keys(parameters).length > 0) {
-		console.log(colorize('dim', `     Parameters:`));
-		Object.entries(parameters).forEach(([key, value]) => {
-			console.log(colorize('dim', `       ${key}: ${JSON.stringify(value)}`));
-		});
-	}
-
-	console.log(colorize('red', `\n  🔐 Approval Required:`));
-	console.log(colorize('dim', `     Type: approval`));
-	console.log(
-		colorize('dim', `     Reason: Tool execution requires human approval`),
-	);
-
-	// Store the tool call for approval handling
-	// Note: We're generating a new ID here since we don't have access to the original tool call ID
-	// In a real implementation, we'd need to capture this from the artifact events
-	const toolCall: ToolCall = {
-		id: `call_${Date.now()}`,
-		name: toolName,
-		parameters: parameters,
-		artifactId: `tool-call-${Date.now()}`,
-	};
-
-	pendingToolCalls.push(toolCall);
-	isWaitingForApproval = true;
-
-	// Check for auto-preferences
-	const autoPreference = checkAutoPreference(toolName);
-	if (autoPreference || cliArgs.autoApprove) {
-		const reason = cliArgs.autoApprove
-			? 'CLI auto-approve flag'
-			: `Auto-${autoPreference} based on saved preference`;
-		const decision = (cliArgs.autoApprove ? 'approve' : autoPreference!) as
-			| 'approve'
-			| 'reject';
-		console.log(
-			colorize(
-				'green',
-				`\n  🤖 Auto-${decision} enabled for this tool (${reason})`,
-			),
-		);
-		// Automatically handle the tool call using the specific parsed call
-		await handleToolApproval(decision, reason, toolCall);
-		return;
-	}
-
-	console.log(colorize('yellow', `\n  💡 Tool Call Options:`));
-	console.log(
-		colorize('dim', `     • approve [reason] - Execute the tool call as-is`),
-	);
-	console.log(colorize('dim', `     • reject [reason] - Cancel the tool call`));
-	console.log(
-		colorize(
-			'dim',
-			`     • modify <param>=<value> - Change a parameter (e.g., 'modify city=San Francisco')`,
-		),
-	);
-	console.log(
-		colorize(
-			'dim',
-			`     • auto-approve - Approve and remember for future calls to this tool`,
-		),
-	);
-	console.log(
-		colorize(
-			'dim',
-			`     • auto-reject - Reject and remember for future calls to this tool`,
-		),
-	);
-	console.log(
-		colorize(
-			'dim',
-			`     • show-params - Display current parameters for modification`,
-		),
-	);
 }
 
 // --- Tool Call Preference Management ---
@@ -1014,24 +1345,34 @@ async function handleToolApproval(
 	}
 
 	const isApproved = decision.toLowerCase().startsWith('approve');
+	const isAutoApproval =
+		reason?.includes('auto-approve') || reason?.includes('CLI auto-approve');
 
-	console.log(
-		colorize('cyan', `\n🔧 Processing tool call decision: ${decision}`),
-	);
+	// Only show verbose output if not auto-approving
+	if (!isAutoApproval) {
+		console.log(
+			colorize('cyan', `\n🔧 Processing tool call decision: ${decision}`),
+		);
+	}
 
 	let toolResult: string;
 
 	if (isApproved) {
-		console.log(
-			colorize('green', `✅ Approving tool call: ${toolCallToProcess.name}`),
-		);
-		if (reason) {
-			console.log(colorize('dim', `   Reason: ${reason}`));
+		if (!isAutoApproval) {
+			console.log(
+				colorize('green', `✅ Approving tool call: ${toolCallToProcess.name}`),
+			);
+			if (reason) {
+				console.log(colorize('dim', `   Reason: ${reason}`));
+			}
 		}
 
 		// Execute the tool call
 		toolResult = await executeToolCall(toolCallToProcess);
-		console.log(colorize('green', `   Tool result: ${toolResult}`));
+
+		if (!isAutoApproval) {
+			console.log(colorize('green', `   Tool result: ${toolResult}`));
+		}
 	} else {
 		console.log(
 			colorize('red', `❌ Rejecting tool call: ${toolCallToProcess.name}`),
@@ -1074,12 +1415,15 @@ async function handleToolApproval(
 	};
 
 	try {
-		console.log(
-			colorize(
-				'cyan',
-				`\n📤 Sending tool response to continue conversation...`,
-			),
-		);
+		// Suppress verbose messaging for auto-approved tools
+		if (!isAutoApproval) {
+			console.log(
+				colorize(
+					'cyan',
+					`\n📤 Sending tool response to continue conversation...`,
+				),
+			);
+		}
 		const stream = client.sendMessageStream(params);
 
 		// Process the response stream
@@ -1091,15 +1435,45 @@ async function handleToolApproval(
 				await printAgentEvent(typedEvent);
 			} else if (event.kind === 'task') {
 				const task = event as Task;
-				console.log(colorize('blue', `\n📋 Task Update: ${task.status.state}`));
 
-				// For completed tasks, skip the message content since it was already streamed
+				// For completed tasks, close the streaming box first, then log completion
+				if (task.status.state === 'completed') {
+					if (isCurrentlyStreaming) {
+						const terminalWidth = process.stdout.columns || 80;
+						const boxWidth = Math.max(terminalWidth - 2, 60);
+						const currentLineLength = currentStreamingLine.length;
+						const padding = ' '.repeat(
+							Math.max(0, boxWidth - 4 - currentLineLength),
+						);
+						process.stdout.write(
+							colorize('cyan', `${padding} │\n╰${'─'.repeat(boxWidth - 2)}╯\n`),
+						);
+						currentStreamingLine = '';
+						isCurrentlyStreaming = false;
+					}
+					console.log(
+						colorize('blue', `\n📋 Task Update: ${task.status.state}`),
+					);
+				} else {
+					console.log(
+						colorize('blue', `\n📋 Task Update: ${task.status.state}`),
+					);
+				}
+
+				// For non-completed tasks, display any accumulated streaming content
 				if (task.status.message) {
 					if (task.status.state === 'completed') {
 						// Skip showing the message content for completed tasks - it was streamed already
-						// Just show a simple note that the task completed
 					} else {
-						printMessageContent(task.status.message);
+						// Display the task message in an Assistant box
+						const messageText =
+							task.status.message.parts
+								?.filter(part => part.kind === 'text')
+								?.map(part => part.text)
+								?.join(' ') || '';
+						if (messageText) {
+							displayAssistantMessage(messageText);
+						}
 					}
 				}
 			}
@@ -1331,31 +1705,8 @@ async function processInput(
 	} as any;
 
 	try {
-		console.log(colorize('red', 'Sending message...'));
-		console.log(colorize('dim', `   Current state before sending:`));
-		console.log(
-			colorize('dim', `     currentTaskId: ${currentTaskId || 'undefined'}`),
-		);
-		console.log(
-			colorize(
-				'dim',
-				`     currentContextId: ${currentContextId || 'undefined'}`,
-			),
-		);
-		console.log(
-			colorize(
-				'dim',
-				`     messagePayload.taskId: ${messagePayload.taskId || 'undefined'}`,
-			),
-		);
-		console.log(
-			colorize(
-				'dim',
-				`     messagePayload.contextId: ${
-					messagePayload.contextId || 'undefined'
-				}`,
-			),
-		);
+		// Display the user message clearly
+		displayUserMessage(input);
 
 		// Use sendMessageStream
 		const stream = client.sendMessageStream(params);
@@ -1403,8 +1754,15 @@ async function processInput(
 					currentContextId = task.contextId;
 				}
 				if (task.status.message) {
-					console.log(colorize('gray', '   Task includes message:'));
-					printMessageContent(task.status.message);
+					// Display the task message in an Assistant box
+					const messageText =
+						task.status.message.parts
+							?.filter(part => part.kind === 'text')
+							?.map(part => part.text)
+							?.join(' ') || '';
+					if (messageText) {
+						displayAssistantMessage(messageText);
+					}
 				}
 				if (task.artifacts && task.artifacts.length > 0) {
 					console.log(
