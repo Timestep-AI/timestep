@@ -31,8 +31,12 @@ export class Context {
 		// Sort tasks by creation time (using task ID timestamp if available, or order in array)
 		const sortedTasks = [...this.tasks].sort((a, b) => {
 			// If tasks have timestamps in metadata, use those
-			const aTime = String(a.metadata?.['timestamp'] || a.status?.timestamp || '0');
-			const bTime = String(b.metadata?.['timestamp'] || b.status?.timestamp || '0');
+			const aTime = String(
+				a.metadata?.['timestamp'] || a.status?.timestamp || '0',
+			);
+			const bTime = String(
+				b.metadata?.['timestamp'] || b.status?.timestamp || '0',
+			);
 			return aTime.localeCompare(bTime);
 		});
 

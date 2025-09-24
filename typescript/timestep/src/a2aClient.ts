@@ -269,6 +269,67 @@ function displayUserMessage(userInput: string): void {
 	console.log('');
 }
 
+function createInteractiveInputBox(promptText?: string): Promise<string> {
+	return new Promise(resolve => {
+		const terminalWidth = process.stdout.columns || 80;
+		const boxWidth = Math.max(terminalWidth - 2, 60);
+
+		// Display prompt text if provided (for tool approvals)
+		if (promptText) {
+			console.log('');
+			console.log(colorize('yellow', promptText));
+		}
+
+		// Draw the top of the User input box
+		console.log('');
+		console.log(colorize('blue', `╭─User${'─'.repeat(boxWidth - 6)}╮`));
+
+		// Create a readline interface for the input box with no automatic output
+		const inputRl = readline.createInterface({
+			input: process.stdin,
+			output: process.stdout,
+			terminal: true,
+		});
+
+		let userInput = '';
+
+		// Manually write the prompt
+		process.stdout.write(colorize('blue', '│ '));
+
+		inputRl.on('line', line => {
+			userInput = line.trim();
+
+			// Move cursor up one line to overwrite the input line properly
+			process.stdout.write('\x1b[1A'); // Move cursor up one line
+			process.stdout.write('\x1b[2K'); // Clear the line
+			process.stdout.write(colorize('blue', '│ ')); // Redraw left border
+			process.stdout.write(userInput); // Write the input
+			const inputPadding = ' '.repeat(
+				Math.max(0, boxWidth - 4 - userInput.length),
+			);
+			process.stdout.write(colorize('blue', `${inputPadding} │\n`)); // Right border and newline
+			console.log(colorize('blue', `╰${'─'.repeat(boxWidth - 2)}╯`));
+			console.log('');
+
+			inputRl.close();
+			resolve(userInput);
+		});
+
+		inputRl.on('close', () => {
+			if (userInput === '') {
+				// Handle case where user closes without input (Ctrl+C, etc.)
+				process.stdout.write('\x1b[2K\r'); // Clear line and return to beginning
+				process.stdout.write(
+					colorize('blue', `│ ${' '.repeat(boxWidth - 4)} │\n`),
+				);
+				console.log(colorize('blue', `╰${'─'.repeat(boxWidth - 2)}╯`));
+				console.log('');
+				resolve('');
+			}
+		});
+	});
+}
+
 function displayAssistantMessage(message: string): void {
 	// Get terminal width, default to 80 if not available
 	const terminalWidth = process.stdout.columns || 80;
@@ -520,10 +581,16 @@ async function selectAgent(): Promise<string> {
 	console.log();
 
 	return new Promise(resolve => {
+		// Create a temporary readline interface for agent selection
+		const selectionRl = readline.createInterface({
+			input: process.stdin,
+			output: process.stdout,
+		});
+
 		const askForSelection = () => {
-			rl.question(
+			selectionRl.question(
 				colorize('cyan', `Enter your choice (1-${agents.length}): `),
-				answer => {
+				(answer: string) => {
 					const choice = parseInt(answer.trim());
 
 					if (isNaN(choice) || choice < 1 || choice > agents.length) {
@@ -541,6 +608,7 @@ async function selectAgent(): Promise<string> {
 					console.log(colorize('green', `✓ Selected: ${selectedAgent.name}`));
 					console.log(colorize('dim', `   ${selectedAgent.description}\n`));
 
+					selectionRl.close();
 					resolve(selectedAgent.id);
 				},
 			);
@@ -551,11 +619,7 @@ async function selectAgent(): Promise<string> {
 }
 
 // --- Readline Setup ---
-const rl = readline.createInterface({
-	input: process.stdin,
-	output: process.stdout,
-	prompt: colorize('cyan', 'You: '),
-});
+// Note: Individual readline interfaces are created as needed in createInteractiveInputBox()
 
 // --- Response Handling ---
 // Function now accepts the unwrapped event payload directly
@@ -1131,7 +1195,22 @@ async function printToolCallArtifact(artifact: any) {
 		}
 	});
 
-	// Tool options are handled automatically for auto-approve scenarios
+	// If we reach here, just show the tool information - options will be shown by main loop
+	if (pendingToolCalls.length > 0) {
+		console.log(
+			colorize(
+				'yellow',
+				'🛠️ Tool approval required. Use one of the following commands:',
+			),
+		);
+		console.log(colorize('dim', '  • approve [reason]'));
+		console.log(colorize('dim', '  • reject [reason]'));
+		console.log(colorize('dim', '  • modify <param>=<value>'));
+		console.log(colorize('dim', '  • auto-approve'));
+		console.log(colorize('dim', '  • auto-reject'));
+		console.log(colorize('dim', '  • show-params'));
+		console.log('');
+	}
 }
 
 // --- Tool Call Parsing from Status Data (preferred) ---
@@ -1206,7 +1285,22 @@ async function handleToolCallFromStatusData(
 			return;
 		}
 
-		// Tool options are handled automatically for auto-approve scenarios
+		// If we reach here, just show the tool information - options will be shown by main loop
+		if (pendingToolCalls.length > 0) {
+			console.log(
+				colorize(
+					'yellow',
+					`🛠️ Tool approval required for "${toolName}". Use one of the following commands:`,
+				),
+			);
+			console.log(colorize('dim', '  • approve [reason]'));
+			console.log(colorize('dim', '  • reject [reason]'));
+			console.log(colorize('dim', '  • modify <param>=<value>'));
+			console.log(colorize('dim', '  • auto-approve'));
+			console.log(colorize('dim', '  • auto-reject'));
+			console.log(colorize('dim', '  • show-params'));
+			console.log('');
+		}
 	} catch (_err) {
 		console.log(colorize('red', 'Failed to process tool-call status data'));
 	}
@@ -1547,7 +1641,6 @@ async function processInput(
 	isInteractive: boolean = true,
 ): Promise<void> {
 	if (!input) {
-		if (isInteractive) rl.prompt();
 		return;
 	}
 
@@ -1562,14 +1655,10 @@ async function processInput(
 				`✨ Starting new session with ${agentName}. Task and Context IDs are cleared.`,
 			),
 		);
-		if (isInteractive) rl.prompt();
 		return;
 	}
 
-	if (input.toLowerCase() === '/exit') {
-		if (isInteractive) rl.close();
-		return;
-	}
+	// Note: /exit is handled in the main loop, not here
 
 	// Handle tool call approval/rejection
 	if (isWaitingForApproval && pendingToolCalls.length > 0) {
@@ -1581,19 +1670,16 @@ async function processInput(
 			const reason = parts.length > 1 ? parts[1] : undefined;
 
 			await handleToolApproval(decision, reason);
-			if (isInteractive) rl.prompt();
 			return;
 		} else if (lowerInput === 'auto-approve') {
 			const toolCall = pendingToolCalls[0];
 			setToolPreference(toolCall.name, true, false);
 			await handleToolApproval('approve', 'Auto-approve enabled for this tool');
-			if (isInteractive) rl.prompt();
 			return;
 		} else if (lowerInput === 'auto-reject') {
 			const toolCall = pendingToolCalls[0];
 			setToolPreference(toolCall.name, false, true);
 			await handleToolApproval('reject', 'Auto-reject enabled for this tool');
-			if (isInteractive) rl.prompt();
 			return;
 		} else if (lowerInput === 'show-params') {
 			const toolCall = pendingToolCalls[0];
@@ -1603,7 +1689,6 @@ async function processInput(
 			Object.entries(toolCall.parameters).forEach(([key, value]) => {
 				console.log(colorize('dim', `  ${key}: ${JSON.stringify(value)}`));
 			});
-			if (isInteractive) rl.prompt();
 			return;
 		} else if (lowerInput.startsWith('modify ')) {
 			const modifyCommand = input.substring(7); // Remove "modify "
@@ -1615,7 +1700,6 @@ async function processInput(
 						'Invalid modify command. Use: modify <param>=<value>',
 					),
 				);
-				if (isInteractive) rl.prompt();
 				return;
 			}
 
@@ -1627,7 +1711,6 @@ async function processInput(
 				console.log(
 					colorize('red', 'Parameter name and value cannot be empty.'),
 				);
-				if (isInteractive) rl.prompt();
 				return;
 			}
 
@@ -1640,7 +1723,6 @@ async function processInput(
 						'Parameter name contains invalid characters. Only letters, numbers, and underscores are allowed.',
 					),
 				);
-				if (isInteractive) rl.prompt();
 				return;
 			}
 
@@ -1659,9 +1741,9 @@ async function processInput(
 			Object.entries(toolCall.parameters).forEach(([key, value]) => {
 				console.log(colorize('dim', `  ${key}: ${JSON.stringify(value)}`));
 			});
-			if (isInteractive) rl.prompt();
 			return;
 		} else {
+			// Invalid input for tool approval - just return and let the main loop handle the next input
 			console.log(
 				colorize('yellow', 'Please respond with one of the available options:'),
 			);
@@ -1671,7 +1753,6 @@ async function processInput(
 			console.log(colorize('dim', '  • auto-approve'));
 			console.log(colorize('dim', '  • auto-reject'));
 			console.log(colorize('dim', '  • show-params'));
-			if (isInteractive) rl.prompt();
 			return;
 		}
 	}
@@ -1705,8 +1786,11 @@ async function processInput(
 	} as any;
 
 	try {
-		// Display the user message clearly
-		displayUserMessage(input);
+		// In interactive mode, don't display user message again (already shown by input box)
+		// In non-interactive mode, display it normally
+		if (!isInteractive) {
+			displayUserMessage(input);
+		}
 
 		// Use sendMessageStream
 		const stream = client.sendMessageStream(params);
@@ -1800,9 +1884,7 @@ async function processInput(
 			);
 		}
 	} finally {
-		if (isInteractive) {
-			rl.prompt();
-		}
+		// No need to prompt - main loop will handle next input
 	}
 }
 
@@ -1877,20 +1959,35 @@ async function main() {
 		),
 	);
 
-	rl.setPrompt(colorize('cyan', `${agentName} > You: `)); // Set initial prompt
-	rl.prompt();
+	// Interactive input loop using custom input box
+	while (true) {
+		try {
+			// Show different prompt text if waiting for tool approval
+			let promptText: string | undefined;
+			if (isWaitingForApproval && pendingToolCalls.length > 0) {
+				promptText = `🛠️ Waiting for tool approval. Please choose:
+  • approve [reason]  • reject [reason]  • modify <param>=<value>
+  • auto-approve     • auto-reject      • show-params`;
+			}
 
-	rl.on('line', async line => {
-		const input = line.trim();
+			const input = await createInteractiveInputBox(promptText);
+			const trimmedInput = input.trim();
 
-		// Keep the prompt consistent as "You:" throughout the interaction
-		rl.setPrompt(colorize('cyan', `${agentName} > You: `));
+			if (trimmedInput.toLowerCase() === '/exit') {
+				console.log(
+					colorize('yellow', 'Exiting A2A Terminal Client. Goodbye!'),
+				);
+				process.exit(0);
+			}
 
-		await processInput(input);
-	}).on('close', () => {
-		console.log(colorize('yellow', '\nExiting A2A Terminal Client. Goodbye!'));
-		process.exit(0);
-	});
+			if (trimmedInput) {
+				await processInput(trimmedInput, true);
+			}
+		} catch (error) {
+			console.error(colorize('red', 'Error in input loop:'), error);
+			break;
+		}
+	}
 }
 
 // --- Start ---
