@@ -83,3 +83,5 @@ publish:
 	cd typescript/timestep && npm publish
 
 local-test-run: timestep-cli-server test-built-in-weather-cli
+
+local-chat: timestep-cli-server timestep-cli-chat

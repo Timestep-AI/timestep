@@ -24,6 +24,29 @@ export class Context {
 		return this.taskHistories[taskId] || [];
 	}
 
+	// Get full conversation history across all tasks in chronological order
+	getFullConversationHistory(): AgentInputItem[] {
+		const fullHistory: AgentInputItem[] = [];
+
+		// Sort tasks by creation time (using task ID timestamp if available, or order in array)
+		const sortedTasks = [...this.tasks].sort((a, b) => {
+			// If tasks have timestamps in metadata, use those
+			const aTime = String(a.metadata?.['timestamp'] || a.status?.timestamp || '0');
+			const bTime = String(b.metadata?.['timestamp'] || b.status?.timestamp || '0');
+			return aTime.localeCompare(bTime);
+		});
+
+		// Collect history from all tasks in chronological order
+		for (const task of sortedTasks) {
+			const taskHistory = this.taskHistories[task.id];
+			if (taskHistory && taskHistory.length > 0) {
+				fullHistory.push(...taskHistory);
+			}
+		}
+
+		return fullHistory;
+	}
+
 	// Set conversation history for a task (from OpenAI Agents run result)
 	setTaskHistory(taskId: string, history: AgentInputItem[]): void {
 		this.taskHistories[taskId] = structuredClone(history);

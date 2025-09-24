@@ -56,6 +56,14 @@ export class ContextService {
 	}
 
 	/**
+	 * Get full conversation history across all tasks in chronological order
+	 */
+	async getFullConversationHistory(contextId: string): Promise<AgentInputItem[]> {
+		const context = await this.repository.load(contextId);
+		return context?.getFullConversationHistory() || [];
+	}
+
+	/**
 	 * Get agent state for a specific task
 	 */
 	async getTaskState(contextId: string, taskId: string): Promise<any> {
