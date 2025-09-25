@@ -43,3 +43,23 @@ export async function listContexts(
 		throw new Error(`Failed to read contexts: ${error}`);
 	}
 }
+
+/**
+ * Get a specific context by ID using the context service
+ *
+ * @param contextId The ID of the context to retrieve
+ * @param repositories Optional repository container for dependency injection. Defaults to DefaultRepositoryContainer
+ * @returns Promise resolving to the context if found, null otherwise
+ */
+export async function getContext(
+	contextId: string,
+	repositories: RepositoryContainer = new DefaultRepositoryContainer(),
+): Promise<Context | null> {
+	const contextService = new ContextService(repositories.contexts);
+
+	try {
+		return await contextService.getContext(contextId);
+	} catch (error) {
+		throw new Error(`Failed to get context: ${error}`);
+	}
+}

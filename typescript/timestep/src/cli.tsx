@@ -28,6 +28,7 @@ const cli = meow(
 	  --agentId                Agent ID to use for chat command
 	  --auto-approve           Auto-approve tool calls for chat command
 	  --user-input             User input to send automatically for chat command
+	  --contextId              Context ID to continue an existing chat
 
 	Examples
 	  $ timestep --name=Jane
@@ -44,6 +45,9 @@ const cli = meow(
 
 	  $ timestep chat --agentId 00000000-0000-0000-0000-000000000000 --auto-approve --user-input "What's the weather?"
 	  Start chat with specific agent, auto-approve tools, and send message
+
+	  $ timestep chat --contextId 12345678-1234-1234-1234-123456789abc
+	  Continue existing chat with specific context ID
 
 	  $ timestep list-agents
 	  List all agents from the server
@@ -85,6 +89,9 @@ const cli = meow(
 			userInput: {
 				type: 'string',
 				alias: 'user-input',
+			},
+			contextId: {
+				type: 'string',
 			},
 			baseServerUrl: {
 				type: 'string',

@@ -10,6 +10,7 @@ type Props = {
 		agentId?: string;
 		autoApprove?: boolean;
 		userInput?: string;
+		contextId?: string;
 		baseServerUrl?: string;
 		authToken?: string;
 	};
@@ -169,6 +170,7 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 			agentId?: string;
 			autoApprove?: boolean;
 			userInput?: string;
+			contextId?: string;
 			baseServerUrl?: string;
 			authToken?: string;
 		} = {},
@@ -187,6 +189,10 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 
 			if (options.userInput) {
 				args.push('--user-input', options.userInput);
+			}
+
+			if (options.contextId) {
+				args.push('--contextId', options.contextId);
 			}
 
 			if (options.baseServerUrl) {
@@ -334,6 +340,7 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 				agentId: flags?.agentId,
 				autoApprove: flags?.autoApprove || false,
 				userInput: flags?.userInput,
+				contextId: flags?.contextId,
 				baseServerUrl: (flags as any)?.baseServerUrl,
 				authToken: (flags as any)?.authToken,
 			});

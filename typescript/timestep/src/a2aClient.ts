@@ -166,8 +166,12 @@ function drawBox(content: string[], width: number = 60): string[] {
 	const lines: string[] = [];
 	const maxContentWidth = width - 4; // Account for '│ ' and ' │'
 
-	// Top border
-	lines.push(`╭─${content[0].padEnd(maxContentWidth, '─')}─╮`);
+	// Top border - truncate title if too long and ensure right border is visible
+	const title =
+		content[0].length > maxContentWidth
+			? content[0].substring(0, maxContentWidth)
+			: content[0];
+	lines.push(`╭─${title.padEnd(maxContentWidth, '─')}─╮`);
 
 	// Content lines - handle wrapping and multi-line content
 	for (let i = 1; i < content.length; i++) {
@@ -245,7 +249,10 @@ function displayCleanToolEvent(toolEvent: ToolEvent): void {
 		const toolTitle = `Tool "${toolEvent.name}(${formattedInput})" (Context ID: ${toolEvent.contextId}, Task ID: ${toolEvent.taskId})`;
 
 		// Clean up the output - remove quotes and unescape newlines for better readability
-		let cleanOutput = toolEvent.output;
+		let cleanOutput =
+			typeof toolEvent.output === 'string'
+				? toolEvent.output
+				: JSON.stringify(toolEvent.output, null, 2);
 		if (cleanOutput.startsWith("'") && cleanOutput.endsWith("'")) {
 			cleanOutput = cleanOutput.slice(1, -1);
 		}
@@ -259,19 +266,27 @@ function displayCleanToolEvent(toolEvent: ToolEvent): void {
 	}
 }
 
-function displayUserMessage(userInput: string): void {
+function displayUserMessage(
+	userInput: string,
+	contextId?: string,
+	taskId?: string,
+	addNewlineAfter?: boolean,
+): void {
 	// Get terminal width, default to 80 if not available
 	const terminalWidth = process.stdout.columns || 80;
 	const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
 
 	const userTitle = `User (Context ID: ${
-		currentContextId || 'unknown'
-	}, Task ID: ${currentTaskId || 'unknown'})`;
+		contextId || currentContextId || 'unknown'
+	}, Task ID: ${taskId || currentTaskId || 'unknown'})`;
 	const content = [userTitle, userInput];
 
 	const boxLines = drawBox(content, boxWidth);
 	console.log('');
 	boxLines.forEach(line => console.log(colorize('blue', line)));
+	if (addNewlineAfter) {
+		console.log(''); // Add newline after user message box only when requested
+	}
 }
 
 function createInteractiveInputBox(promptText?: string): Promise<string> {
@@ -282,7 +297,7 @@ function createInteractiveInputBox(promptText?: string): Promise<string> {
 		// Display prompt text if provided (for tool approvals)
 		if (promptText) {
 			console.log('');
-			console.log(colorize('yellow', promptText));
+			console.log(promptText);
 			console.log('');
 		}
 
@@ -294,60 +309,93 @@ function createInteractiveInputBox(promptText?: string): Promise<string> {
 		const boxLines = drawBox(content, boxWidth);
 		console.log(colorize('blue', boxLines[0]));
 
-		// Create a readline interface for the input box with no automatic output
-		const inputRl = readline.createInterface({
-			input: process.stdin,
-			output: process.stdout,
-			terminal: true,
-		});
+		// Set terminal to raw mode for custom input handling
+		process.stdin.setRawMode(true);
+		process.stdin.resume();
+		process.stdin.setEncoding('utf8');
 
 		let userInput = '';
+		let cursorPosition = 0;
 
 		// Manually write the prompt
 		process.stdout.write(colorize('blue', '│ '));
 
-		inputRl.on('line', line => {
-			userInput = line.trim();
+		// Handle key input
+		process.stdin.on('data', (key: string) => {
+			const keyCode = key.charCodeAt(0);
 
-			// Move cursor up one line to overwrite the input line properly
-			process.stdout.write('\x1b[1A'); // Move cursor up one line
-			process.stdout.write('\x1b[2K'); // Clear the line
-			process.stdout.write(colorize('blue', '│ ')); // Redraw left border
-			process.stdout.write(userInput); // Write the input
-			const inputPadding = ' '.repeat(
-				Math.max(0, boxWidth - 4 - userInput.length),
-			);
-			process.stdout.write(colorize('blue', `${inputPadding} │\n`)); // Right border and newline
-			console.log(colorize('blue', `╰${'─'.repeat(boxWidth - 2)}╯`));
-			console.log('');
+			if (keyCode === 13) {
+				// Enter key
+				process.stdin.setRawMode(false);
+				process.stdin.pause();
+				process.stdin.removeAllListeners('data');
 
-			inputRl.close();
-			resolve(userInput);
-		});
+				// Close the box properly
+				process.stdout.write('\n'); // Move to next line
+				process.stdout.write(colorize('blue', `╰${'─'.repeat(boxWidth - 2)}╯`));
+				console.log(''); // Add extra newline for spacing
 
-		inputRl.on('close', () => {
-			if (userInput === '') {
-				// Handle case where user closes without input (Ctrl+C, etc.)
-				process.stdout.write('\x1b[2K\r'); // Clear line and return to beginning
-				process.stdout.write(
-					colorize('blue', `│ ${' '.repeat(boxWidth - 4)} │\n`),
-				);
-				console.log(colorize('blue', `╰${'─'.repeat(boxWidth - 2)}╯`));
+				resolve(userInput);
+			} else if (keyCode === 127 || keyCode === 8) {
+				// Backspace
+				if (cursorPosition > 0) {
+					userInput =
+						userInput.slice(0, cursorPosition - 1) +
+						userInput.slice(cursorPosition);
+					cursorPosition--;
+
+					// Clear the current line and redraw it with proper padding
+					process.stdout.write('\r');
+					process.stdout.write(colorize('blue', '│ '));
+					process.stdout.write(colorize('blue', userInput));
+					// Add padding to fill the rest of the line
+					const remainingSpace = Math.max(0, boxWidth - 4 - userInput.length);
+					process.stdout.write(' '.repeat(remainingSpace));
+					process.stdout.write(colorize('blue', ' │'));
+				}
+			} else if (keyCode === 3) {
+				// Ctrl+C
+				process.stdin.setRawMode(false);
+				process.stdin.pause();
+				process.stdin.removeAllListeners('data');
+
+				process.stdout.write('\n'); // Move to next line
+				process.stdout.write(colorize('blue', `╰${'─'.repeat(boxWidth - 2)}╯`));
 				console.log('');
 				resolve('');
+			} else if (keyCode >= 32 && keyCode <= 126) {
+				// Printable characters
+				userInput =
+					userInput.slice(0, cursorPosition) +
+					key +
+					userInput.slice(cursorPosition);
+				cursorPosition++;
+
+				// Clear the current line and redraw it with proper padding
+				process.stdout.write('\r');
+				process.stdout.write(colorize('blue', '│ '));
+				process.stdout.write(colorize('blue', userInput));
+				// Add padding to fill the rest of the line
+				const remainingSpace = Math.max(0, boxWidth - 4 - userInput.length);
+				process.stdout.write(' '.repeat(remainingSpace));
+				process.stdout.write(colorize('blue', ' │'));
 			}
 		});
 	});
 }
 
-function displayAssistantMessage(message: string): void {
+function displayAssistantMessage(
+	message: string,
+	contextId?: string,
+	taskId?: string,
+): void {
 	// Get terminal width, default to 80 if not available
 	const terminalWidth = process.stdout.columns || 80;
 	const boxWidth = Math.max(terminalWidth - 2, 60); // Leave 2 chars margin, minimum 60
 
 	const assistantTitle = `Assistant (Context ID: ${
-		currentContextId || 'unknown'
-	}, Task ID: ${currentTaskId || 'unknown'})`;
+		contextId || currentContextId || 'unknown'
+	}, Task ID: ${taskId || currentTaskId || 'unknown'})`;
 	const content = [assistantTitle, message];
 
 	const boxLines = drawBox(content, boxWidth);
@@ -408,6 +456,7 @@ interface CliArgs {
 	agentId?: string;
 	autoApprove?: boolean;
 	userInput?: string;
+	contextId?: string;
 	baseUrl?: string; // legacy positional
 	baseServerUrl?: string; // new named flag
 	authToken?: string; // new named flag
@@ -425,6 +474,8 @@ function parseCliArgs(): CliArgs {
 			args.autoApprove = true;
 		} else if (arg === '--user-input' && i + 1 < process.argv.length) {
 			args.userInput = process.argv[++i];
+		} else if (arg === '--contextId' && i + 1 < process.argv.length) {
+			args.contextId = process.argv[++i];
 		} else if (arg === '--base-url' && i + 1 < process.argv.length) {
 			args.baseUrl = process.argv[++i];
 		} else if (
@@ -1071,12 +1122,12 @@ function printMessageContentStreaming(
 								currentStreamingLine = ''; // Reset for new line
 							}
 							if (lines[i]) {
-								process.stdout.write(lines[i]);
+								process.stdout.write(colorize('cyan', lines[i]));
 								currentStreamingLine += lines[i];
 							}
 						}
 					} else {
-						process.stdout.write(delta);
+						process.stdout.write(colorize('cyan', delta));
 						currentStreamingLine += delta;
 					}
 					lastDisplayedMessage = `${lastDisplayedMessage}${delta}`;
@@ -1214,17 +1265,14 @@ async function printToolCallArtifact(artifact: any) {
 	if (pendingToolCalls.length > 0) {
 		console.log('');
 		console.log(
-			colorize(
-				'yellow',
-				'🛠️ Tool approval required. Use one of the following commands:',
-			),
+			'🛠️ Tool approval required. Use one of the following commands:',
 		);
-		console.log(colorize('dim', '  • approve [reason]'));
-		console.log(colorize('dim', '  • reject [reason]'));
-		console.log(colorize('dim', '  • modify <param>=<value>'));
-		console.log(colorize('dim', '  • auto-approve'));
-		console.log(colorize('dim', '  • auto-reject'));
-		console.log(colorize('dim', '  • show-params'));
+		console.log('  • approve [reason]');
+		console.log('  • reject [reason]');
+		console.log('  • modify <param>=<value>');
+		console.log('  • auto-approve');
+		console.log('  • auto-reject');
+		console.log('  • show-params');
 		console.log('');
 	}
 }
@@ -1305,17 +1353,14 @@ async function handleToolCallFromStatusData(
 		if (pendingToolCalls.length > 0) {
 			console.log('');
 			console.log(
-				colorize(
-					'yellow',
-					`🛠️ Tool approval required for "${toolName}". Use one of the following commands:`,
-				),
+				`🛠️ Tool approval required for "${toolName}". Use one of the following commands:`,
 			);
-			console.log(colorize('dim', '  • approve [reason]'));
-			console.log(colorize('dim', '  • reject [reason]'));
-			console.log(colorize('dim', '  • modify <param>=<value>'));
-			console.log(colorize('dim', '  • auto-approve'));
-			console.log(colorize('dim', '  • auto-reject'));
-			console.log(colorize('dim', '  • show-params'));
+			console.log('  • approve [reason]');
+			console.log('  • reject [reason]');
+			console.log('  • modify <param>=<value>');
+			console.log('  • auto-approve');
+			console.log('  • auto-reject');
+			console.log('  • show-params');
 		}
 	} catch (_err) {
 		console.log(colorize('red', 'Failed to process tool-call status data'));
@@ -1417,12 +1462,9 @@ async function executeToolCall(toolCall: ToolCall): Promise<string> {
 	// No longer execute tools directly - just return a placeholder
 	// The actual execution will be handled by the agent executor
 	console.log(
-		colorize(
-			'dim',
-			`   🔧 Tool call approved: ${
-				toolCall.name
-			} with parameters: ${JSON.stringify(toolCall.parameters)}`,
-		),
+		`   🔧 Tool call approved: ${
+			toolCall.name
+		} with parameters: ${JSON.stringify(toolCall.parameters)}`,
 	);
 	return `Tool ${toolCall.name} approved for execution`;
 }
@@ -1460,9 +1502,7 @@ async function handleToolApproval(
 
 	// Only show verbose output if not auto-approving
 	if (!isAutoApproval) {
-		console.log(
-			colorize('cyan', `🔧 Processing tool call decision: ${decision}`),
-		);
+		console.log(`🔧 Processing tool call decision: ${decision}`);
 	}
 
 	let toolResult: string;
@@ -1470,9 +1510,7 @@ async function handleToolApproval(
 	if (isApproved) {
 		if (!isAutoApproval) {
 			console.log('');
-			console.log(
-				colorize('green', `✅ Approving tool call: ${toolCallToProcess.name}`),
-			);
+			console.log(`✅ Approving tool call: ${toolCallToProcess.name}`);
 			if (reason) {
 				console.log(colorize('dim', `   Reason: ${reason}`));
 			}
@@ -1482,7 +1520,7 @@ async function handleToolApproval(
 		toolResult = await executeToolCall(toolCallToProcess);
 
 		if (!isAutoApproval) {
-			console.log(colorize('green', `   Tool result: ${toolResult}`));
+			console.log(`   Tool result: ${toolResult}`);
 		}
 	} else {
 		console.log(
@@ -1528,12 +1566,7 @@ async function handleToolApproval(
 	try {
 		// Suppress verbose messaging for auto-approved tools
 		if (!isAutoApproval) {
-			console.log(
-				colorize(
-					'cyan',
-					`\n📤 Sending tool response to continue conversation...`,
-				),
-			);
+			console.log(`\n📤 Sending tool response to continue conversation...`);
 		}
 		const stream = client.sendMessageStream(params);
 
@@ -1769,9 +1802,8 @@ async function processInput(
 			return;
 		} else {
 			// Invalid input for tool approval - just return and let the main loop handle the next input
-			console.log(
-				colorize('yellow', 'Please respond with one of the available options:'),
-			);
+			console.log(''); // Add newline before error message
+			console.log('Please respond with one of the available options:');
 			console.log(colorize('dim', '  • approve [reason]'));
 			console.log(colorize('dim', '  • reject [reason]'));
 			console.log(colorize('dim', '  • modify <param>=<value>'));
@@ -1814,7 +1846,7 @@ async function processInput(
 		// In interactive mode, don't display user message again (already shown by input box)
 		// In non-interactive mode, display it normally
 		if (!isInteractive) {
-			displayUserMessage(input);
+			displayUserMessage(input, undefined, undefined, true); // Add newline for live chat
 		}
 
 		// Use sendMessageStream
@@ -1846,6 +1878,7 @@ async function processInput(
 			} else if (event.kind === 'task') {
 				const task = event as Task;
 				if (task.contextId && task.contextId !== currentContextId) {
+					console.log(''); // Add newline before context creation message
 					console.log(`Context created (ID: ${task.contextId})`);
 					currentContextId = task.contextId;
 				}
@@ -1904,10 +1937,311 @@ async function processInput(
 	}
 }
 
+// --- Context Validation ---
+async function validateContextId(contextId: string): Promise<boolean> {
+	try {
+		const response = await fetch(`${baseServerUrl}/contexts/${contextId}`, {
+			headers: authToken ? {Authorization: `Bearer ${authToken}`} : undefined,
+		});
+
+		if (response.status === 404) {
+			console.log(
+				colorize('red', `❌ Error: Context with ID ${contextId} not found`),
+			);
+			return false;
+		} else if (!response.ok) {
+			console.log(
+				colorize(
+					'red',
+					`❌ Error: Failed to validate context ID (${response.status})`,
+				),
+			);
+			return false;
+		}
+
+		const context = await response.json();
+		console.log(colorize('green', `✅ Found existing context: ${contextId}`));
+		console.log(colorize('dim', `   Agent: ${context.agentId}`));
+		console.log(colorize('dim', `   Tasks: ${context.tasks?.length || 0}`));
+
+		// Set the current context ID
+		currentContextId = contextId;
+
+		// Load and display conversation history
+		await loadAndDisplayConversationHistory(contextId);
+
+		return true;
+	} catch (error) {
+		console.log(
+			colorize(
+				'red',
+				`❌ Error: Failed to validate context ID: ${
+					error instanceof Error ? error.message : 'Unknown error'
+				}`,
+			),
+		);
+		return false;
+	}
+}
+
+// --- Load and Display Conversation History ---
+async function loadAndDisplayConversationHistory(
+	contextId: string,
+): Promise<void> {
+	try {
+		// First, get the context details to access tasks
+		const contextResponse = await fetch(
+			`${baseServerUrl}/contexts/${contextId}`,
+			{
+				headers: authToken ? {Authorization: `Bearer ${authToken}`} : undefined,
+			},
+		);
+
+		if (!contextResponse.ok) {
+			console.log(
+				colorize(
+					'yellow',
+					`\n⚠️  Could not load context details (${contextResponse.status})\n`,
+				),
+			);
+			return;
+		}
+
+		const context = await contextResponse.json();
+
+		// Get the conversation history
+		const historyResponse = await fetch(
+			`${baseServerUrl}/contexts/${contextId}/history`,
+			{
+				headers: authToken ? {Authorization: `Bearer ${authToken}`} : undefined,
+			},
+		);
+
+		if (historyResponse.ok) {
+			const history = await historyResponse.json();
+			if (history && history.length > 0) {
+				console.log(colorize('blue', `\n📜 Loading conversation history...`));
+
+				let displayedCount = 0;
+				let hasShownContextCreation = false;
+				let hasShownTaskCreation = false;
+				let currentTaskId = 'unknown';
+
+				// Sort tasks by creation time to get the first task ID
+				const sortedTasks = (context.tasks || []).sort((a: any, b: any) => {
+					const aTime = a.metadata?.timestamp || a.status?.timestamp || '0';
+					const bTime = b.metadata?.timestamp || b.status?.timestamp || '0';
+					return aTime.localeCompare(bTime);
+				});
+
+				if (sortedTasks.length > 0) {
+					currentTaskId = sortedTasks[0].id;
+				}
+
+				// Display each message in the history
+				for (let i = 0; i < history.length; i++) {
+					const message = history[i];
+
+					if (message.role === 'user') {
+						// Display user message - first user message shouldn't have context ID
+						const userContent =
+							message.content?.[0]?.text ||
+							message.content ||
+							'Unknown message';
+						if (i === 0) {
+							// First user message - no context ID yet
+							displayUserMessage(userContent, 'unknown', 'unknown', false); // No extra newline
+							console.log(''); // Add line break after first user message
+						} else {
+							// Subsequent user messages have context and task IDs
+							displayUserMessage(userContent, contextId, currentTaskId, true); // Add newline for subsequent messages
+						}
+						displayedCount++;
+
+						// After first user message, show context and task creation
+						if (i === 0 && !hasShownContextCreation) {
+							console.log(`Context created (ID: ${contextId})`);
+							displayedCount++;
+							hasShownContextCreation = true;
+						}
+
+						if (i === 0 && !hasShownTaskCreation && sortedTasks.length > 0) {
+							console.log(`Task created (ID: ${currentTaskId})`);
+							displayedCount++;
+							hasShownTaskCreation = true;
+						}
+					} else if (message.role === 'assistant') {
+						// Display assistant message with proper context and task IDs
+						const assistantContent =
+							message.content?.[0]?.text ||
+							message.content ||
+							'Unknown message';
+						displayAssistantMessage(assistantContent, contextId, currentTaskId);
+						displayedCount++;
+					} else if (message.type === 'function_call') {
+						// Skip handoff function calls (like transfer_to_Weather_Assistant) - they're not displayed in live chat
+						const functionName = message.name || 'Unknown function';
+						if (!functionName.startsWith('transfer_to_')) {
+							// Display non-handoff function calls as assistant messages
+							// Try multiple possible fields for tool parameters
+							const functionArgs =
+								message.arguments ||
+								message.parameters ||
+								message.input ||
+								'{}';
+							const formattedArgs = formatToolInput(functionArgs);
+							displayAssistantMessage(
+								`${functionName}("${formattedArgs}")`,
+								contextId,
+								currentTaskId,
+							);
+							displayedCount++;
+
+							// Reconstruct tool approval prompts after tool calls
+							console.log(
+								`\n🛠️ Tool approval required for "${functionName}". Use one of the following commands:`,
+							);
+							console.log(`  • approve [reason]`);
+							console.log(`  • reject [reason]`);
+							console.log(`  • modify <param>=<value>`);
+							console.log(`  • auto-approve`);
+							console.log(`  • auto-reject`);
+							console.log(`  • show-params`);
+							console.log(`\n🛠️ Waiting for tool approval. Please choose:`);
+							console.log(
+								`  • approve [reason]  • reject [reason]  • modify <param>=<value>`,
+							);
+							console.log(
+								`  • auto-approve     • auto-reject      • show-params`,
+							);
+							displayedCount += 2; // Count the approval prompts
+						}
+					} else if (message.type === 'function_call_result') {
+						// Skip handoff function call results - they're not displayed in live chat
+						const functionName = message.name || 'Unknown function';
+						if (!functionName.startsWith('transfer_to_')) {
+							// Reconstruct user approval message
+							displayUserMessage('approve', contextId, currentTaskId, false); // No extra newline
+							displayedCount++;
+
+							// Reconstruct approval confirmation messages
+							console.log(`\n🔧 Processing tool call decision: approve`);
+							console.log(`\n✅ Approving tool call: ${functionName}`);
+							// Try multiple possible fields for tool parameters
+							const toolParams =
+								message.arguments ||
+								message.parameters ||
+								message.input ||
+								'{}';
+							console.log(
+								`   🔧 Tool call approved: ${functionName} with parameters: ${toolParams}`,
+							);
+							console.log(
+								`   Tool result: Tool ${functionName} approved for execution`,
+							);
+							console.log(
+								`\n📤 Sending tool response to continue conversation...`,
+							);
+							displayedCount += 5; // Count the approval messages
+
+							// Display tool response with cleaned output
+							let cleanOutput = message.output || 'No output';
+							if (
+								typeof cleanOutput === 'object' &&
+								cleanOutput.type === 'text'
+							) {
+								cleanOutput = cleanOutput.text;
+							} else if (typeof cleanOutput === 'string') {
+								// Try to parse as JSON and extract text if it's a text object
+								try {
+									const parsed = JSON.parse(cleanOutput);
+									if (parsed.type === 'text' && parsed.text) {
+										cleanOutput = parsed.text;
+									}
+								} catch {
+									// Keep original string if not JSON
+								}
+							}
+
+							displayCleanToolEvent({
+								type: 'tool_response',
+								name: functionName,
+								input: toolParams,
+								output: cleanOutput,
+								status: 'success',
+								agent: 'Assistant',
+								taskId: currentTaskId,
+								contextId: contextId,
+							});
+							displayedCount++;
+						}
+					} else if (message.providerData?.function) {
+						// Display tool calls as assistant messages (same as live chat)
+						const toolName =
+							message.providerData.function.name || 'Unknown tool';
+						const toolArgs = message.providerData.function.arguments || '{}';
+						const formattedArgs = formatToolInput(toolArgs);
+						displayAssistantMessage(
+							`${toolName}("${formattedArgs}")`,
+							contextId,
+							currentTaskId,
+						);
+						displayedCount++;
+					}
+				}
+
+				// Add task completed message at the end
+				if (sortedTasks.length > 0) {
+					console.log(`\nTask completed (ID: ${currentTaskId})`);
+					displayedCount++;
+				}
+
+				console.log(
+					colorize(
+						'green',
+						`\n✅ Loaded ${displayedCount} messages from conversation history (${history.length} total items)\n`,
+					),
+				);
+			} else {
+				console.log(
+					colorize('yellow', `\n📝 No previous conversation history found\n`),
+				);
+			}
+		} else {
+			console.log(
+				colorize(
+					'yellow',
+					`\n⚠️  Could not load conversation history (${historyResponse.status})\n`,
+				),
+			);
+		}
+	} catch (error) {
+		console.log(
+			colorize(
+				'yellow',
+				`\n⚠️  Could not load conversation history: ${
+					error instanceof Error ? error.message : 'Unknown error'
+				}\n`,
+			),
+		);
+	}
+}
+
 // --- Main Loop ---
 async function main() {
 	console.log(colorize('bright', `A2A Terminal Client`));
 	console.log(colorize('dim', `Base Server URL: ${baseServerUrl}`));
+
+	// Validate contextId if provided
+	if (cliArgs.contextId) {
+		console.log(
+			colorize('blue', `🔍 Validating context ID: ${cliArgs.contextId}`),
+		);
+		const isValid = await validateContextId(cliArgs.contextId);
+		if (!isValid) {
+			process.exit(1);
+		}
+	}
 
 	// Select agent first
 	selectedAgentId = await selectAgent();

@@ -19,6 +19,13 @@ export class ContextService {
 	}
 
 	/**
+	 * Get a specific context by ID
+	 */
+	async getContext(contextId: string): Promise<Context | null> {
+		return await this.repository.load(contextId);
+	}
+
+	/**
 	 * Get or create a context by ID
 	 */
 	async getOrCreate(_contextId: string): Promise<Context> {

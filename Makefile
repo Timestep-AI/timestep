@@ -87,3 +87,6 @@ local-test-run: timestep-cli-server test-built-in-weather-cli
 local-chat: timestep-cli-server timestep-cli-chat
 
 local-test-run-then-chat: local-test-run local-chat
+
+local-test-resume-chat: timestep-cli-server
+	cd typescript/timestep/ && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --contextId $$CONTEXT_ID

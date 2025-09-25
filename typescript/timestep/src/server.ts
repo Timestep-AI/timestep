@@ -251,6 +251,55 @@ app.get('/chats', async (_req, res) => {
 		});
 	}
 });
+
+app.get('/contexts/:id', async (req, res) => {
+	try {
+		const {getContext} = await import('./api/contextsApi.js');
+		const contextId = req.params.id;
+		const context = await getContext(contextId, repositories);
+
+		if (!context) {
+			res.status(404).json({
+				error: `Context with ID ${contextId} not found`,
+			});
+			return;
+		}
+
+		res.json(context);
+	} catch (error) {
+		console.error('Error getting context:', error);
+		res.status(500).json({
+			error: error instanceof Error ? error.message : 'Failed to get context',
+		});
+	}
+});
+
+app.get('/contexts/:id/history', async (req, res) => {
+	try {
+		const {getContext} = await import('./api/contextsApi.js');
+		const contextId = req.params.id;
+		const context = await getContext(contextId, repositories);
+
+		if (!context) {
+			res.status(404).json({
+				error: `Context with ID ${contextId} not found`,
+			});
+			return;
+		}
+
+		// Get the full conversation history from the context
+		const history = context.getFullConversationHistory();
+		res.json(history);
+	} catch (error) {
+		console.error('Error getting context history:', error);
+		res.status(500).json({
+			error:
+				error instanceof Error
+					? error.message
+					: 'Failed to get context history',
+		});
+	}
+});
 app.get('/mcp_servers', async (_req, res) => {
 	try {
 		const {listMcpServers} = await import('./api/mcpServersApi.js');
