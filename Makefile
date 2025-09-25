@@ -90,3 +90,6 @@ local-test-run-then-chat: local-test-run local-chat
 
 local-test-resume-chat: timestep-cli-server
 	cd typescript/timestep/ && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --contextId $$CONTEXT_ID
+
+remote-chat:
+	cd typescript/timestep && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --baseServerUrl https://ohzbghitbjryfpmucgju.supabase.co/functions/v1/server --auth-token $$AUTH_TOKEN

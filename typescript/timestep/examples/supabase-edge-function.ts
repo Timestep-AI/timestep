@@ -36,7 +36,7 @@ import {
 	type ModelProvider,
 	type Repository,
 	type RepositoryContainer,
-} from 'npm:@timestep-ai/timestep@2025.9.241812';
+} from 'npm:@timestep-ai/timestep@2025.9.242002';
 
 // Custom function to get agent card with correct Supabase base URL
 async function getAgentCardForSupabase(
@@ -44,7 +44,7 @@ async function getAgentCardForSupabase(
 	baseUrl: string,
 	repositories: any,
 ): Promise<any> {
-	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.241812');
+	const {getAgent} = await import('npm:@timestep-ai/timestep@2025.9.242002');
 	const agent = await getAgent(agentId, repositories);
 	if (!agent) {
 		throw new Error(`Agent ${agentId} not found`);
@@ -98,7 +98,7 @@ class SupabaseAgentRepository implements Repository<Agent, string> {
 		// Always ensure default agents exist and are up-to-date
 		try {
 			const {getDefaultAgents} = await import(
-				'npm:@timestep-ai/timestep@2025.9.241812'
+				'npm:@timestep-ai/timestep@2025.9.242002'
 			);
 			const defaultAgents = getDefaultAgents();
 
@@ -418,7 +418,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultMcpServers} = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 				const defaults = getDefaultMcpServers(this.baseUrl);
 				// Skip the built-in server since we already handled it above
@@ -446,7 +446,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		// Decrypt auth tokens if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.241812'
+			'npm:@timestep-ai/timestep@2025.9.242002'
 		);
 
 		const servers = await Promise.all(
@@ -493,7 +493,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 
 		// Decrypt auth token if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.241812'
+			'npm:@timestep-ai/timestep@2025.9.242002'
 		);
 
 		let authToken = data.auth_token;
@@ -533,7 +533,7 @@ class SupabaseMcpServerRepository implements Repository<McpServer, string> {
 			enabled: server.enabled,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.241812'
+			'npm:@timestep-ai/timestep@2025.9.242002'
 		);
 
 		// Handle auth token - encrypt if provided, set to null if not
@@ -607,7 +607,7 @@ class SupabaseModelProviderRepository
 		if (!existingData || existingData.length === 0) {
 			try {
 				const {getDefaultModelProviders} = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 				const defaults = getDefaultModelProviders();
 				for (const p of defaults) {
@@ -628,7 +628,7 @@ class SupabaseModelProviderRepository
 
 		// Decrypt API keys if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.241812'
+			'npm:@timestep-ai/timestep@2025.9.242002'
 		);
 
 		const providers = await Promise.all(
@@ -672,7 +672,7 @@ class SupabaseModelProviderRepository
 
 		// Decrypt API key if needed
 		const {isEncryptedSecret, decryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.241812'
+			'npm:@timestep-ai/timestep@2025.9.242002'
 		);
 
 		let apiKey = data.api_key;
@@ -705,7 +705,7 @@ class SupabaseModelProviderRepository
 			models_url: (provider as any).models_url ?? (provider as any).modelsUrl,
 		};
 		const {isEncryptedSecret, encryptSecret} = await import(
-			'npm:@timestep-ai/timestep@2025.9.241812'
+			'npm:@timestep-ai/timestep@2025.9.242002'
 		);
 		if (
 			(provider as any).api_key !== undefined ||
@@ -994,6 +994,8 @@ Deno.serve({port}, async (request: Request) => {
 						'/agents',
 						'/agents/{agentId}',
 						'/chats',
+						'/contexts/{contextId}',
+						'/contexts/{contextId}/history',
 						'/health',
 						'/mcp_servers',
 						'/mcp_servers/{serverId}',
@@ -1064,6 +1066,66 @@ Deno.serve({port}, async (request: Request) => {
 		if (cleanPath === '/chats') {
 			const result = await listContexts(repositories as any);
 			return new Response(JSON.stringify(result.data), {status: 200, headers});
+		}
+
+		// Handle individual context requests (GET /contexts/{contextId})
+		const contextMatch = cleanPath.match(/^\/contexts\/([^\/]+)$/);
+		if (contextMatch && request.method === 'GET') {
+			const contextId = contextMatch[1];
+			try {
+				// Use the repository directly since getContext is not exported from the main package
+				const context = await repositories.contexts.load(contextId);
+				if (!context) {
+					return new Response(
+						JSON.stringify({
+							error: `Context with ID ${contextId} not found`,
+						}),
+						{status: 404, headers},
+					);
+				}
+				return new Response(JSON.stringify(context), {status: 200, headers});
+			} catch (error) {
+				return new Response(
+					JSON.stringify({
+						error: 'Failed to get context',
+						message: error instanceof Error ? error.message : 'Unknown error',
+						contextId,
+					}),
+					{status: 500, headers},
+				);
+			}
+		}
+
+		// Handle context history requests (GET /contexts/{contextId}/history)
+		const contextHistoryMatch = cleanPath.match(
+			/^\/contexts\/([^\/]+)\/history$/,
+		);
+		if (contextHistoryMatch && request.method === 'GET') {
+			const contextId = contextHistoryMatch[1];
+			try {
+				// Use the repository directly since getContext is not exported from the main package
+				const context = await repositories.contexts.load(contextId);
+				if (!context) {
+					return new Response(
+						JSON.stringify({
+							error: `Context with ID ${contextId} not found`,
+						}),
+						{status: 404, headers},
+					);
+				}
+				// Get the full conversation history from the context
+				const history = context.getFullConversationHistory();
+				return new Response(JSON.stringify(history), {status: 200, headers});
+			} catch (error) {
+				return new Response(
+					JSON.stringify({
+						error: 'Failed to get context history',
+						message: error instanceof Error ? error.message : 'Unknown error',
+						contextId,
+					}),
+					{status: 500, headers},
+				);
+			}
 		}
 
 		if (cleanPath === '/mcp_servers') {
@@ -1199,7 +1261,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// Get tool information from the MCP server
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 
 				// First, get the list of tools from the server
@@ -1302,7 +1364,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				const [serverId, toolName] = parts;
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 
 				const result = await handleMcpServerRequest(
@@ -1345,7 +1407,7 @@ Deno.serve({port}, async (request: Request) => {
 
 			try {
 				const {handleMcpServerRequest} = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 
 				if (request.method === 'POST') {
@@ -1388,7 +1450,7 @@ Deno.serve({port}, async (request: Request) => {
 
 				// GET request - return full MCP server record
 				const {getMcpServer} = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 				const server = await getMcpServer(serverId, repositories as any);
 
@@ -1782,7 +1844,7 @@ Deno.serve({port}, async (request: Request) => {
 			try {
 				// Check if agent exists first
 				const timestepModule = await import(
-					'npm:@timestep-ai/timestep@2025.9.241812'
+					'npm:@timestep-ai/timestep@2025.9.242002'
 				);
 				const isAgentAvailable = timestepModule.isAgentAvailable;
 				if (!(await isAgentAvailable(agentId, repositories as any))) {
@@ -1866,7 +1928,7 @@ Deno.serve({port}, async (request: Request) => {
 
 							// Create the request handler for this agent
 							const timestepModule = await import(
-								'npm:@timestep-ai/timestep@2025.9.241812'
+								'npm:@timestep-ai/timestep@2025.9.242002'
 							);
 							const createAgentRequestHandler =
 								timestepModule.createAgentRequestHandler;
@@ -2098,6 +2160,10 @@ console.log('📚 Available endpoints:');
 console.log('  - GET /agents - List agents (using SupabaseAgentRepository)');
 console.log('  - /agents/{agentId}/* - Dynamic agent A2A endpoints');
 console.log('  - GET /chats - List chats (using SupabaseContextRepository)');
+console.log('  - GET /contexts/{contextId} - Get a specific context');
+console.log(
+	'  - GET /contexts/{contextId}/history - Get context conversation history',
+);
 console.log('  - GET /health - Health check with repository info');
 console.log(
 	'  - GET /mcp_servers - List MCP servers (using SupabaseMcpServerRepository)',
