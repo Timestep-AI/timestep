@@ -1,287 +1,85 @@
 # @timestep-ai/timestep
 
-A comprehensive TypeScript library and CLI for building AI agent systems with A2A (Agent-to-Agent) protocol support. Features built-in MCP (Model Context Protocol) server integration, tool management, and works seamlessly in Node.js, Deno, and Supabase Edge Functions.
+TypeScript library and CLI for AI agent systems with A2A and MCP protocol support. Addresses discrepancies between OpenAI's Agents SDK Python and TypeScript libraries, providing unified tool-calling, state management, and third-party model integration.
+
+**Free & Open Source** - MIT licensed. See [LICENSE](../../LICENSE) for details.
+
+This library powers [Timestep AI](https://timestep.ai) - the open core for our upcoming public platform focused on personal AI control with a default multi-agent assistant system.
 
 ## Features
 
-- 🤖 **Agent Management** - Create, configure, and manage AI agents with JSONL-based configuration
-- 🔄 **A2A Protocol** - Full Agent-to-Agent protocol implementation with streaming support
-- 🛠️ **Tool Integration** - Built-in MCP server with weather, document, and thinking tools plus external MCP server support
-- 🌐 **Multi-Runtime** - Works in Node.js, Deno, and Supabase Edge Functions
-- 📊 **Model Provider Support** - Supports OpenAI, Anthropic, Ollama, and custom providers
-- 🎛️ **CLI Interface** - Beautiful terminal UI for agent interaction and management
-- 📚 **API Server** - RESTful API server with Express.js
-- 💾 **Context Management** - Persistent conversation contexts and task tracking
-- 🔍 **Tracing & Debugging** - Built-in execution tracing and logging
-- ⚡ **Built-in Tools** - Weather forecasting, document processing, and advanced reasoning capabilities
+- **A2A Protocol** - Agent-to-Agent communication with streaming
+- **OpenAI Agents SDK** - Built on OpenAI's Agents SDK with unified Python/TypeScript compatibility
+- **Human-in-the-Loop** - Default approval for every tool call with fine-grained control - step back as you gain comfort
+- **MCP Integration** - Built-in tools + easy connection to any MCP server (Rube, Beeper Desktop, etc.)
+- **Multi-Runtime** - Node.js, Deno, and Supabase Edge Functions
+- **Flexible Storage** - Default JSONL files, overrideable with custom repositories
+- **CLI Interface** - Terminal UI for agent interaction
+- **API Server** - RESTful endpoints for programmatic access
+- **Context Management** - Persistent conversation contexts
+- **Built-in Tools** - Weather, document processing, reasoning
+- **Unified Model Support** - Working Ollama integration and consistent third-party model handling
+- **Your API Keys** - Add your own API keys for any model provider to power your agents
+- **Chat App Integration** - Connect to [Rube](https://rube.app/) and [Beeper Desktop](https://developers.beeper.com/desktop-api/mcp) for access to all your messaging apps
 
 ## Installation
 
-### Global CLI Installation
-
 ```bash
+# Global CLI
 npm install --global @timestep-ai/timestep
-```
 
-### Library Installation
-
-```bash
-# Node.js/npm
+# Library
 npm install @timestep-ai/timestep
-
-# Deno
-deno add npm:@timestep-ai/timestep
 ```
 
 ## Quick Start
 
-### CLI Usage
-
 ```bash
-# Start the server
+# Start server
 timestep server
 
-# Stop the server
-timestep stop
-
-# List available agents
-timestep list-agents
-
-# Start an interactive chat
+# Chat with agents
 timestep chat
 
-# List available tools
+# List agents
+timestep list-agents
+
+# List tools
 timestep list-tools
-
-# List MCP servers
-timestep list-mcp-servers
-
-# List model providers
-timestep list-model-providers
-
-# List available models
-timestep list-models
-
-# List chat contexts
-timestep list-chats
-
-# List execution traces
-timestep list-traces
-
-# Get version information
-timestep get-version
-
-# List all available commands
-timestep --help
 ```
 
-### Library Usage (Node.js)
+## Library Usage
 
 ```typescript
-import {
-	listAgents,
-	TimestepAIAgentExecutor,
-	startDenoServer,
-} from '@timestep-ai/timestep';
+import { TimestepAIAgentExecutor, listAgents } from '@timestep-ai/timestep';
 
-// List configured agents
+// List agents
 const agents = await listAgents();
-console.log(agents.data);
 
-// Create an agent executor for A2A protocol
+// Create executor
 const executor = new TimestepAIAgentExecutor();
-
-// Start the API server
-startDenoServer(3000);
-```
-
-### Library Usage (Deno/Supabase)
-
-```typescript
-// Use individual library functions for full control
-import {
-	listAgents,
-	listModels,
-	handleAgentRequest,
-	TimestepAIAgentExecutor,
-} from 'npm:@timestep-ai/timestep@latest';
-
-const agentExecutor = new TimestepAIAgentExecutor();
-
-Deno.serve({port}, async (request: Request) => {
-	const url = new URL(request.url);
-
-	if (url.pathname === '/agents') {
-		const result = await listAgents();
-		return new Response(JSON.stringify(result.data));
-	}
-
-	if (url.pathname === '/models') {
-		const result = await listModels();
-		return new Response(JSON.stringify(result.data));
-	}
-
-	// Handle dynamic agent A2A endpoints
-	const agentMatch = url.pathname.match(/^\/agents\/([^\/]+)(?:\/.*)?$/);
-	if (agentMatch) {
-		const mockReq = {
-			method: request.method,
-			path: url.pathname,
-			params: {agentId: agentMatch[1]},
-			body: await request.json().catch(() => ({})),
-		};
-		const result = await handleAgentRequest(
-			mockReq,
-			null,
-			null,
-			taskStore,
-			agentExecutor,
-			port,
-		);
-		return new Response(JSON.stringify(result));
-	}
-
-	return new Response('Not found', {status: 404});
-});
 ```
 
 ## API Endpoints
 
-When running the server, the following endpoints are available:
-
-### Core Endpoints
-
-- `GET /agents` - List available agents
-- `GET /models` - List available models
-- `GET /tools` - List available tools
-- `GET /traces` - List execution traces
-- `GET /chats` - List chat contexts
-- `GET /model_providers` - List model providers
+- `GET /agents` - List agents
+- `GET /models` - List models  
+- `GET /tools` - List tools
 - `GET /mcp_servers` - List MCP servers
-
-### MCP Server Endpoints
-
-- `GET /mcp_servers/{serverId}` - Health check for specific MCP server
-- `POST /mcp_servers/{serverId}` - Execute MCP server requests
-- `DELETE /mcp_servers/{serverId}` - Disable MCP server
-
-### A2A Protocol Endpoints
-
-- `/agents/{agentId}/*` - Dynamic agent endpoints following A2A protocol
-
-### Utility Endpoints
-
-- `GET /version` - Get version information
+- `/agents/{agentId}/*` - A2A protocol endpoints
 
 ## Configuration
 
-Timestep uses a configuration directory structure:
+By default, configuration is stored in `~/.config/timestep/` as JSONL files:
 
-```
-~/.config/timestep/           # Linux/macOS
-%APPDATA%/timestep/           # Windows
-~/Library/Application Support/timestep/  # macOS
+- `agents.jsonl` - Agent configurations
+- `model_providers.jsonl` - Model provider settings  
+- `mcp_servers.jsonl` - MCP server configurations
+- `contexts.jsonl` - Chat contexts and history
 
-├── app.json                  # App configuration (ports, etc.)
-├── agents.jsonl             # Agent configurations
-├── model_providers.jsonl    # Model provider settings
-├── mcp_servers.jsonl       # MCP server configurations
-└── contexts.jsonl          # Chat contexts and history
-```
-
-### Example Agent Configuration
-
-```json
-{
-	"id": "assistant",
-	"name": "General Assistant",
-	"instructions": "You are a helpful AI assistant.",
-	"toolIds": ["get-alerts", "get-forecast", "think", "markdownToPdf"],
-	"model": "gpt-4",
-	"modelSettings": {"temperature": 0.7}
-}
-```
-
-### Example Model Provider Configuration
-
-```json
-{
-	"id": "openai",
-	"provider": "openai",
-	"api_key": "your-api-key",
-	"base_url": "https://api.openai.com/v1",
-	"models_url": "https://api.openai.com/v1/models"
-}
-```
+You can override the default JSONL storage with custom repositories. See `examples/supabase-edge-function.ts` for a complete PostgreSQL/Supabase implementation.
 
 ## Deno Support
-
-Timestep has first-class Deno support with optimized imports and compatibility:
-
-### Running in Deno
-
-```bash
-# Add dependencies
-deno add npm:express npm:@a2a-js/sdk
-
-# Run the Deno server
-deno task deno-server
-
-# Development mode with auto-reload
-deno task deno-server:dev
-```
-
-### Supabase Edge Functions
-
-Deploy Timestep in Supabase Edge Functions using individual library functions:
-
-```typescript
-import {
-	listAgents,
-	listModels,
-	handleAgentRequest,
-	TimestepAIAgentExecutor,
-} from 'npm:@timestep-ai/timestep@latest';
-
-// Custom task store for Supabase environment
-class SupabaseTaskStore {
-	// Implementation for your specific storage needs
-}
-
-const agentExecutor = new TimestepAIAgentExecutor();
-const taskStore = new SupabaseTaskStore();
-
-Deno.serve({port}, async (request: Request) => {
-	// Handle all Timestep endpoints with full control
-	// Integrate with Supabase auth, database, etc.
-});
-```
-
-See `examples/supabase-edge-function.ts` for a complete working example.
-
-## Development
-
-### Node.js Development
-
-```bash
-# Clone the repository
-git clone https://github.com/timestep-ai/timestep.git
-cd timestep/typescript/timestep
-
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
-
-# Run the CLI locally
-node dist/cli.js --help
-
-# Start the server
-node dist/server.js
-```
-
-### Deno Development
 
 ```bash
 # Run with Deno
@@ -289,74 +87,40 @@ deno task deno-server
 
 # Development mode
 deno task deno-server:dev
-
-# Run original server with Deno
-deno task server
 ```
 
-### Available Scripts
+See `examples/supabase-edge-function.ts` for Supabase Edge Functions example.
 
-- `npm run build` - Build TypeScript to JavaScript
-- `npm run dev` - Development mode with file watching
-- `deno task deno-server` - Start Deno-optimized server
-- `deno task deno-server:dev` - Deno server with file watching
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build
+npm run build
+
+# Start server
+node dist/server.js
+
+# Development mode
+npm run dev
+```
 
 ## Architecture
 
-### Core Components
+- **Agent Executor** - A2A protocol execution and tool calling
+- **Context Service** - Conversation contexts and task history
+- **Model Provider** - AI model API abstraction
+- **Agent Factory** - Agent creation from JSON definitions
+- **MCP Integration** - External tool server connections
 
-- **Agent Executor** - Handles A2A protocol execution and tool calling
-- **Context Service** - Manages conversation contexts and task history
-- **Model Provider** - Abstracts different AI model APIs
-- **Agent Factory** - Creates and configures agents from JSON definitions
-- **MCP Integration** - Connects to external tool servers via MCP protocol
+## Built-in Tools
 
-### File Structure
-
-```
-src/
-├── api/                     # API endpoints and handlers
-│   ├── agentsApi.ts        # Agent management endpoints
-│   ├── modelsApi.ts        # Model listing endpoints
-│   └── settings/           # Settings API endpoints
-├── core/                   # Core business logic
-│   ├── agent_executor.ts   # A2A protocol implementation
-│   └── context_service.ts  # Context management
-├── services/               # Service layer
-│   ├── agent_factory.ts    # Agent creation and configuration
-│   └── model_provider.ts   # Model provider abstraction
-├── types/                  # TypeScript type definitions
-├── utils.ts               # Utility functions
-├── server.ts              # Node.js/Express server
-├── denoServer.ts          # Deno-optimized server
-├── app.tsx                # CLI React interface
-└── cli.ts                 # CLI entry point
-```
-
-## Examples
-
-The `examples/` directory contains:
-
-- `supabase-edge-function.ts` - Complete Supabase Edge Function implementation with custom request handling and A2A protocol support
-
-### Built-in Tools
-
-Timestep includes a built-in MCP server with the following tools:
-
-- **`get-alerts`** - Get weather alerts for a specific location
-- **`get-forecast`** - Get weather forecast for coordinates
-- **`think`** - Advanced reasoning and problem-solving tool
-- **`markdownToPdf`** - Convert markdown content to PDF
-
-These tools are automatically available to all agents and can be used alongside external MCP servers.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+- **`get-alerts`** - Weather alerts
+- **`get-forecast`** - Weather forecast
+- **`think`** - Advanced reasoning
+- **`markdownToPdf`** - Convert markdown to PDF
 
 ## License
 
