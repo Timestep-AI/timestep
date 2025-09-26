@@ -1,6 +1,7 @@
 AGENT_ID := 00000000-0000-0000-0000-000000000000
 BASE_SERVER_URL := https://ohzbghitbjryfpmucgju.supabase.co/functions/v1/server 
 USER_INPUT := "What's the weather in Oakland and San Francisco?"
+USER_INPUT_FOLLOW_UP := "What about Atlanta?"
 
 default: publish
 
@@ -10,6 +11,25 @@ test-built-in-weather-cli: timestep-cli-server
 		--agentId $(AGENT_ID) \
 		--auto-approve \
 		--user-input $(USER_INPUT)
+
+test-built-in-weather-cli-with-follow-up: timestep-cli-server
+	@echo "📘 Running TypeScript A2A Client tests with follow-up..."
+	@echo "🚀 Starting initial chat..."
+	@CONTEXT_ID=$$(cd typescript/timestep && npx tsx src/cli.tsx chat \
+		--agentId $(AGENT_ID) \
+		--auto-approve \
+		--user-input $(USER_INPUT) 2>&1 | grep "Context created (ID:" | sed 's/.*Context created (ID: \([^)]*\)).*/\1/' | tail -1); \
+	if [ -z "$$CONTEXT_ID" ]; then \
+		echo "❌ Failed to capture context ID from initial chat"; \
+		exit 1; \
+	fi; \
+	echo "✅ Captured context ID: $$CONTEXT_ID"; \
+	echo "🚀 Starting follow-up chat..."; \
+	cd typescript/timestep && npx tsx src/cli.tsx chat \
+		--agentId $(AGENT_ID) \
+		--auto-approve \
+		--contextId $$CONTEXT_ID \
+		--user-input $(USER_INPUT_FOLLOW_UP)
 
 test-built-in-weather-cli-supabase-edge-function:
 	@echo "📘 Running TypeScript A2A Client tests..."
