@@ -1,12 +1,47 @@
+AGENT_ID := 00000000-0000-0000-0000-000000000000
+BASE_SERVER_URL := https://ohzbghitbjryfpmucgju.supabase.co/functions/v1/server 
+USER_INPUT := "What's the weather in Oakland and San Francisco?"
+
 default: publish
 
-deno-server-dev:
-	@echo "🦕 Starting Deno/Oak A2A Server with auto-reload..."
-	cd typescript/timestep && deno task dev
+test-built-in-weather-cli: timestep-cli-server
+	@echo "📘 Running TypeScript A2A Client tests..."
+	cd typescript/timestep && npx tsx src/cli.tsx chat \
+		--agentId $(AGENT_ID) \
+		--auto-approve \
+		--user-input $(USER_INPUT)
 
-deno-server:
-	@echo "🦕 Starting Deno/Oak A2A Server..."
-	cd typescript/timestep && deno task start
+test-built-in-weather-cli-supabase-edge-function:
+	@echo "📘 Running TypeScript A2A Client tests..."
+	cd typescript/timestep && npx tsx src/cli.tsx chat \
+		--agentId $(AGENT_ID) \
+		--auto-approve \
+		--auth-token $(AUTH_TOKEN) \
+		--baseServerUrl $(BASE_SERVER_URL) \
+		--user-input $(USER_INPUT)
+
+timestep-cli-chat: timestep-cli-server
+	@echo "🚀 Starting Timestep cli chat..."
+	cd typescript/timestep && npx tsx src/cli.tsx chat
+
+timestep-cli-chat-resume: timestep-cli-server
+	@echo "🚀 Starting Timestep cli chat resume..."
+	cd typescript/timestep/ && npx tsx src/cli.tsx chat \
+		--agentId $(AGENT_ID) \
+		--contextId $(CONTEXT_ID)
+
+timestep-cli-chat-remote:
+	@echo "🚀 Starting Timestep cli chat remote..."
+	cd typescript/timestep && npx tsx src/cli.tsx chat \
+		--agentId $(AGENT_ID) \
+		--auth-token $(AUTH_TOKEN) \
+		--baseServerUrl $(BASE_SERVER_URL)
+
+timestep-cli-get-full-conversation-history:
+	@echo "🚀 Starting Timestep cli get full conversation history..."
+	cd typescript/timestep && npx tsx src/cli.tsx get-full-conversation-history \
+		--agentId $(AGENT_ID) \
+		--contextId $(CONTEXT_ID)
 
 timestep-cli-server:
 	@echo "🚀 Starting Timestep cli server..."
@@ -14,82 +49,17 @@ timestep-cli-server:
 	cd typescript/timestep && node dist/cli.js stop
 	cd typescript/timestep && node dist/cli.js server
 
-timestep-cli-chat:
-	@echo "🚀 Starting Timestep cli chat..."
-	cd typescript/timestep && npx tsx src/cli.tsx chat
-
-timestep-cli-get-version:
-	@echo "🚀 Starting Timestep cli get-version..."
-	cd typescript/timestep && npx tsx src/cli.tsx get-version
-
-timestep-cli-list-agents:
-	@echo "🚀 Starting Timestep cli list-agents..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-agents
-
-timestep-cli-list-chats:
-	@echo "🚀 Starting Timestep cli list-chats..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-chats
-
-timestep-cli-list-models:
-	@echo "🚀 Starting Timestep cli list-models..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-models
-
-timestep-cli-list-tools:
-	@echo "🚀 Starting Timestep cli list-tools..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-tools
-
-timestep-cli-list-traces:
-	@echo "🚀 Starting Timestep cli list-traces..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-traces
-
-timestep-cli-list-mcp-servers:
-	@echo "🚀 Starting Timestep cli list-mcp-servers..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-mcp-servers
-
-timestep-cli-list-model-providers:
-	@echo "🚀 Starting Timestep cli list-model-providers..."
-	cd typescript/timestep && npx tsx src/cli.tsx list-model-providers
-
-timestep-cli-list-all: timestep-cli-list-agents timestep-cli-list-chats timestep-cli-list-models timestep-cli-list-tools timestep-cli-list-traces timestep-cli-list-mcp-servers timestep-cli-list-model-providers
-
-run-a2a-inspector:
-	@echo "🔍 Running A2A Inspector..."
-	cd bash && ./run-a2a-inspector.sh
-
-test-built-in-weather:
-	@echo "📘 Running TypeScript A2A Client tests..."
-	cd typescript/timestep && npx tsx src/a2aClient.ts --agentId 00000000-0000-0000-0000-000000000000 --auto-approve --user-input "What's the weather in Oakland and San Francisco?"
-
-test-built-in-weather-cli:
-	@echo "📘 Running TypeScript A2A Client tests..."
-	cd typescript/timestep && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --auto-approve --user-input "What's the weather in Oakland and San Francisco?"
-
-test-built-in-weather-cli-supabase-edge-function:
-	@echo "📘 Running TypeScript A2A Client tests..."
-	cd typescript/timestep && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --auto-approve --baseServerUrl https://ohzbghitbjryfpmucgju.supabase.co/functions/v1/server --auth-token $$AUTH_TOKEN --user-input "What's the weather in Oakland and San Francisco?"
-
-test-e2e: timestep-cli-server timestep-cli-list-all test-built-in-weather-cli
-
-publish:
+publish: test-built-in-weather-cli
 	@echo "📘 Publishing Timestep..."
 	./bash/bump-version.sh
 	cd typescript/timestep && npx prettier --write .
 	cd typescript/timestep/examples && deno run --allow-read --allow-write --allow-run check-examples.ts
-	make test-e2e
 	git add .
 	@VERSION=$$(grep '"version"' typescript/timestep/package.json | cut -d'"' -f4); \
 	git commit -m "Bump version to $$VERSION"
 	git push
 	cd typescript/timestep && npm publish
 
-local-test-run: timestep-cli-server test-built-in-weather-cli
-
-local-chat: timestep-cli-server timestep-cli-chat
-
-local-test-run-then-chat: local-test-run local-chat
-
-local-test-resume-chat: timestep-cli-server
-	cd typescript/timestep/ && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --contextId $$CONTEXT_ID
-
-remote-chat:
-	cd typescript/timestep && npx tsx src/cli.tsx chat --agentId 00000000-0000-0000-0000-000000000000 --baseServerUrl https://ohzbghitbjryfpmucgju.supabase.co/functions/v1/server --auth-token $$AUTH_TOKEN
+run-a2a-inspector:
+	@echo "🔍 Running A2A Inspector..."
+	cd bash && ./run-a2a-inspector.sh
