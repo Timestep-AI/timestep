@@ -1,5 +1,4 @@
-import {Task} from '@a2a-js/sdk';
-import {AgentInputItem} from '@openai/agents';
+import {Task, Message} from '@a2a-js/sdk';
 import {RunResult} from '@openai/agents-core';
 
 // Simplified context class that bridges A2A protocol with OpenAI Agents
@@ -7,7 +6,7 @@ export class Context {
 	contextId: string;
 	agentId: string;
 	// Task-based storage to align with A2A protocol
-	taskHistories: Record<string, AgentInputItem[]>; // taskId -> current conversation history
+	taskHistories: Record<string, Message[]>; // taskId -> A2A conversation history
 	taskStates: Record<string, any>; // taskId -> serialized agent state
 	tasks: Task[]; // A2A tasks for reference
 
@@ -19,31 +18,22 @@ export class Context {
 		this.tasks = [];
 	}
 
-	// Get conversation history for a specific task (for OpenAI Agents run input)
-	getTaskHistory(taskId: string): AgentInputItem[] {
+	// Get conversation history for a specific task (returns A2A Messages)
+	getTaskHistory(taskId: string): Message[] {
 		return this.taskHistories[taskId] || [];
 	}
 
-	// Get full conversation history for the latest task
-	getFullConversationHistory(): AgentInputItem[] {
-		const fullHistory: AgentInputItem[] = [];
-		const latestTask = this.tasks[this.tasks.length - 1];
-
-		if (latestTask) {
-			const taskHistory = this.taskHistories[latestTask.id];
-			if (taskHistory && taskHistory.length > 0) {
-				fullHistory.push(...taskHistory);
-			}
-		} else {
-			return fullHistory;
-		}
-
-		return fullHistory;
+	// Set conversation history for a task (from A2A Messages)
+	setTaskHistory(taskId: string, history: Message[]): void {
+		this.taskHistories[taskId] = structuredClone(history);
 	}
 
-	// Set conversation history for a task (from OpenAI Agents run result)
-	setTaskHistory(taskId: string, history: AgentInputItem[]): void {
-		this.taskHistories[taskId] = structuredClone(history);
+	// Add a message to task history
+	addMessageToTaskHistory(taskId: string, message: Message): void {
+		if (!this.taskHistories[taskId]) {
+			this.taskHistories[taskId] = [];
+		}
+		this.taskHistories[taskId].push(message);
 	}
 
 	// Get agent state for a specific task (for OpenAI Agents run input)
@@ -59,7 +49,10 @@ export class Context {
 
 	// Update from OpenAI Agents run result
 	updateFromRunResult(taskId: string, result: RunResult<unknown, any>): void {
-		this.setTaskHistory(taskId, result.history);
+		// Convert Agents SDK history to A2A Messages
+		// Note: This will need to be implemented with proper mapping
+		// For now, we'll store the raw history and convert when needed
+		this.setTaskHistory(taskId, result.history as any); // TODO: Implement proper conversion
 		if (result.state) {
 			this.setTaskState(taskId, result.state);
 		}
@@ -74,6 +67,17 @@ export class Context {
 			);
 		}
 		this.tasks.push(task);
+	}
+
+	// Update an existing A2A task
+	updateTask(task: Task): void {
+		const existingIndex = this.tasks.findIndex(t => t.id === task.id);
+		if (existingIndex >= 0) {
+			this.tasks[existingIndex] = task;
+		} else {
+			// If task doesn't exist, add it
+			this.tasks.push(task);
+		}
 	}
 
 	// Get A2A task by ID

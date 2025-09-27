@@ -1,5 +1,4 @@
-import {Task} from '@a2a-js/sdk';
-import {AgentInputItem} from '@openai/agents';
+import {Task, Message} from '@a2a-js/sdk';
 import {RunResult} from '@openai/agents-core';
 import {Context} from '../types/context.js';
 import {Repository} from './backing/repository.js';
@@ -52,24 +51,14 @@ export class ContextService {
 	}
 
 	/**
-	 * Get conversation history for a specific task
+	 * Get conversation history for a specific task (returns A2A Messages)
 	 */
 	async getTaskHistory(
 		contextId: string,
 		taskId: string,
-	): Promise<AgentInputItem[]> {
+	): Promise<Message[]> {
 		const context = await this.repository.load(contextId);
 		return context?.getTaskHistory(taskId) || [];
-	}
-
-	/**
-	 * Get full conversation history for the latest task
-	 */
-	async getFullConversationHistory(
-		contextId: string,
-	): Promise<AgentInputItem[]> {
-		const context = await this.repository.load(contextId);
-		return context?.getFullConversationHistory() || [];
 	}
 
 	/**
@@ -94,11 +83,41 @@ export class ContextService {
 	}
 
 	/**
+	 * Update an existing task in a context
+	 */
+	async updateTask(contextId: string, task: Task): Promise<void> {
+		const context = await this.repository.load(contextId);
+		if (!context) {
+			throw new Error(`Context ${contextId} not found`);
+		}
+
+		context.updateTask(task);
+		await this.repository.save(context);
+	}
+
+	/**
 	 * Get a task from a context
 	 */
 	async getTask(contextId: string, taskId: string): Promise<Task | undefined> {
 		const context = await this.repository.load(contextId);
 		return context?.getTask(taskId);
+	}
+
+	/**
+	 * Add a message to task history
+	 */
+	async addMessageToTaskHistory(
+		contextId: string,
+		taskId: string,
+		message: Message,
+	): Promise<void> {
+		const context = await this.repository.load(contextId);
+		if (!context) {
+			throw new Error(`Context ${contextId} not found`);
+		}
+
+		context.addMessageToTaskHistory(taskId, message);
+		await this.repository.save(context);
 	}
 
 	/**

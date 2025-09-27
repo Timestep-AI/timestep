@@ -287,8 +287,14 @@ app.get('/contexts/:id/history', async (req, res) => {
 			return;
 		}
 
-		// Get the full conversation history from the context
-		const history = context.getFullConversationHistory();
+		// Get conversation history from the latest task
+		const latestTask = context.tasks[context.tasks.length - 1];
+		if (!latestTask) {
+			res.json([]);
+			return;
+		}
+		
+		const history = context.getTaskHistory(latestTask.id);
 		res.json(history);
 	} catch (error) {
 		console.error('Error getting context history:', error);
