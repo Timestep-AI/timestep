@@ -1,7 +1,7 @@
 import React, {useState, useEffect} from 'react';
 import {Text, Box} from 'ink';
 import {spawn, ChildProcess} from 'child_process';
-import {loadAppConfig} from './utils.js';
+import {loadAppConfig} from '../utils.js';
 
 type Props = {
 	name: string | undefined;
@@ -177,7 +177,7 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 	): Promise<{success: boolean; error?: string}> => {
 		try {
 			// Build arguments for the a2aClient
-			const args = ['src/a2aClient.ts'];
+			const args = ['src/tui/a2aClient/index.ts'];
 
 			if (options.agentId) {
 				args.push('--agentId', options.agentId);
@@ -955,7 +955,7 @@ export default function App({name = 'Stranger', command, flags}: Props) {
 		useEffect(() => {
 			const fetchVersion = async () => {
 				try {
-					const {getVersion} = await import('./utils.js');
+					const {getVersion} = await import('../utils.js');
 					const info = await getVersion();
 					setVersionInfo(info);
 				} catch (error) {
