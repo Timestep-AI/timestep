@@ -86,12 +86,26 @@ export async function listModels(
 			let token = provider.apiKey as string | undefined;
 			if (!token && (provider as any).api_key)
 				token = (provider as any).api_key;
+
+			// Add validation for API key requirement
+			if (provider.provider !== 'ollama' && !token) {
+				console.warn(
+					`Model provider ${provider.id} (${provider.provider}) requires an API key but none was provided. Skipping.`,
+				);
+				continue;
+			}
+
 			if (token) {
 				const {isEncryptedSecret, decryptSecret} = await import('../utils.js');
 				if (isEncryptedSecret(token)) {
 					try {
 						token = await decryptSecret(token);
-					} catch {}
+					} catch (error) {
+						console.error(
+							`Failed to decrypt API key for provider ${provider.id}: ${error}`,
+						);
+						continue;
+					}
 				}
 				headers['Authorization'] = `Bearer ${token}`;
 			}

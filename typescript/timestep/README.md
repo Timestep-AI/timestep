@@ -51,7 +51,7 @@ timestep list-tools
 ## Library Usage
 
 ```typescript
-import { TimestepAIAgentExecutor, listAgents } from '@timestep-ai/timestep';
+import {TimestepAIAgentExecutor, listAgents} from '@timestep-ai/timestep';
 
 // List agents
 const agents = await listAgents();
@@ -63,7 +63,7 @@ const executor = new TimestepAIAgentExecutor();
 ## API Endpoints
 
 - `GET /agents` - List agents
-- `GET /models` - List models  
+- `GET /models` - List models
 - `GET /tools` - List tools
 - `GET /mcp_servers` - List MCP servers
 - `/agents/{agentId}/*` - A2A protocol endpoints
@@ -73,7 +73,7 @@ const executor = new TimestepAIAgentExecutor();
 By default, configuration is stored in `~/.config/timestep/` as JSONL files:
 
 - `agents.jsonl` - Agent configurations
-- `model_providers.jsonl` - Model provider settings  
+- `model_providers.jsonl` - Model provider settings
 - `mcp_servers.jsonl` - MCP server configurations
 - `contexts.jsonl` - Chat contexts and history
 
@@ -105,7 +105,41 @@ node dist/server.js
 
 # Development mode
 npm run dev
+
+# Run tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
 ```
+
+## Testing
+
+The project includes comprehensive test coverage with 80% minimum coverage requirements:
+
+### Test Coverage
+
+- **80% Minimum Coverage** across the entire library
+- **Comprehensive Test Suite** covering all major functionality
+- **Real Code Paths** - Tests exercise actual methods and logic
+- **Proper Mocking** - All dependencies properly mocked
+
+### Key Test Areas
+
+- **Agent Executor** - Core execution logic and A2A protocol handling
+- **Context Management** - Conversation contexts and task history
+- **Tool Integration** - Tool calling and approval workflows
+- **Error Handling** - Edge cases and error scenarios
+- **Streaming Logic** - Real-time event processing
+- **Type Mapping** - A2A ↔ Agents SDK format conversion
+
+### Coverage Reports
+
+Coverage reports are generated in multiple formats:
+
+- **Text format**: Displayed in terminal
+- **HTML format**: `coverage/index.html` (open in browser)
+- **JSON format**: `coverage/coverage-final.json`
 
 ## Architecture
 

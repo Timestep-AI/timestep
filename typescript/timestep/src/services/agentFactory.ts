@@ -184,6 +184,20 @@ async function loadAgents(
 ): Promise<AgentConfig[]> {
 	try {
 		const response = await listAgents(repositories);
+
+		// Add proper null/undefined checks
+		if (!response) {
+			throw new Error('No response received from listAgents API');
+		}
+
+		if (!response.data) {
+			throw new Error('Response missing data property');
+		}
+
+		if (!Array.isArray(response.data)) {
+			throw new Error('Response data is not an array');
+		}
+
 		return response.data;
 	} catch (error) {
 		console.error(`Error loading agents from API: ${error}`);

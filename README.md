@@ -26,6 +26,7 @@ timestep chat
 ## What's Inside
 
 - **A2A Protocol** - Agent-to-Agent communication with streaming support
+- **[Task-generating Agents](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task)** - "Always respond with Task objects, even for responses, which are then modeled as completed tasks. Once a task is created, the agent will only return Task objects in response to messages sent, and once a task is complete, no more messages can be sent. This approach avoids deciding between Task versus Message, but creates completed task objects for even simple interactions."
 - **OpenAI Agents SDK** - Built on OpenAI's Agents SDK with unified Python/TypeScript compatibility
 - **Human-in-the-Loop** - Default approval for every tool call with fine-grained control - step back as you gain comfort
 - **MCP Integration** - Built-in tools + easy connection to any MCP server (Rube, Beeper Desktop, etc.)

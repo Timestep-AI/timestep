@@ -1,19 +1,16 @@
-// @ts-nocheck
+// @ts-nocheck: Complex type mappings between A2A and Agents SDK
 import {
 	AgentExecutor,
 	RequestContext,
 	ExecutionEventBus,
 	Task,
 	TaskStatusUpdateEvent,
-	TaskArtifactUpdateEvent,
 	Message,
 	TextPart,
 } from '@a2a-js/sdk/server';
-import {
-	TaskState,
-} from '@a2a-js/sdk';
+import {TaskState} from '@a2a-js/sdk';
 
-// Define the TaskState values we're using
+// A2A Protocol TaskState values (from official A2A specification)
 const TASK_STATES = {
 	SUBMITTED: 'submitted' as TaskState,
 	WORKING: 'working' as TaskState,
@@ -23,59 +20,22 @@ const TASK_STATES = {
 	CANCELED: 'canceled' as TaskState,
 	REJECTED: 'rejected' as TaskState,
 } as const;
-// Note: new_agent_text_message may not be available, creating simple version
 import {
 	Agent,
 	Runner,
-	run,
-	tool,
 	setTracingExportApiKey,
-	ModelProvider,
-	Model,
 	user,
 	assistant,
-	AgentHooks,
 	AgentInputItem,
 } from '@openai/agents';
-import {
-	setTracingDisabled,
-	withTrace,
-	getOrCreateTrace,
-	TraceOptions,
-	Trace,
-	RunContext,
-	withNewSpanContext,
-	setCurrentSpan,
-	resetCurrentSpan,
-	RunHookEvents,
-	getCurrentSpan,
-	RunHandoffCallItem,
-	RunHandoffOutputItem,
-	RunToolCallItem,
-	RunToolCallOutputItem,
-	RunReasoningItem,
-	RunToolApprovalItem,
-	RunMessageOutputItem,
-} from '@openai/agents-core';
-// fs and path imports removed - no longer needed for app config loading
+import {withTrace, TraceOptions, Trace} from '@openai/agents-core';
 import * as crypto from 'node:crypto';
-import {AgentConfiguration, RunConfig} from '@openai/agents-core';
+import {RunConfig} from '@openai/agents-core';
 import {getGlobalTraceProvider} from '@openai/agents';
-import {RunState, RunResult} from '@openai/agents-core';
-// Note: These functions may not be available in the current package version
-// Let's try importing from the main package instead
-import {
-	processModelResponse,
-	executeToolsAndSideEffects,
-} from '@openai/agents-core';
+import {RunState} from '@openai/agents-core';
 // Note: getTracingExportApiKey is not exported from the main package
 // We'll create a simple workaround to track the API key
 let _tracingApiKey: string | undefined = undefined;
-// Note: TypeScript SDK has different API structure than Python
-// Note: defineInputGuardrail not available, creating manual input guardrail
-import {InputGuardrailTripwireTriggered} from '@openai/agents';
-import {OllamaModel} from '../services/backing/models.js';
-import {Ollama} from 'ollama';
 import {TimestepAIModelProvider} from '../services/modelProvider.js';
 import {AgentFactory} from '../services/agentFactory.js';
 import {ContextService} from '../services/contextService.js';
@@ -83,8 +43,6 @@ import {
 	RepositoryContainer,
 	DefaultRepositoryContainer,
 } from '../services/backing/repositoryContainer.js';
-
-// App configuration is now loaded dynamically when needed via loadAppConfig() function
 
 // Mapping functions between A2A protocol and Agents SDK formats
 
@@ -94,12 +52,16 @@ import {
 function a2aMessageToAgentInputItem(message: Message): AgentInputItem {
 	if (message.role === 'user') {
 		// Extract text from message parts
-		const textParts = message.parts.filter((p): p is TextPart => p.kind === 'text');
+		const textParts = message.parts.filter(
+			(p): p is TextPart => p.kind === 'text',
+		);
 		const text = textParts.map(p => p.text).join(' ');
 		return user(text);
 	} else if (message.role === 'agent') {
 		// For agent messages, we need to create an assistant message
-		const textParts = message.parts.filter((p): p is TextPart => p.kind === 'text');
+		const textParts = message.parts.filter(
+			(p): p is TextPart => p.kind === 'text',
+		);
 		const text = textParts.map(p => p.text).join(' ');
 		return assistant(text);
 	}
@@ -109,15 +71,19 @@ function a2aMessageToAgentInputItem(message: Message): AgentInputItem {
 /**
  * Converts Agents SDK AgentInputItem to A2A Message
  */
-function agentInputItemToA2aMessage(inputItem: AgentInputItem, taskId: string, contextId: string): Message {
+function agentInputItemToA2aMessage(
+	inputItem: AgentInputItem,
+	taskId: string,
+	contextId: string,
+): Message {
 	const messageId = crypto.randomUUID();
-	
+
 	if (inputItem.role === 'user') {
 		return {
 			kind: 'message',
 			role: 'user',
 			messageId: messageId,
-			parts: [{ kind: 'text', text: inputItem.content }],
+			parts: [{kind: 'text', text: inputItem.content}],
 			taskId: taskId,
 			contextId: contextId,
 			timestamp: new Date().toISOString(),
@@ -127,7 +93,7 @@ function agentInputItemToA2aMessage(inputItem: AgentInputItem, taskId: string, c
 			kind: 'message',
 			role: 'agent',
 			messageId: messageId,
-			parts: [{ kind: 'text', text: inputItem.content }],
+			parts: [{kind: 'text', text: inputItem.content}],
 			taskId: taskId,
 			contextId: contextId,
 			timestamp: new Date().toISOString(),
@@ -146,18 +112,24 @@ function a2aMessagesToAgentInputItems(messages: Message[]): AgentInputItem[] {
 /**
  * Converts array of Agents SDK AgentInputItem to A2A Messages
  */
-function agentInputItemsToA2aMessages(inputItems: AgentInputItem[], taskId: string, contextId: string): Message[] {
-	return inputItems.map(item => agentInputItemToA2aMessage(item, taskId, contextId));
+function _agentInputItemsToA2aMessages(
+	inputItems: AgentInputItem[],
+	taskId: string,
+	contextId: string,
+): Message[] {
+	return inputItems.map(item =>
+		agentInputItemToA2aMessage(item, taskId, contextId),
+	);
 }
 
 // Function to load model providers using the API
 async function loadModelProviders(
 	repositories?: RepositoryContainer,
-): Promise<{[key: string]: any}> {
+): Promise<{[key: string]: unknown}> {
 	try {
 		const {listModelProviders} = await import('../api/modelProvidersApi.js');
 		const response = await listModelProviders(repositories);
-		const MODEL_PROVIDERS: {[key: string]: any} = {};
+		const MODEL_PROVIDERS: {[key: string]: unknown} = {};
 
 		for (const provider of response.data) {
 			MODEL_PROVIDERS[provider.provider] = provider;
@@ -205,7 +177,7 @@ async function setTracingApiKeyFromRepositories(
 
 // Function to check for tool call approval in message
 function checkForToolCallApproval(
-	message: any,
+	message: Message,
 ): {approved: boolean; decision: string; reason?: string} | null {
 	if (!message.parts) return null;
 
@@ -225,30 +197,6 @@ function checkForToolCallApproval(
 }
 
 // MCP functions moved to agent_factory.ts
-
-function createCompletedStatusUpdate(
-	taskId: string,
-	contextId: string,
-	finalMessage?: string,
-): TaskStatusUpdateEvent {
-	const status: any = {
-		state: TASK_STATES.COMPLETED,
-		timestamp: new Date().toISOString(),
-	};
-
-	// Include finalMessage in the status if provided
-	if (finalMessage) {
-		status.result = finalMessage;
-	}
-
-	return {
-		kind: 'status-update',
-		taskId: taskId,
-		contextId: contextId,
-		status: status,
-		final: true,
-	};
-}
 
 async function getAgentInput(
 	context: RequestContext,
@@ -318,15 +266,9 @@ async function getAgentInput(
 }
 
 // Configuration interfaces
-export interface ContextRepositoryOptions {
-	// Generic options that could apply to any repository type
-}
-
 export interface AgentExecutorConfig {
 	repositories?: RepositoryContainer;
 }
-
-// getContext function and AgentFactory class moved to agent_factory.ts
 
 export class TimestepAIAgentExecutor implements AgentExecutor {
 	agentFactory: AgentFactory;
@@ -403,10 +345,7 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 
 		// Persist the task before publishing
 		await this.contextService.addTask(contextId, initialTask);
-		
-		// Also persist the user message to the task history
-		await this.contextService.addMessageToTaskHistory(contextId, taskId, userMessage);
-		
+
 		eventBus.publish(initialTask);
 	}
 
@@ -418,7 +357,7 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 		contextId: string,
 		state: TaskState,
 		eventBus: ExecutionEventBus,
-		message?: any,
+		message?: unknown,
 		final: boolean = false,
 	): void {
 		const statusUpdate: TaskStatusUpdateEvent = {
@@ -428,7 +367,7 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 			status: {
 				state: state,
 				timestamp: new Date().toISOString(),
-				...(message && { message }),
+				...(message && {message}),
 			},
 			final: final,
 		};
@@ -443,7 +382,12 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 		contextId: string,
 		eventBus: ExecutionEventBus,
 	): void {
-		this.createAndPublishStatusUpdate(taskId, contextId, TASK_STATES.WORKING, eventBus);
+		this.createAndPublishStatusUpdate(
+			taskId,
+			contextId,
+			TASK_STATES.WORKING,
+			eventBus,
+		);
 	}
 
 	/**
@@ -453,7 +397,7 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 		taskId: string,
 		contextId: string,
 		state: TaskState,
-		messageData: any,
+		messageData: unknown,
 		eventBus: ExecutionEventBus,
 		final: boolean = false,
 	): Promise<void> {
@@ -473,9 +417,20 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 		};
 
 		// Persist the message to task history
-		await this.contextService.addMessageToTaskHistory(contextId, taskId, message);
+		await this.contextService.addMessageToTaskHistory(
+			contextId,
+			taskId,
+			message,
+		);
 
-		this.createAndPublishStatusUpdate(taskId, contextId, state, eventBus, message, final);
+		this.createAndPublishStatusUpdate(
+			taskId,
+			contextId,
+			state,
+			eventBus,
+			message,
+			final,
+		);
 	}
 
 	/**
@@ -495,7 +450,9 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 		);
 
 		if (!currentTask) {
-			throw new Error(`Task ${taskId} not found in context ${context.contextId}`);
+			throw new Error(
+				`Task ${taskId} not found in context ${context.contextId}`,
+			);
 		}
 
 		// Create the final agent message if there's output
@@ -531,7 +488,7 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 			status: {
 				state: TASK_STATES.COMPLETED,
 				timestamp: now,
-				...(finalMessage && { message: finalMessage }),
+				...(finalMessage && {message: finalMessage}),
 			},
 			updatedAt: now,
 		};
@@ -601,44 +558,62 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 				const stream = await runner.run(agent, agentInput, {stream: true});
 
 				for await (const event of stream) {
-					// these are the raw events from the model
-					if (event.type === 'raw_model_stream_event') {
-						// Only publish streaming events for text output, suppress other raw events
-						if (event.data?.type === 'output_text_delta' && event.data?.delta) {
-							await this.createAndPublishStatusWithMessage(
-								taskId,
-								contextId,
-								TASK_STATES.WORKING,
-								event.data,
-								eventBus,
-							);
-						}
-					}
-					// agent updated events
-					// if (event.type === 'agent_updated_stream_event') {
-					// console.log(`${event.type} %s`, event.agent.name);
-					// }
-					// Agent SDK specific events
-					// if (event.type === 'run_item_stream_event') {
-					// console.log(`${event.type} %o`, event.item);
-					// }
-					if (event.type === 'run_item_stream_event') {
-						// Only publish important events, suppress verbose console logging
-						if (
-							event.name === 'handoff_occurred' ||
-							event.name === 'handoff_requested' ||
-							event.name === 'tool_called' ||
-							event.name === 'tool_approval_requested' ||
-							event.name === 'tool_output'
-						) {
-							const state = event.name === 'tool_approval_requested' ? TASK_STATES.INPUT_REQUIRED : TASK_STATES.WORKING;
-
-							if (event.name === 'tool_approval_requested') {
-								await this.contextService.updateFromRunResult(
-									contextId,
+					try {
+						// these are the raw events from the model
+						if (event.type === 'raw_model_stream_event') {
+							// Only publish streaming events for text output, suppress other raw events
+							if (
+								event.data?.type === 'output_text_delta' &&
+								event.data?.delta
+							) {
+								await this.createAndPublishStatusWithMessage(
 									taskId,
-									stream,
+									contextId,
+									TASK_STATES.WORKING,
+									event.data,
+									eventBus,
 								);
+							}
+						}
+						// agent updated events
+						// if (event.type === 'agent_updated_stream_event') {
+						// console.log(`${event.type} %s`, event.agent.name);
+						// }
+						// Agent SDK specific events
+						// if (event.type === 'run_item_stream_event') {
+						// console.log(`${event.type} %o`, event.item);
+						// }
+						if (event.type === 'run_item_stream_event') {
+							// Only publish important events, suppress verbose console logging
+							if (
+								event.name === 'handoff_occurred' ||
+								event.name === 'handoff_requested' ||
+								event.name === 'tool_called' ||
+								event.name === 'tool_approval_requested' ||
+								event.name === 'tool_output'
+							) {
+								const state =
+									event.name === 'tool_approval_requested'
+										? TASK_STATES.INPUT_REQUIRED
+										: TASK_STATES.WORKING;
+
+								if (event.name === 'tool_approval_requested') {
+									await this.contextService.updateFromRunResult(
+										contextId,
+										taskId,
+										stream,
+									);
+
+									await this.createAndPublishStatusWithMessage(
+										taskId,
+										contextId,
+										state,
+										event.item.rawItem,
+										eventBus,
+									);
+									eventBus.finished();
+									return;
+								}
 
 								await this.createAndPublishStatusWithMessage(
 									taskId,
@@ -647,18 +622,11 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 									event.item.rawItem,
 									eventBus,
 								);
-								eventBus.finished();
-								return;
 							}
-
-							await this.createAndPublishStatusWithMessage(
-								taskId,
-								contextId,
-								state,
-								event.item.rawItem,
-								eventBus,
-							);
 						}
+					} catch (eventError) {
+						console.warn('Error processing stream event:', eventError);
+						// Continue processing other events even if one fails
 					}
 				}
 
@@ -666,18 +634,31 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 				await stream.completed;
 
 				// Pass the StreamedRunResult directly since it implements the RunResult interface
-				await this.contextService.updateFromRunResult(
-					contextId,
-					taskId,
-					stream,
-				);
+				try {
+					await this.contextService.updateFromRunResult(
+						contextId,
+						taskId,
+						stream,
+					);
+				} catch (updateError) {
+					console.warn(
+						'Failed to update context from run result:',
+						updateError,
+					);
+					// Continue with task completion even if context update fails
+				}
 
 				// Extract final output from the stream result
 				// The stream result should contain the final agent response
 				const finalOutput = stream.text || ''; // Get the final text output from the stream
 
 				// For task-generating agents, publish the completed Task object (not just status)
-				await this.createAndPublishCompletedTask(context, taskId, finalOutput, eventBus);
+				await this.createAndPublishCompletedTask(
+					context,
+					taskId,
+					finalOutput,
+					eventBus,
+				);
 
 				// Signal that the stream is complete
 				eventBus.finished();
@@ -691,7 +672,10 @@ export class TimestepAIAgentExecutor implements AgentExecutor {
 		}
 	}
 
-	async cancelTask(taskId: string, eventBus: ExecutionEventBus): Promise<void> {
+	async cancelTask(
+		_taskId: string,
+		_eventBus: ExecutionEventBus,
+	): Promise<void> {
 		throw new Error('cancel not supported');
 	}
 }

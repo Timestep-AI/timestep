@@ -53,10 +53,7 @@ export class ContextService {
 	/**
 	 * Get conversation history for a specific task (returns A2A Messages)
 	 */
-	async getTaskHistory(
-		contextId: string,
-		taskId: string,
-	): Promise<Message[]> {
+	async getTaskHistory(contextId: string, taskId: string): Promise<Message[]> {
 		const context = await this.repository.load(contextId);
 		return context?.getTaskHistory(taskId) || [];
 	}

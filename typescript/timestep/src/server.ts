@@ -293,7 +293,7 @@ app.get('/contexts/:id/history', async (req, res) => {
 			res.json([]);
 			return;
 		}
-		
+
 		const history = context.getTaskHistory(latestTask.id);
 		res.json(history);
 	} catch (error) {

@@ -40,6 +40,10 @@ test-built-in-weather-cli-supabase-edge-function:
 		--baseServerUrl $(BASE_SERVER_URL) \
 		--user-input $(USER_INPUT)
 
+test-coverage:
+	@echo "📘 Running coverage..."
+	cd typescript/timestep && npm run test:coverage
+
 timestep-cli-chat: timestep-cli-server
 	@echo "🚀 Starting Timestep cli chat..."
 	cd typescript/timestep && npx tsx src/cli.tsx chat
@@ -69,7 +73,7 @@ timestep-cli-server:
 	cd typescript/timestep && node dist/cli.js stop
 	cd typescript/timestep && node dist/cli.js server
 
-publish: test-built-in-weather-cli
+publish: test-built-in-weather-cli test-coverage
 	@echo "📘 Publishing Timestep..."
 	./bash/bump-version.sh
 	cd typescript/timestep && npx prettier --write .
