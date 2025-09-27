@@ -230,7 +230,7 @@ async function getAgentInput(
 		const messageText =
 			userMessage.parts?.[0]?.text || userMessage.text || 'Hello';
 
-		// Get full conversation history across all tasks to maintain context
+		// Get full conversation history for the latest task
 		const history = await contextService.getFullConversationHistory(contextId);
 
 		history.push(user(messageText));

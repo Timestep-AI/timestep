@@ -63,7 +63,7 @@ export class ContextService {
 	}
 
 	/**
-	 * Get full conversation history across all tasks in chronological order
+	 * Get full conversation history for the latest task
 	 */
 	async getFullConversationHistory(
 		contextId: string,

@@ -24,28 +24,18 @@ export class Context {
 		return this.taskHistories[taskId] || [];
 	}
 
-	// Get full conversation history across all tasks in chronological order
+	// Get full conversation history for the latest task
 	getFullConversationHistory(): AgentInputItem[] {
 		const fullHistory: AgentInputItem[] = [];
+		const latestTask = this.tasks[this.tasks.length - 1];
 
-		// Sort tasks by creation time (using task ID timestamp if available, or order in array)
-		const sortedTasks = [...this.tasks].sort((a, b) => {
-			// If tasks have timestamps in metadata, use those
-			const aTime = String(
-				a.metadata?.['timestamp'] || a.status?.timestamp || '0',
-			);
-			const bTime = String(
-				b.metadata?.['timestamp'] || b.status?.timestamp || '0',
-			);
-			return aTime.localeCompare(bTime);
-		});
-
-		// Collect history from all tasks in chronological order
-		for (const task of sortedTasks) {
-			const taskHistory = this.taskHistories[task.id];
+		if (latestTask) {
+			const taskHistory = this.taskHistories[latestTask.id];
 			if (taskHistory && taskHistory.length > 0) {
 				fullHistory.push(...taskHistory);
 			}
+		} else {
+			return fullHistory;
 		}
 
 		return fullHistory;
