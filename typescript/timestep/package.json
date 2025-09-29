@@ -1,96 +1,27 @@
 {
-	"name": "@timestep-ai/timestep",
-	"version": "2025.9.271506",
-	"description": "A CLI tool built with Ink and React",
-	"keywords": [
-		"cli",
-		"ink",
-		"react",
-		"terminal",
-		"interactive"
-	],
-	"author": "Mike Schock <m@mjschock.com>",
-	"homepage": "https://github.com/Timestep-AI/timestep#readme",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/Timestep-AI/timestep.git"
-	},
-	"bugs": {
-		"url": "https://github.com/Timestep-AI/timestep/issues"
-	},
-	"license": "MIT",
-	"main": "dist/index.js",
-	"bin": "dist/cli.js",
-	"type": "module",
-	"exports": {
-		".": "./dist/index.js",
-		"./server": "./dist/server.js"
-	},
-	"engines": {
-		"node": ">=16"
-	},
-	"scripts": {
-		"build": "tsc",
-		"dev": "tsc --watch",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage",
-		"prepublishOnly": "npm run build",
-		"server": "node dist/server.js"
-	},
-	"files": [
-		"dist"
-	],
-	"dependencies": {
-		"@a2a-js/sdk": "^0.3.4",
-		"@modelcontextprotocol/sdk": "^1.18.0",
-		"@openai/agents": "^0.1.2",
-		"@openai/agents-core": "^0.1.2",
-		"@types/express": "^5.0.3",
-		"@types/uuid": "^10.0.0",
-		"express": "^5.1.0",
-		"ink": "^4.1.0",
-		"meow": "^11.0.0",
-		"ollama": "^0.5.17",
-		"openai": "^5.20.2",
-		"react": "^18.2.0",
-		"uuid": "^13.0.0",
-		"zod": "^3.25.76"
-	},
-	"devDependencies": {
-		"@sindresorhus/tsconfig": "^3.0.1",
-		"@types/react": "^18.0.32",
-		"@types/supertest": "^6.0.3",
-		"@vdemedes/prettier-config": "^2.0.1",
-		"@vitest/coverage-v8": "^2.0.0",
-		"ava": "^5.2.0",
-		"chalk": "^5.2.0",
-		"eslint-config-xo-react": "^0.27.0",
-		"eslint-plugin-react": "^7.32.2",
-		"eslint-plugin-react-hooks": "^4.6.0",
-		"ink-testing-library": "^3.0.0",
-		"prettier": "^2.8.7",
-		"supertest": "^7.1.4",
-		"ts-node": "^10.9.1",
-		"typescript": "^5.0.3",
-		"vitest": "^2.0.0",
-		"xo": "^0.59.0"
-	},
-	"ava": {
-		"extensions": {
-			"ts": "module",
-			"tsx": "module"
-		},
-		"nodeArguments": [
-			"--loader=ts-node/esm"
-		]
-	},
-	"xo": {
-		"extends": "xo-react",
-		"prettier": true,
-		"rules": {
-			"react/prop-types": "off"
-		}
-	},
-	"prettier": "@vdemedes/prettier-config"
+  "name": "timestep",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts",
+    "dev": "tsx watch index.ts",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.17.1",
+  "dependencies": {
+    "@openai/agents": "^0.0.1",
+    "ollama": "^0.5.10",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0"
+  }
 }

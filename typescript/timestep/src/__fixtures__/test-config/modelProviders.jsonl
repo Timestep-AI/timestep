@@ -1,3 +1,0 @@
-{"id":"test-model-provider","provider":"openai","baseUrl":"https://api.openai.com/v1","modelsUrl":"https://api.openai.com/v1/models","apiKey":"test-api-key"}
-{"id":"test-ollama-provider","provider":"ollama","baseUrl":"http://localhost:11434","modelsUrl":"http://localhost:11434/api/tags","apiKey":null}
-

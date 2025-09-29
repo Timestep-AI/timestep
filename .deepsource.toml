@@ -8,6 +8,3 @@ name = "python"
 
 [[analyzers]]
 name = "javascript"
-
-  [analyzers.meta]
-  plugins = ["react"]

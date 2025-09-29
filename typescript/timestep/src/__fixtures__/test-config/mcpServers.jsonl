@@ -1,3 +1,0 @@
-{"id":"test-mcp-server-1","name":"Test MCP Server 1","description":"A test MCP server","serverUrl":"http://localhost:3001","enabled":true,"authToken":null}
-{"id":"test-mcp-server-2","name":"Test MCP Server 2","description":"Another test MCP server","serverUrl":"http://localhost:3002","enabled":false,"authToken":"test-token"}
-
