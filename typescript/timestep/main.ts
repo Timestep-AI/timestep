@@ -107,7 +107,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
   return stream;
 }
 
-async function runWithModel(modelId: string, openaiUseResponses: boolean = false) {
+async function runTestClient(modelId: string, openaiUseResponses: boolean = false) {
   // Get the stream
   const stream = await main(modelId, openaiUseResponses);
 
@@ -233,28 +233,16 @@ async function runWithModel(modelId: string, openaiUseResponses: boolean = false
   console.log('\n\nDone');
 }
 
-async function runAllModels() {
-  // Run with gpt-5 (openaiUseResponses=false - default)
-  console.log("=== Running with gpt-5 (openaiUseResponses=false) ===");
-  await runWithModel("gpt-5");
-
-  // Run with gpt-5 (openaiUseResponses=true)
-  console.log("\n=== Running with gpt-5 (openaiUseResponses=true) ===");
-  await runWithModel("gpt-5", true);
-
-  // Run with Claude Sonnet 4.5
-  console.log("\n=== Running with anthropic/claude-sonnet-4-5 ===");
-  await runWithModel("anthropic/claude-sonnet-4-5");
-
-  // Then run with smollm2:1.7b
-  console.log("\n=== Running with ollama/smollm2:1.7b ===");
-  await runWithModel("ollama/smollm2:1.7b");
-
-  // Finally run with gpt-oss:120b-cloud
-  console.log("\n=== Running with ollama/gpt-oss:120b-cloud ===");
-  await runWithModel("ollama/gpt-oss:120b-cloud");
-}
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runAllModels().catch(console.error);
+  const modelId = process.env.MODEL_ID;
+  const openaiUseResponses = (process.env.OPENAI_USE_RESPONSES ?? 'false').toLowerCase() === 'true';
+
+  if (!modelId) {
+    console.error('Missing required env var MODEL_ID');
+    console.error('Usage: MODEL_ID="gpt-5|anthropic/claude-sonnet-4-5|ollama/smollm2:1.7b|ollama/gpt-oss:120b-cloud" pnpm run start');
+    process.exit(1);
+  }
+
+  runTestClient(modelId, openaiUseResponses).catch(console.error);
 }

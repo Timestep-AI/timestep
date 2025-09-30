@@ -72,7 +72,7 @@ async def main(model_id: str, openai_use_responses: bool = False):
     return result
 
 if __name__ == "__main__":
-    async def run_with_model(model_id: str, openai_use_responses: bool = False):
+    async def run_test_client(model_id: str, openai_use_responses: bool = False):
         # Get the stream
         result = await main(model_id, openai_use_responses)
 
@@ -155,25 +155,12 @@ if __name__ == "__main__":
 
         print('\n\nDone')
 
-    async def run_all_models():
-        # Run with gpt-5 (openai_use_responses=False - default)
-        print("=== Running with gpt-5 (openai_use_responses=False) ===")
-        await run_with_model("gpt-5")
+    model_id_env = os.getenv("MODEL_ID")
+    openai_use_responses_env = (os.getenv("OPENAI_USE_RESPONSES") or "false").lower() == "true"
 
-        # Run with gpt-5 (openai_use_responses=True)
-        print("\n=== Running with gpt-5 (openai_use_responses=True) ===")
-        await run_with_model("gpt-5", openai_use_responses=True)
+    if not model_id_env:
+        print("Missing required env var MODEL_ID")
+        print("Usage: MODEL_ID=\"gpt-5|anthropic/claude-sonnet-4-5|ollama/smollm2:1.7b|ollama/gpt-oss:120b-cloud\" uv run main.py")
+        raise SystemExit(1)
 
-        # Run with Claude Sonnet 4.5
-        print("\n=== Running with anthropic/claude-sonnet-4-5 ===")
-        await run_with_model("anthropic/claude-sonnet-4-5")
-
-        # Then run with smollm2:1.7b
-        print("\n=== Running with ollama/smollm2:1.7b ===")
-        await run_with_model("ollama/smollm2:1.7b")
-
-        # Finally run with gpt-oss:120b-cloud
-        print("\n=== Running with ollama/gpt-oss:120b-cloud ===")
-        await run_with_model("ollama/gpt-oss:120b-cloud")
-
-    asyncio.run(run_all_models())
+    asyncio.run(run_test_client(model_id_env, openai_use_responses=openai_use_responses_env))
