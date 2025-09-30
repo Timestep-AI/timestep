@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import readline from 'node:readline/promises';
-import { createWriteStream, mkdirSync } from 'node:fs';
-import { Agent, Runner, tool, OpenAIProvider } from '@openai/agents';
+import { createWriteStream, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { Agent, Runner, tool, OpenAIProvider, RunState, AgentInputItem, StreamRunOptions } from '@openai/agents';
 import { RunConfig } from '@openai/agents-core';
 import { MultiProvider, MultiProviderMap } from './multi_provider';
 import { OllamaModelProvider } from './ollama_model_provider';
@@ -18,57 +18,9 @@ async function confirm(question: string): Promise<boolean> {
   return ['y', 'yes'].includes(answer.trim().toLowerCase());
 }
 
-async function main(modelId: string, openaiUseResponses: boolean = false) {
-  // Create and return the stream without consuming it
-  const getWeatherTool = tool({
-    name: 'get_weather',
-    description: 'Get the weather for a given city',
-    parameters: z.object({ city: z.string() }),
-    needsApproval: async (_ctx, { city }) => city.includes('Oakland'),
-    async execute({ city }) {
-      return `The weather in ${city} is sunny.`;
-    },
-  });
+type AgentInput = string | RunState<undefined, Agent<unknown, "text">> | AgentInputItem[];
 
-  const weatherAgent = new Agent({
-    model: modelId,
-    name: 'Weather agent',
-    instructions: 'You provide weather information.',
-    handoffDescription: 'Handles weather-related queries',
-    tools: [getWeatherTool],
-  });
-
-  // const getTemperatureTool = tool({
-  //   name: 'get_temperature',
-  //   description: 'Get the temperature for a given city',
-  //   parameters: z.object({
-  //     city: z.string(),
-  //   }),
-  //   needsApproval: async (_ctx, { city }) => city.includes('Oakland'),
-  //   execute: async ({ city }) => {
-  //     return `The temperature in ${city} is 20° Celsius`;
-  //   },
-  // });
-
-  const mainAgent = new Agent({
-    model: modelId,
-    name: 'Main agent',
-    instructions:
-      'You are a general assistant. For weather questions, call the weather agent tool with a short input string and then answer.',
-    handoffs: [weatherAgent],
-    tools: [
-      // getTemperatureTool,
-      // weatherAgent.asTool({
-      //   toolName: 'ask_weather_agent',
-      //   toolDescription:
-      //     'Ask the weather agent about locations by passing a short input.',
-      //   // Require approval when the generated input mentions San Francisco.
-      //   needsApproval: async (_ctx, { input }) =>
-      //     input.includes('San Francisco'),
-      // }),
-    ],
-  });
-
+async function main(agent: Agent, agentInput: AgentInput, modelId: string, openaiUseResponses: boolean = false) {
   const modelProviderMap = new MultiProviderMap();
 
   modelProviderMap.addProvider("ollama", new OllamaModelProvider({
@@ -99,17 +51,56 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
   const runner = new Runner(runConfig);
 
   const stream = await runner.run(
-    mainAgent,
-    'What is the weather and temperature in San Francisco and Oakland? Use available tools as needed.',
+    agent,
+    agentInput,
     { stream: true },
   );
 
   return stream;
 }
 
-async function runTestClient(modelId: string, openaiUseResponses: boolean = false) {
+async function runTestClient(userInput: string, modelId: string, openaiUseResponses: boolean = false) {
+  const getWeatherTool = tool({
+    name: 'get_weather',
+    description: 'Get the weather for a given city',
+    parameters: z.object({ city: z.string() }),
+    needsApproval: async (_ctx, { city }) => city.includes('Oakland'),
+    async execute({ city }) {
+      return `The weather in ${city} is sunny.`;
+    },
+  });
+
+  const weatherAgent = new Agent({
+    model: modelId,
+    name: 'Weather agent',
+    instructions: 'You provide weather information.',
+    handoffDescription: 'Handles weather-related queries',
+    tools: [getWeatherTool],
+  });
+
+  const agent = new Agent({
+    model: modelId,
+    name: 'Main agent',
+    instructions:
+      'You are a general assistant. For weather questions, call the weather agent tool with a short input string and then answer.',
+    handoffs: [weatherAgent],
+    tools: [],
+  });
+
+  let agentInput: AgentInput = userInput;
+
+  if (userInput === "approve") {
+		agentInput = await RunState.fromString(
+			agent,
+			JSON.stringify(savedState),
+		);
+
+    const interruptions = agentInput.getInterruptions();
+    agentInput.approve(interruptions[0]); // TODO: Do we need to deal with multiple interruptions?
+  }
+
   // Get the stream
-  const stream = await main(modelId, openaiUseResponses);
+  const stream = await main(agent, agentInput, modelId, openaiUseResponses);
 
   // Create filename in data folder (without timestamp)
   const modelName = modelId.replace(':', '_'); // Replace colon with underscore for filename
@@ -128,6 +119,8 @@ async function runTestClient(modelId: string, openaiUseResponses: boolean = fals
   const fileStream = createWriteStream(filename, { flags: 'w' });
 
   for await (const chunk of stream) {
+    // console.log('chunk', chunk);
+
     // Write each chunk as a JSON line to the file
     fileStream.write(JSON.stringify(chunk) + '\n');
 
@@ -167,6 +160,16 @@ async function runTestClient(modelId: string, openaiUseResponses: boolean = fals
             console.log(`   Tool: ${toolName}`);
             console.log(`   Arguments: ${JSON.stringify(toolArguments, null, 2)}`);
             console.log(`   Status: Waiting for approval...\n`);
+
+            // Persist the current stream state for later approval/resume
+            const state = (stream as any).state;
+            const stateFilename = `data/${modelNameForFile}.state.json`;
+            try {
+              writeFileSync(stateFilename, JSON.parse(JSON.stringify(state)));
+              console.log(`📝 Saved stream state to ${stateFilename}`);
+            } catch (err) {
+              console.error('Failed to serialize stream state:', err);
+            }
           }
           break;
 
@@ -244,5 +247,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
-  runTestClient(modelId, openaiUseResponses).catch(console.error);
+  let userInput = "What is the weather and temperature in Oakland and San Francisco?";
+
+  const modelName = modelId.replace(':', '_').replace('/', '_');
+  const stateFilename = `data/${modelName}.state.json`;
+
+  (async () => {
+    await runTestClient(userInput, modelId, openaiUseResponses);
+
+    if (!existsSync(stateFilename)) {
+      console.log(`No saved state found at ${stateFilename}; skipping resume run.`);
+      return;
+    }
+
+    try {
+      await runTestClient("approve", modelId, openaiUseResponses);
+    } catch (err) {
+      console.error('Failed to load+rehydrate saved state for resume:', err);
+    }
+  })().catch(console.error);
 }
