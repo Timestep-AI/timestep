@@ -1,20 +1,15 @@
 import { z } from 'zod';
 import readline from 'node:readline/promises';
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
-import { Agent, Runner, tool, OpenAIProvider, AgentInputItem, StreamRunOptions } from '@openai/agents';
+import { Agent, Runner, tool, OpenAIProvider, AgentInputItem } from '@openai/agents';
 import { RunConfig, RunState, RunToolApprovalItem } from '@openai/agents-core';
 import { MultiProvider, MultiProviderMap } from './multi_provider';
 import { OllamaModelProvider } from './ollama_model_provider';
 
 
 // Prompt user for yes/no confirmation
-async function confirm(question: string): Promise<boolean> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+async function confirm(rl: readline.Interface, question: string): Promise<boolean> {
   const answer = await rl.question(`${question} (y/n): `);
-  rl.close();
   return ['y', 'yes'].includes(answer.trim().toLowerCase());
 }
 
@@ -71,7 +66,6 @@ async function runTestClient(
     description: 'Get the weather for a given city',
     parameters: z.object({ city: z.string() }),
     needsApproval: true,
-    // needsApproval: async (_ctx, { city }) => city.includes('Oakland'),
     async execute({ city }) {
       return `The weather in ${city} is sunny.`;
     },
@@ -154,8 +148,6 @@ async function runTestClient(
   let shouldExitAfterSave = false;
 
   for await (const chunk of stream) {
-    // console.log('chunk', chunk);
-
     // Write each chunk as a JSON line to the file
     fileStream.write(JSON.stringify(chunk) + '\n');
 
@@ -229,8 +221,6 @@ async function runTestClient(
           break;
 
         default:
-          // Uncomment the line below to see all events
-          // console.log(`📝 Event: ${chunk.name}`);
           break;
       }
     }
@@ -276,12 +266,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
-  let userInput = "What is the weather and temperature in Oakland and San Francisco?";
+  let userInput = "What's the weather in Oakland and San Francisco?";
 
   const modelName = modelId.replace(':', '_').replace('/', '_');
   const stateFilename = `data/${modelName}.state.json`;
 
   (async () => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    let currentInput = userInput;
+    let justHandledApproval = false;
+
     // Main loop for handling chat and tool approvals
     while (true) {
       // Check if there's a saved state that needs approval
@@ -303,6 +301,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
             // Ask user for confirmation
             const ok = await confirm(
+              rl,
               `Agent ${agentName} would like to use the tool ${toolName} with arguments ${toolArgs}. Do you approve?`
             );
 
@@ -310,6 +309,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
             // Ask if they want to always approve/reject this tool
             const always = await confirm(
+              rl,
               `Do you want to always ${decision} this tool for the rest of the run?`
             );
 
@@ -318,23 +318,47 @@ if (import.meta.url === `file://${process.argv[1]}`) {
               : { alwaysReject: always };
 
             await runTestClient(decision, modelId, openaiUseResponses, approvalOptions);
+            justHandledApproval = true;
             continue; // Check again for more approvals
           }
         } catch (err) {
           console.error('Failed to load+rehydrate saved state for resume:', err);
         }
+      } else if (justHandledApproval) {
+        // We just handled an approval and now there's no state file, meaning run completed
+        justHandledApproval = false;
+
+        const continueChat = await confirm(rl, 'Do you want to continue the conversation?');
+        if (!continueChat) {
+          break;
+        }
+        currentInput = await rl.question('You: ');
+        if (!currentInput.trim()) {
+          break;
+        }
+        continue; // Start next iteration with new input
       }
 
       // No pending approvals, run with user input
-      await runTestClient(userInput, modelId, openaiUseResponses);
+      await runTestClient(currentInput, modelId, openaiUseResponses);
 
       // Check if there's a saved state after the run
       if (!existsSync(stateFilename)) {
         // No saved state means the run completed without needing approval
-        break;
+        const continueChat = await confirm(rl, 'Do you want to continue the conversation?');
+        if (!continueChat) {
+          break;
+        }
+        currentInput = await rl.question('You: ');
+        if (!currentInput.trim()) {
+          break;
+        }
+        continue; // Start next iteration with new input
       }
+      // If there is a saved state after the run, loop will continue to check for approvals
     }
 
+    rl.close();
     console.log('\n\nConversation completed.');
   })().catch(console.error);
 }
