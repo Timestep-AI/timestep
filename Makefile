@@ -1,4 +1,4 @@
-default: clean install python typescript
+default: install python typescript
 
 clean:
 	rm -rf python/timestep/.venv
