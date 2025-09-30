@@ -3,6 +3,18 @@ revision = 2
 requires-python = ">=3.11"
 
 [[package]]
+name = "ag-ui-protocol"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7b/d7/a8f8789b3b8b5f7263a902361468e8dfefd85ec63d1d5398579b9175d76d/ag_ui_protocol-0.1.9.tar.gz", hash = "sha256:94d75e3919ff75e0b608a7eed445062ea0e6f11cd33b3386a7649047e0c7abd3", size = 4988, upload-time = "2025-09-19T13:36:26.903Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/50/2bb71a2a9135f4d88706293773320d185789b592987c09f79e9bf2f4875f/ag_ui_protocol-0.1.9-py3-none-any.whl", hash = "sha256:44c1238b0576a3915b3a16e1b3855724e08e92ebc96b1ff29379fbd3bfbd400b", size = 7070, upload-time = "2025-09-19T13:36:25.791Z" },
+]
+
+[[package]]
 name = "aiofiles"
 version = "24.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -669,6 +681,7 @@ name = "timestep"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "ag-ui-protocol" },
     { name = "aiofiles" },
     { name = "ollama" },
     { name = "openai-agents" },
@@ -678,6 +691,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ag-ui-protocol", specifier = ">=0.1.0" },
     { name = "aiofiles", specifier = ">=23.0.0" },
     { name = "ollama", specifier = ">=0.2.0" },
     { name = "openai-agents", specifier = ">=0.3.2" },

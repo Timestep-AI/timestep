@@ -10,4 +10,5 @@ dependencies = [
     "typing-extensions>=4.0.0",
     "aiofiles>=23.0.0",
     "openai-agents>=0.3.2",
+    "ag-ui-protocol>=0.1.0",
 ]
