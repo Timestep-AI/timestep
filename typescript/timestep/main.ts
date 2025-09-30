@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import readline from 'node:readline/promises';
 import { createWriteStream, mkdirSync } from 'node:fs';
-import { Agent, Runner, tool } from '@openai/agents';
+import { Agent, Runner, tool, OpenAIProvider } from '@openai/agents';
 import { RunConfig } from '@openai/agents-core';
 import { MultiProvider, MultiProviderMap } from './multi_provider';
 import { OllamaModelProvider } from './ollama_model_provider';
@@ -73,6 +73,13 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
 
   modelProviderMap.addProvider("ollama", new OllamaModelProvider({
     apiKey: process.env.OLLAMA_API_KEY,
+  }));
+
+  // Add Anthropic provider using OpenAI interface
+  modelProviderMap.addProvider("anthropic", new OpenAIProvider({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    baseURL: "https://api.anthropic.com/v1/",
+    useResponses: false
   }));
 
   // Use MultiProvider for model selection
@@ -234,6 +241,10 @@ async function runAllModels() {
   // Run with gpt-5 (openaiUseResponses=true)
   console.log("\n=== Running with gpt-5 (openaiUseResponses=true) ===");
   await runWithModel("gpt-5", true);
+
+  // Run with Claude Sonnet 4.5
+  console.log("\n=== Running with anthropic/claude-sonnet-4-5 ===");
+  await runWithModel("anthropic/claude-sonnet-4-5");
 
   // Then run with smollm2:1.7b
   console.log("\n=== Running with ollama/smollm2:1.7b ===");

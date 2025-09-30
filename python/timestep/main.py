@@ -41,6 +41,14 @@ async def main(model_id: str, openai_use_responses: bool = False):
         api_key=os.getenv("OLLAMA_API_KEY"),
     ))
 
+    # Add Anthropic provider using OpenAI interface
+    from agents import OpenAIProvider
+    model_provider_map.add_provider("anthropic", OpenAIProvider(
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        base_url="https://api.anthropic.com/v1/",
+        use_responses=False
+    ))
+
     # Use MultiProvider for model selection
     model_provider = MultiProvider(
         provider_map=model_provider_map,
@@ -155,6 +163,10 @@ if __name__ == "__main__":
         # Run with gpt-5 (openai_use_responses=True)
         print("\n=== Running with gpt-5 (openai_use_responses=True) ===")
         await run_with_model("gpt-5", openai_use_responses=True)
+
+        # Run with Claude Sonnet 4.5
+        print("\n=== Running with anthropic/claude-sonnet-4-5 ===")
+        await run_with_model("anthropic/claude-sonnet-4-5")
 
         # Then run with smollm2:1.7b
         print("\n=== Running with ollama/smollm2:1.7b ===")
