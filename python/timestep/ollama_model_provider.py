@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 from agents import ModelProvider
-from models import OllamaModel
+from ollama_model import OllamaModel
 from ollama import AsyncClient
 
 class OllamaModelProvider(ModelProvider):

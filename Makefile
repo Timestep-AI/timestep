@@ -18,7 +18,7 @@ install:
 
 python:
 	cd python/timestep && \
-	OPENAI_API_KEY=${OPENAI_API_KEY} OLLAMA_API_KEY=${OLLAMA_API_KEY} uv run index.py
+	OPENAI_API_KEY=${OPENAI_API_KEY} OLLAMA_API_KEY=${OLLAMA_API_KEY} uv run main.py
 
 typescript:
 	cd typescript/timestep && \

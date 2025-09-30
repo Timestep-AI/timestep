@@ -4,7 +4,7 @@ import { createWriteStream, mkdirSync } from 'node:fs';
 import { Agent, Runner, tool } from '@openai/agents';
 import { RunConfig } from '@openai/agents-core';
 import { MultiProvider, MultiProviderMap } from './multi_provider';
-import { OllamaModelProvider } from './ollama_provider';
+import { OllamaModelProvider } from './ollama_model_provider';
 
 
 // Prompt user for yes/no confirmation
@@ -19,7 +19,7 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 async function main(modelId: string, openaiUseResponses: boolean = false) {
-  // Define a tool that requires approval for certain inputs
+  // Create and return the stream without consuming it
   const getWeatherTool = tool({
     name: 'get_weather',
     description: 'Get the weather for a given city',
@@ -91,29 +91,35 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
 
   const runner = new Runner(runConfig);
 
-  let stream = await runner.run(
+  const stream = await runner.run(
     mainAgent,
     'What is the weather and temperature in San Francisco and Oakland? Use available tools as needed.',
     { stream: true },
   );
-  // stream.toTextStream({ compatibleWithNodeStreams: true }).pipe(process.stdout);
+
+  return stream;
+}
+
+async function runWithModel(modelId: string, openaiUseResponses: boolean = false) {
+  // Get the stream
+  const stream = await main(modelId, openaiUseResponses);
 
   // Create filename in data folder (without timestamp)
-  const modelName = (mainAgent.model as string).replace(':', '_'); // Replace colon with underscore for filename
+  const modelName = modelId.replace(':', '_'); // Replace colon with underscore for filename
   const modelNameForFile = modelName.replace('/', '_');
 
   // Only include openai_use_responses flag for OpenAI models (no slash in model name)
-  const isOpenAIModel = !(mainAgent.model as string).includes('/');
+  const isOpenAIModel = !modelId.includes('/');
   const filename = isOpenAIModel
     ? `data/${modelNameForFile}.${openaiUseResponses}.jsonl`
     : `data/${modelNameForFile}.jsonl`;
-  
+
   // Ensure data directory exists
   mkdirSync('data', { recursive: true });
-  
-  // Create a single file stream for writing JSONL
+
+  // Demonstrate usage by consuming the stream
   const fileStream = createWriteStream(filename, { flags: 'w' });
-  
+
   for await (const chunk of stream) {
     // Write each chunk as a JSON line to the file
     fileStream.write(JSON.stringify(chunk) + '\n');
@@ -129,7 +135,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
             console.log(`✅ Handoff completed: ${sourceAgent} → ${targetAgent}`);
           }
           break;
-          
+
         case 'handoff_requested':
           const handoffRequestItem = (chunk as any).item;
           if (handoffRequestItem?.rawItem?.providerData?.function?.name && handoffRequestItem?.agent?.name) {
@@ -142,7 +148,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
             console.log(`   Arguments: ${JSON.stringify(handoffArgs, null, 2)}`);
           }
           break;
-          
+
         case 'tool_approval_requested':
           const toolApprovalItem = (chunk as any).item;
           if (toolApprovalItem?.rawItem?.providerData?.function?.name && toolApprovalItem?.agent?.name) {
@@ -156,7 +162,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
             console.log(`   Status: Waiting for approval...\n`);
           }
           break;
-          
+
         case 'tool_called':
           const toolCallItem = (chunk as any).item;
           if (toolCallItem?.rawItem?.providerData?.function?.name && toolCallItem?.agent?.name) {
@@ -168,7 +174,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
             console.log(`   Arguments: ${JSON.stringify(calledToolArgs, null, 2)}`);
           }
           break;
-          
+
         case 'tool_output':
           const toolOutputItem = (chunk as any).item;
           if (toolOutputItem?.rawItem?.name && toolOutputItem?.agent?.name) {
@@ -180,7 +186,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
             console.log(`   Result: ${toolResult}`);
           }
           break;
-          
+
         default:
           // Uncomment the line below to see all events
           // console.log(`📝 Event: ${chunk.name}`);
@@ -188,7 +194,7 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
       }
     }
   }
-  
+
   // Close the file stream when done
   fileStream.end();
 
@@ -223,19 +229,21 @@ async function main(modelId: string, openaiUseResponses: boolean = false) {
 async function runAllModels() {
   // Run with gpt-5 (openaiUseResponses=false - default)
   console.log("=== Running with gpt-5 (openaiUseResponses=false) ===");
-  await main("gpt-5");
+  await runWithModel("gpt-5");
 
   // Run with gpt-5 (openaiUseResponses=true)
   console.log("\n=== Running with gpt-5 (openaiUseResponses=true) ===");
-  await main("gpt-5", true);
+  await runWithModel("gpt-5", true);
 
   // Then run with smollm2:1.7b
   console.log("\n=== Running with ollama/smollm2:1.7b ===");
-  await main("ollama/smollm2:1.7b");
+  await runWithModel("ollama/smollm2:1.7b");
 
   // Finally run with gpt-oss:120b-cloud
   console.log("\n=== Running with ollama/gpt-oss:120b-cloud ===");
-  await main("ollama/gpt-oss:120b-cloud");
+  await runWithModel("ollama/gpt-oss:120b-cloud");
 }
 
-runAllModels().catch(console.error);
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runAllModels().catch(console.error);
+}

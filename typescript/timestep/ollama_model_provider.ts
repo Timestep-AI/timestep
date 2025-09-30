@@ -1,5 +1,5 @@
 import { Model, ModelProvider } from '@openai/agents-core';
-import { OllamaModel } from './models';
+import { OllamaModel } from './ollama_model';
 import { Ollama } from 'ollama';
 
 /**

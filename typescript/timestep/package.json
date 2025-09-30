@@ -2,11 +2,11 @@
   "name": "timestep",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "main.js",
   "type": "module",
   "scripts": {
-    "start": "tsx index.ts",
-    "dev": "tsx watch index.ts",
+    "start": "tsx main.ts",
+    "dev": "tsx watch main.ts",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

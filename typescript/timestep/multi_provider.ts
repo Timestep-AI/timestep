@@ -111,23 +111,23 @@ export class MultiProvider implements ModelProvider {
     }
   }
 
-  private _createFallbackProvider(prefix: string): ModelProvider {
+  private async _createFallbackProvider(prefix: string): Promise<ModelProvider> {
     if (prefix === "ollama") {
       // Import OllamaModelProvider only when needed
-      const { OllamaModelProvider } = require('./ollama_provider');
+      const { OllamaModelProvider } = await import('./ollama_model_provider.js');
       return new OllamaModelProvider();
     } else {
       throw new Error(`Unknown prefix: ${prefix}`);
     }
   }
 
-  private _getFallbackProvider(prefix: string | undefined): ModelProvider {
+  private async _getFallbackProvider(prefix: string | undefined): Promise<ModelProvider> {
     if (prefix === undefined || prefix === "openai") {
       return this.openai_provider;
     } else if (this._fallback_providers.has(prefix)) {
       return this._fallback_providers.get(prefix)!;
     } else {
-      const provider = this._createFallbackProvider(prefix);
+      const provider = await this._createFallbackProvider(prefix);
       this._fallback_providers.set(prefix, provider);
       return provider;
     }
@@ -153,6 +153,7 @@ export class MultiProvider implements ModelProvider {
       }
     }
     
-    return this._getFallbackProvider(prefix).getModel(actualModelName);
+    const fallbackProvider = await this._getFallbackProvider(prefix);
+    return fallbackProvider.getModel(actualModelName);
   }
 }

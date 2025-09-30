@@ -11,7 +11,6 @@ import type {
 	ModelRequest,
 	ModelResponse,
 	ResponseStreamEvent,
-	SerializedOutputType,
 } from '@openai/agents';
 import {protocol} from '@openai/agents';
 import {Span} from '@openai/agents';

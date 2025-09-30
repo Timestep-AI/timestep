@@ -109,7 +109,7 @@ class MultiProvider(ModelProvider):
     def _create_fallback_provider(self, prefix: str) -> ModelProvider:
         if prefix == "ollama":
             # Import OllamaModelProvider only when needed
-            from ollama_provider import OllamaModelProvider
+            from ollama_model_provider import OllamaModelProvider
             return OllamaModelProvider()
         else:
             raise UserError(f"Unknown prefix: {prefix}")
