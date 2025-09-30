@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import readline from 'node:readline/promises';
-import { createWriteStream, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { Agent, Runner, tool, OpenAIProvider, RunState, AgentInputItem, StreamRunOptions } from '@openai/agents';
-import { RunConfig } from '@openai/agents-core';
+import { createWriteStream, mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { Agent, Runner, tool, OpenAIProvider, AgentInputItem, StreamRunOptions } from '@openai/agents';
+import { RunConfig, RunState, RunToolApprovalItem } from '@openai/agents-core';
 import { MultiProvider, MultiProviderMap } from './multi_provider';
 import { OllamaModelProvider } from './ollama_model_provider';
 
@@ -59,12 +59,19 @@ async function main(agent: Agent, agentInput: AgentInput, modelId: string, opena
   return stream;
 }
 
-async function runTestClient(userInput: string, modelId: string, openaiUseResponses: boolean = false) {
+async function runTestClient(
+  userInput: string,
+  modelId: string,
+  openaiUseResponses: boolean = false,
+  approvalOptions: { alwaysApprove?: boolean; alwaysReject?: boolean } = {}
+) {
+  const { alwaysApprove = false, alwaysReject = false } = approvalOptions;
   const getWeatherTool = tool({
     name: 'get_weather',
     description: 'Get the weather for a given city',
     parameters: z.object({ city: z.string() }),
-    needsApproval: async (_ctx, { city }) => city.includes('Oakland'),
+    needsApproval: true,
+    // needsApproval: async (_ctx, { city }) => city.includes('Oakland'),
     async execute({ city }) {
       return `The weather in ${city} is sunny.`;
     },
@@ -88,15 +95,40 @@ async function runTestClient(userInput: string, modelId: string, openaiUseRespon
   });
 
   let agentInput: AgentInput = userInput;
+  let isResumingFromSavedState = false;
 
-  if (userInput === "approve") {
-		agentInput = await RunState.fromString(
-			agent,
-			JSON.stringify(savedState),
-		);
+  if (userInput === "approve" || userInput === "reject") {
+    const isApproving = userInput === "approve";
+    console.log(`[${userInput}] Loading saved state...`);
+    const modelNameForFile = modelId.replace(':', '_').replace('/', '_');
+    const stateFilename = `data/${modelNameForFile}.state.json`;
+    const raw = readFileSync(stateFilename, 'utf8');
+    const savedState = JSON.parse(raw);
+    const runState = await RunState.fromString(
+      agent,
+      JSON.stringify(savedState),
+    );
+    console.log(`[${userInput}] Loaded state from file.`);
 
-    const interruptions = agentInput.getInterruptions();
-    agentInput.approve(interruptions[0]); // TODO: Do we need to deal with multiple interruptions?
+    // Find the tool approval item from generated items
+    const approvalItem = runState._generatedItems
+      .filter(item => item.type === 'tool_approval_item')
+      .pop() as RunToolApprovalItem | undefined;
+
+    if (!approvalItem) {
+      throw new Error(`[${userInput}] No tool approval item found in state.`);
+    }
+
+    if (isApproving) {
+      console.log('[approve] Approving tool call...');
+      runState.approve(approvalItem, { alwaysApprove });
+    } else {
+      console.log('[reject] Rejecting tool call...');
+      runState.reject(approvalItem, { alwaysReject });
+    }
+
+    agentInput = runState as RunState<undefined, Agent<unknown, "text">>;
+    isResumingFromSavedState = true;
   }
 
   // Get the stream
@@ -116,7 +148,10 @@ async function runTestClient(userInput: string, modelId: string, openaiUseRespon
   mkdirSync('data', { recursive: true });
 
   // Demonstrate usage by consuming the stream
-  const fileStream = createWriteStream(filename, { flags: 'w' });
+  // Use append mode ('a') if resuming from saved state, otherwise overwrite ('w')
+  const fileStream = createWriteStream(filename, { flags: isResumingFromSavedState ? 'a' : 'w' });
+  let stateSavedForApproval = false;
+  let shouldExitAfterSave = false;
 
   for await (const chunk of stream) {
     // console.log('chunk', chunk);
@@ -161,14 +196,10 @@ async function runTestClient(userInput: string, modelId: string, openaiUseRespon
             console.log(`   Arguments: ${JSON.stringify(toolArguments, null, 2)}`);
             console.log(`   Status: Waiting for approval...\n`);
 
-            // Persist the current stream state for later approval/resume
-            const state = (stream as any).state;
-            const stateFilename = `data/${modelNameForFile}.state.json`;
-            try {
-              writeFileSync(stateFilename, JSON.parse(JSON.stringify(state)));
-              console.log(`📝 Saved stream state to ${stateFilename}`);
-            } catch (err) {
-              console.error('Failed to serialize stream state:', err);
+            if (!stateSavedForApproval) {
+              // Mark that we need to exit after this approval
+              stateSavedForApproval = true;
+              shouldExitAfterSave = true;
             }
           }
           break;
@@ -203,6 +234,20 @@ async function runTestClient(userInput: string, modelId: string, openaiUseRespon
           break;
       }
     }
+    if (shouldExitAfterSave) {
+      // Save the state before exiting
+      const state = (stream as any).state as RunState<any, any>;
+      const stateFilename = `data/${modelNameForFile}.state.json`;
+      try {
+        const savedState = JSON.parse(JSON.stringify(state));
+        writeFileSync(stateFilename, JSON.stringify(savedState, null, 2));
+        console.log(`📝 Saved stream state to ${stateFilename}`);
+      } catch (err) {
+        console.error('Failed to serialize stream state:', err);
+      }
+      console.log('⏸️ Exiting run after saving approval state. Re-run with approval to continue.');
+      break;
+    }
   }
 
   // Close the file stream when done
@@ -210,28 +255,12 @@ async function runTestClient(userInput: string, modelId: string, openaiUseRespon
 
   await stream.completed;
 
-  // while (stream.interruptions?.length) {
-  //   console.log(
-  //     'Human-in-the-loop: approval required for the following tool calls:',
-  //   );
-  //   const state = stream.state;
-  //   for (const interruption of stream.interruptions) {
-  //     const ok = await confirm(
-  //       `Agent ${interruption.agent.name} would like to use the tool ${interruption.rawItem.name} with "${interruption.rawItem.arguments}". Do you approve?`,
-  //     );
-  //     if (ok) {
-  //       state.approve(interruption);
-  //     } else {
-  //       state.reject(interruption);
-  //     }
-  //   }
-
-  //   // Resume execution with streaming output
-  //   stream = await runner.run(mainAgent, state, { stream: true });
-  //   const textStream = stream.toTextStream({ compatibleWithNodeStreams: true });
-  //   textStream.pipe(process.stdout);
-  //   await stream.completed;
-  // }
+  // If we completed without needing to exit for approval, delete any existing state file
+  const stateFilename = `data/${modelNameForFile}.state.json`;
+  if (!shouldExitAfterSave && existsSync(stateFilename)) {
+    unlinkSync(stateFilename);
+    console.log(`🗑️  Deleted state file ${stateFilename} (run completed successfully)`);
+  }
 
   console.log('\n\nDone');
 }
@@ -253,17 +282,59 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const stateFilename = `data/${modelName}.state.json`;
 
   (async () => {
-    await runTestClient(userInput, modelId, openaiUseResponses);
+    // Main loop for handling chat and tool approvals
+    while (true) {
+      // Check if there's a saved state that needs approval
+      if (existsSync(stateFilename)) {
+        try {
+          const raw = readFileSync(stateFilename, 'utf8');
+          const savedState = JSON.parse(raw);
 
-    if (!existsSync(stateFilename)) {
-      console.log(`No saved state found at ${stateFilename}; skipping resume run.`);
-      return;
+          // Find the tool approval item to show to user
+          const generatedItems = savedState.generatedItems || [];
+          const approvalItem = generatedItems
+            .filter((item: any) => item.type === 'tool_approval_item')
+            .pop();
+
+          if (approvalItem) {
+            const toolName = approvalItem.rawItem.name;
+            const toolArgs = approvalItem.rawItem.arguments;
+            const agentName = approvalItem.agent.name;
+
+            // Ask user for confirmation
+            const ok = await confirm(
+              `Agent ${agentName} would like to use the tool ${toolName} with arguments ${toolArgs}. Do you approve?`
+            );
+
+            const decision = ok ? "approve" : "reject";
+
+            // Ask if they want to always approve/reject this tool
+            const always = await confirm(
+              `Do you want to always ${decision} this tool for the rest of the run?`
+            );
+
+            const approvalOptions = ok
+              ? { alwaysApprove: always }
+              : { alwaysReject: always };
+
+            await runTestClient(decision, modelId, openaiUseResponses, approvalOptions);
+            continue; // Check again for more approvals
+          }
+        } catch (err) {
+          console.error('Failed to load+rehydrate saved state for resume:', err);
+        }
+      }
+
+      // No pending approvals, run with user input
+      await runTestClient(userInput, modelId, openaiUseResponses);
+
+      // Check if there's a saved state after the run
+      if (!existsSync(stateFilename)) {
+        // No saved state means the run completed without needing approval
+        break;
+      }
     }
 
-    try {
-      await runTestClient("approve", modelId, openaiUseResponses);
-    } catch (err) {
-      console.error('Failed to load+rehydrate saved state for resume:', err);
-    }
+    console.log('\n\nConversation completed.');
   })().catch(console.error);
 }

@@ -16,6 +16,7 @@
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
     "@openai/agents": "^0.0.1",
+    "@openai/agents-core": "^0.0.1",
     "ollama": "^0.5.10",
     "zod": "^3.22.4"
   },

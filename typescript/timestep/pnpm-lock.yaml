@@ -11,6 +11,9 @@ importers:
       '@openai/agents':
         specifier: ^0.0.1
         version: 0.0.1(ws@8.18.3)(zod@3.25.76)
+      '@openai/agents-core':
+        specifier: ^0.0.1
+        version: 0.0.1(ws@8.18.3)(zod@3.25.76)
       ollama:
         specifier: ^0.5.10
         version: 0.5.18
