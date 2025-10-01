@@ -102,28 +102,49 @@ async def run_test_client(
     async for event in result.stream_events():
         # Handle different types of stream events
         if event.type == "agent_updated_stream_event":
-            print(f"\n🔄 Handoff requested")
-            print(f"   From: {event.data.get('from_agent', 'Unknown')}")
-            print(f"✅ Handoff completed: Main Assistant → {event.new_agent.name}")
+            # AgentUpdatedStreamEvent indicates agent handoff
+            if hasattr(event, 'new_agent'):
+                print(f"✅ Handoff completed → {event.new_agent.name}")
         elif event.type == "run_item_stream_event":
             if event.item.type == "tool_call_item":
-                tool_name = event.item.name if hasattr(event.item, 'name') else 'Unknown'
+                # Try to get tool name from raw_item first, then fall back to name attribute
+                tool_name = 'Unknown'
+                if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'name'):
+                    tool_name = event.item.raw_item.name
+                elif hasattr(event.item, 'name'):
+                    tool_name = event.item.name
+
                 print(f"🔧 Tool called: {tool_name}")
                 if hasattr(event.item, 'arguments'):
-                    print(f"   Agent: {agent.name}")
                     print(f"   Arguments: {event.item.arguments}")
             elif event.item.type == "tool_call_output_item":
-                tool_name = event.item.name if hasattr(event.item, 'name') else 'Unknown'
+                # Try to get tool name from raw_item first, then fall back to name attribute
+                tool_name = 'Unknown'
+                if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'name'):
+                    tool_name = event.item.raw_item.name
+                elif hasattr(event.item, 'name'):
+                    tool_name = event.item.name
+
                 print(f"✅ Tool output from {tool_name}:")
                 print(f"   Result: {event.item.output}")
             elif event.item.type == "message_output_item":
                 # Extract text from message output
-                if hasattr(event.item, 'content') and isinstance(event.item.content, list):
-                    for content_block in event.item.content:
-                        if hasattr(content_block, 'text'):
-                            print(content_block.text, end='')
-                        elif hasattr(content_block, 'output_text'):
-                            print(content_block.output_text, end='')
+                # Try raw_item.content first, then fall back to content
+                content = None
+                if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'content'):
+                    content = event.item.raw_item.content
+                elif hasattr(event.item, 'content'):
+                    content = event.item.content
+
+                if content:
+                    if isinstance(content, list):
+                        for content_block in content:
+                            if hasattr(content_block, 'text'):
+                                print(content_block.text, end='')
+                            elif hasattr(content_block, 'output_text'):
+                                print(content_block.output_text, end='')
+                    elif isinstance(content, str):
+                        print(content, end='')
 
     print('\n')
 
