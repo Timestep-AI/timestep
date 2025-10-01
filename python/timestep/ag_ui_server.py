@@ -116,7 +116,7 @@ class TimestepAgent:
         agent = Agent(
             model=self.model_id,
             name="Main Assistant",
-            instructions="You are a helpful assistant. For questions about the openai/codex repository, use the MCP tools. For weather questions, hand off to the weather agent.",
+            instructions="You are a helpful assistant. For questions about the timestep-ai/timestep repository, use the MCP tools. For weather questions, hand off to the weather agent.",
             tools=mcp_tools,
             handoffs=[weather_agent],
         )

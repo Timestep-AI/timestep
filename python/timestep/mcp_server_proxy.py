@@ -44,8 +44,8 @@ async def fetch_mcp_tools(
     Fetches tools from an MCP server and/or includes built-in tools.
 
     Args:
-        server_url: The URL of the MCP server (e.g., 'https://gitmcp.io/openai/codex'),
-                   or None for built-in onlyhttps://gitmcp.io/timestep-ai/timestep
+        server_url: The URL of the MCP server (e.g., 'https://gitmcp.io/timestep-ai/timestep'),
+                   or None for built-in onl
         include_built_in: Whether to include built-in tools from the local MCP server
         require_approval: Configuration for which tools require approval
                          Example: {
