@@ -6,11 +6,12 @@ import {
 } from "@ag-ui/client"
 import { Observable } from "rxjs"
 import { z } from 'zod'
-import { Agent, Runner, tool, OpenAIProvider } from '@openai/agents'
-import { RunConfig } from '@openai/agents-core'
+import { Agent, Runner, tool, OpenAIProvider, RunToolApprovalItem } from '@openai/agents'
+import { RunConfig, RunState } from '@openai/agents-core'
 import { MultiProvider, MultiProviderMap } from './multi_provider'
 import { OllamaModelProvider } from './ollama_model_provider'
 import { fetchMcpTools } from './mcp_server_proxy'
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
 
 export class TimestepAgent extends AbstractAgent {
   private modelId: string
@@ -74,10 +75,10 @@ export class TimestepAgent extends AbstractAgent {
       tracingDisabled: false,
     }
 
-    // Configure approval policies (get_weather doesn't require approval for AG-UI)
+    // Configure approval policies (get_weather now requires approval for AG-UI testing)
     const requireApproval = {
-      never: { toolNames: ['search_codex_code', 'fetch_codex_documentation', 'get_weather'] },
-      always: { toolNames: ['fetch_generic_url_content'] },
+      never: { toolNames: ['search_codex_code', 'fetch_codex_documentation'] },
+      always: { toolNames: ['get_weather', 'fetch_generic_url_content'] },
     }
 
     // Fetch built-in tools for weather agent
@@ -111,20 +112,75 @@ export class TimestepAgent extends AbstractAgent {
 
     const runner = new Runner(runConfig)
 
-    // Get the last user message as input
-    const messages = input.messages ?? []
-    const userMessages = messages.filter(m => m.role === 'user')
-    const lastUserMessage = userMessages[userMessages.length - 1]
-    const userInput = lastUserMessage?.content ?? ''
+    // Ensure data directory exists for state persistence
+    mkdirSync('data', { recursive: true })
 
-    if (!userInput) {
-      // No user input, just return without doing anything
-      return
+    // Check if this is a resume from an interrupt
+    let agentInput: string | RunState<undefined, Agent<unknown, "text">>
+    let isResumingFromInterrupt = false
+
+    if (input.resume?.interruptId) {
+      // Load saved state from disk
+      const stateFilename = `data/${input.threadId}.state.json`
+      if (existsSync(stateFilename)) {
+        console.log('[AG-UI] Resuming from interrupt...')
+        const raw = readFileSync(stateFilename, 'utf8')
+        const savedState = JSON.parse(raw)
+        const runState = await RunState.fromString(agent, JSON.stringify(savedState))
+
+        // Find the tool approval item
+        const approvalItem = runState._generatedItems
+          .filter(item => item.type === 'tool_approval_item')
+          .find(item => (item as RunToolApprovalItem).rawItem?.id === input.resume?.interruptId) as RunToolApprovalItem | undefined
+
+        if (approvalItem) {
+          // Apply the approval decision from resume payload
+          const approved = input.resume.payload?.approved ?? false
+          const alwaysApprove = input.resume.payload?.alwaysApprove ?? false
+          const alwaysReject = input.resume.payload?.alwaysReject ?? false
+
+          if (approved) {
+            runState.approve(approvalItem, { alwaysApprove })
+            console.log('[AG-UI] Tool approved')
+          } else {
+            runState.reject(approvalItem, { alwaysReject })
+            console.log('[AG-UI] Tool rejected')
+          }
+
+          agentInput = runState as RunState<undefined, Agent<unknown, "text">>
+          isResumingFromInterrupt = true
+        } else {
+          console.error('[AG-UI] Warning: Could not find approval item for interrupt ID')
+          // Fall back to normal execution
+          const messages = input.messages ?? []
+          const userMessages = messages.filter(m => m.role === 'user')
+          const lastUserMessage = userMessages[userMessages.length - 1]
+          agentInput = lastUserMessage?.content ?? ''
+        }
+      } else {
+        console.error('[AG-UI] Warning: No saved state found for resume')
+        // Fall back to normal execution
+        const messages = input.messages ?? []
+        const userMessages = messages.filter(m => m.role === 'user')
+        const lastUserMessage = userMessages[userMessages.length - 1]
+        agentInput = lastUserMessage?.content ?? ''
+      }
+    } else {
+      // Normal execution - get the last user message as input
+      const messages = input.messages ?? []
+      const userMessages = messages.filter(m => m.role === 'user')
+      const lastUserMessage = userMessages[userMessages.length - 1]
+      agentInput = lastUserMessage?.content ?? ''
+
+      if (!agentInput) {
+        // No user input, just return without doing anything
+        return
+      }
     }
 
     const stream = await runner.run(
       agent,
-      userInput,
+      agentInput,
       { stream: true },
     )
 
@@ -133,8 +189,53 @@ export class TimestepAgent extends AbstractAgent {
 
     for await (const chunk of stream) {
       if ('name' in chunk) {
+        // Handle tool approval requests - save state and emit interrupt
+        if (chunk.name === 'tool_approval_requested') {
+          const toolApprovalItem = (chunk as any).item
+          if (toolApprovalItem?.rawItem?.providerData?.function?.name) {
+            const toolName = toolApprovalItem.rawItem.providerData.function.name
+            const toolArguments = toolApprovalItem.rawItem.providerData.function.arguments
+            const toolAgent = toolApprovalItem.agent?.name
+            const interruptId = toolApprovalItem.rawItem.id || Date.now().toString()
+
+            console.log('[AG-UI] Tool approval required, saving state...')
+
+            // Save state to disk
+            const state = (stream as any).state as RunState<any, any>
+            const stateFilename = `data/${input.threadId}.state.json`
+            try {
+              const savedState = JSON.parse(JSON.stringify(state))
+              writeFileSync(stateFilename, JSON.stringify(savedState, null, 2))
+              console.log(`[AG-UI] State saved to ${stateFilename}`)
+            } catch (err) {
+              console.error('[AG-UI] Failed to serialize stream state:', err)
+              throw err
+            }
+
+            // Emit RUN_FINISHED with interrupt outcome
+            observer.next({
+              type: EventType.RUN_FINISHED,
+              threadId: input.threadId,
+              runId: input.runId,
+              outcome: 'interrupt',
+              interrupt: {
+                id: interruptId,
+                reason: 'tool_approval_required',
+                payload: {
+                  toolName,
+                  toolArguments,
+                  agentName: toolAgent,
+                }
+              }
+            } as any)
+
+            // Complete the stream
+            return
+          }
+        }
+
         // Check for message output events that contain text
-        if (chunk.name === 'message_output_created') {
+        else if (chunk.name === 'message_output_created') {
           const messageItem = (chunk as any).item
 
           // Check if this is a message with text content
