@@ -20,6 +20,7 @@ from agents import Agent, Runner, function_tool, RunConfig
 from multi_provider import MultiProvider, MultiProviderMap
 from ollama_model_provider import OllamaModelProvider
 from agents import OpenAIProvider
+from mcp_server_proxy import fetch_mcp_tools
 
 
 class TimestepAgent:
@@ -86,26 +87,38 @@ class TimestepAgent:
             tracing_disabled=False,
         )
 
-        # Create a simple tool for demonstration (no approval for AG-UI integration)
-        @function_tool
-        def get_weather(city: str) -> str:
-            """Get the weather for a given city"""
-            return f"The weather in {city} is sunny."
+        # Configure approval policies (get_weather doesn't require approval for AG-UI)
+        require_approval = {
+            "never": {"toolNames": ["search_codex_code", "fetch_codex_documentation", "get_weather"]},
+            "always": {"toolNames": ["fetch_generic_url_content"]},
+        }
 
+        # Fetch built-in tools for weather agent
+        print('[MCP] Loading built-in tools...')
+        weather_tools = await fetch_mcp_tools(None, True, require_approval)
+        print(f'[MCP] Loaded {len(weather_tools)} built-in tools')
+
+        # Create weather agent with built-in tools
         weather_agent = Agent(
             model=self.model_id,
             name="Weather agent",
             instructions="You provide weather information.",
             handoff_description="Handles weather-related queries",
-            tools=[get_weather],
+            tools=weather_tools,
         )
 
+        # Fetch remote MCP tools from the codex server
+        print('[MCP] Fetching tools from https://gitmcp.io/timestep-ai/timestep...')
+        mcp_tools = await fetch_mcp_tools('https://gitmcp.io/timestep-ai/timestep', False, require_approval)
+        print(f'[MCP] Loaded {len(mcp_tools)} remote tools')
+
+        # Create main agent with remote MCP tools and weather handoff
         agent = Agent(
             model=self.model_id,
-            name="Main agent",
-            instructions="You are a general assistant. For weather questions, call the weather agent tool with a short input string and then answer.",
+            name="Main Assistant",
+            instructions="You are a helpful assistant. For questions about the openai/codex repository, use the MCP tools. For weather questions, hand off to the weather agent.",
+            tools=mcp_tools,
             handoffs=[weather_agent],
-            tools=[],
         )
 
         runner = Runner()

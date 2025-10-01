@@ -45,11 +45,3 @@ test-all: install
 		echo "\n=== TypeScript $$model_id (OPENAI_USE_RESPONSES=$$use_responses) ==="; \
 		$(MAKE) typescript MODEL_ID="$$model_id" OPENAI_USE_RESPONSES="$$use_responses"; \
 	done
-
-test-typescript:
-	MODEL_ID=ollama/gpt-oss:120b-cloud \
-	OLLAMA_API_KEY=${OLLAMA_API_KEY} \
-	OPENAI_USE_RESPONSES=false \
-	$(MAKE) typescript
-
-.PHONY: test-all test-typescript

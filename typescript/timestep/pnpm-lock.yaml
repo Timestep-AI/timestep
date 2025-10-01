@@ -14,12 +14,15 @@ importers:
       '@ag-ui/core':
         specifier: ^0.0.39
         version: 0.0.39
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.18.2
+        version: 1.18.2
       '@openai/agents':
-        specifier: ^0.0.1
-        version: 0.0.1(ws@8.18.3)(zod@3.25.76)
+        specifier: ^0.1.7
+        version: 0.1.7(ws@8.18.3)(zod@3.25.76)
       '@openai/agents-core':
-        specifier: ^0.0.1
-        version: 0.0.1(ws@8.18.3)(zod@3.25.76)
+        specifier: ^0.1.7
+        version: 0.1.7(ws@8.18.3)(zod@3.25.76)
       ollama:
         specifier: ^0.5.10
         version: 0.5.18
@@ -217,22 +220,28 @@ packages:
     resolution: {integrity: sha512-beedclIvFcCnPrYgHsylqiYJVJ/CI47Vyc4tY8no1/Li/O8U4BTlJfy6ZwxkYwx+Mx10nrgwSVrA7VBbhh4slg==}
     engines: {node: '>=18'}
 
-  '@openai/agents-core@0.0.1':
-    resolution: {integrity: sha512-15rIIwfvxalqVcY1GfUyZ8BWFcylOoIVG/pqFzoxArPP7E9M73/9gfdqztoEcwg2868RLRWhWOXa4XY2eByklw==}
+  '@openai/agents-core@0.1.7':
+    resolution: {integrity: sha512-WbFr+ufZov+egt18AwDdxPYKmUiv8KGAlz9TakEdKrweJp7t/7bBS276uL4qULwUTou/IXSHb+XPxz1KLHcqqg==}
     peerDependencies:
       zod: ^3.25.40
     peerDependenciesMeta:
       zod:
         optional: true
 
-  '@openai/agents-openai@0.0.1':
-    resolution: {integrity: sha512-/MDFPSi3ocQoogbInQSTJQHki2Plfl/gKgPMDifPB0zIcG3nP0MmmtVe3Ts64t4jTGZpmaaQ+JsY+KAv5wJKow==}
+  '@openai/agents-openai@0.1.7':
+    resolution: {integrity: sha512-Xh/+W+5BgjC9O98KyrYxHKDfFsLu6g9KhKILFB9OrzQGW60D69k3PHHKto1S2rXX/A3REcF3lhxkcTE77RqBmA==}
+    peerDependencies:
+      zod: ^3.25.40
 
-  '@openai/agents-realtime@0.0.1':
-    resolution: {integrity: sha512-+0ApAhtGVKndIVcW/EZby9xgvUvmK7/vg1a+wSFm7ZCcWCPGViwDzKKw2xLnn5KBHlxnpOZE+VIW9FZoEFUewQ==}
+  '@openai/agents-realtime@0.1.7':
+    resolution: {integrity: sha512-M8embu1uPeExMquFdpIsH73OgT1IUW7WoNiZuJtN1g1UzXp3WyJHnE60pJQCFKA9ytsqdGiJINnyACEZK38IoQ==}
+    peerDependencies:
+      zod: ^3.25.40
 
-  '@openai/agents@0.0.1':
-    resolution: {integrity: sha512-sIOeusrIjDL6A1vgLdjUINYUSfhxw1SICmpJZj8BYdIetJucnXjXfYZIYpBByv6MTOF8M7nGlSKi0zZEMUSKRA==}
+  '@openai/agents@0.1.7':
+    resolution: {integrity: sha512-tDovDCv0CTENsv75RswALmse9f4kkOvik3K9RJSqANOI5NFreHpGQys54HJM6J7ue8hKgqd2rutIRhj4BltZGA==}
+    peerDependencies:
+      zod: ^3.25.40
 
   '@protobuf-ts/protoc@2.11.1':
     resolution: {integrity: sha512-mUZJaV0daGO6HUX90o/atzQ6A7bbN2RSuHtdwo8SSF2Qoe3zHwa4IHyCN1evftTeHfLmdz+45qo47sL+5P8nyg==}
@@ -485,8 +494,8 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  openai@5.23.1:
-    resolution: {integrity: sha512-APxMtm5mln4jhKhAr0d5zP9lNsClx4QwJtg8RUvYSSyxYCTHLNJnLEcSHbJ6t0ori8Pbr9HZGfcPJ7LEy73rvQ==}
+  openai@5.23.2:
+    resolution: {integrity: sha512-MQBzmTulj+MM5O8SKEk/gL8a7s5mktS9zUtAkU257WjvobGc9nKcBuVwjyEEcb9SI8a8Y2G/mzn3vm9n1Jlleg==}
     hasBin: true
     peerDependencies:
       ws: ^8.18.0
@@ -793,13 +802,11 @@ snapshots:
       zod-to-json-schema: 3.24.6(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
-  '@openai/agents-core@0.0.1(ws@8.18.3)(zod@3.25.76)':
+  '@openai/agents-core@0.1.7(ws@8.18.3)(zod@3.25.76)':
     dependencies:
-      '@openai/zod': zod@3.25.76
       debug: 4.4.3
-      openai: 5.23.1(ws@8.18.3)(zod@3.25.76)
+      openai: 5.23.2(ws@8.18.3)(zod@3.25.76)
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.18.2
       zod: 3.25.76
@@ -807,42 +814,41 @@ snapshots:
       - supports-color
       - ws
 
-  '@openai/agents-openai@0.0.1(ws@8.18.3)(zod@3.25.76)':
+  '@openai/agents-openai@0.1.7(ws@8.18.3)(zod@3.25.76)':
     dependencies:
-      '@openai/agents-core': 0.0.1(ws@8.18.3)(zod@3.25.76)
-      '@openai/zod': zod@3.25.76
+      '@openai/agents-core': 0.1.7(ws@8.18.3)(zod@3.25.76)
       debug: 4.4.3
-      openai: 5.23.1(ws@8.18.3)(zod@3.25.76)
+      openai: 5.23.2(ws@8.18.3)(zod@3.25.76)
+      zod: 3.25.76
     transitivePeerDependencies:
       - supports-color
       - ws
-      - zod
 
-  '@openai/agents-realtime@0.0.1(zod@3.25.76)':
+  '@openai/agents-realtime@0.1.7(zod@3.25.76)':
     dependencies:
-      '@openai/agents-core': 0.0.1(ws@8.18.3)(zod@3.25.76)
+      '@openai/agents-core': 0.1.7(ws@8.18.3)(zod@3.25.76)
       '@types/ws': 8.18.1
       debug: 4.4.3
       ws: 8.18.3
+      zod: 3.25.76
     transitivePeerDependencies:
       - bufferutil
       - supports-color
       - utf-8-validate
-      - zod
 
-  '@openai/agents@0.0.1(ws@8.18.3)(zod@3.25.76)':
+  '@openai/agents@0.1.7(ws@8.18.3)(zod@3.25.76)':
     dependencies:
-      '@openai/agents-core': 0.0.1(ws@8.18.3)(zod@3.25.76)
-      '@openai/agents-openai': 0.0.1(ws@8.18.3)(zod@3.25.76)
-      '@openai/agents-realtime': 0.0.1(zod@3.25.76)
+      '@openai/agents-core': 0.1.7(ws@8.18.3)(zod@3.25.76)
+      '@openai/agents-openai': 0.1.7(ws@8.18.3)(zod@3.25.76)
+      '@openai/agents-realtime': 0.1.7(zod@3.25.76)
       debug: 4.4.3
-      openai: 5.23.1(ws@8.18.3)(zod@3.25.76)
+      openai: 5.23.2(ws@8.18.3)(zod@3.25.76)
+      zod: 3.25.76
     transitivePeerDependencies:
       - bufferutil
       - supports-color
       - utf-8-validate
       - ws
-      - zod
 
   '@protobuf-ts/protoc@2.11.1': {}
 
@@ -860,7 +866,6 @@ snapshots:
     dependencies:
       mime-types: 3.0.1
       negotiator: 1.0.0
-    optional: true
 
   ajv@6.12.6:
     dependencies:
@@ -868,7 +873,6 @@ snapshots:
       fast-json-stable-stringify: 2.1.0
       json-schema-traverse: 0.4.1
       uri-js: 4.4.1
-    optional: true
 
   body-parser@2.2.0:
     dependencies:
@@ -883,80 +887,63 @@ snapshots:
       type-is: 2.0.1
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
-  bytes@3.1.2:
-    optional: true
+  bytes@3.1.2: {}
 
   call-bind-apply-helpers@1.0.2:
     dependencies:
       es-errors: 1.3.0
       function-bind: 1.1.2
-    optional: true
 
   call-bound@1.0.4:
     dependencies:
       call-bind-apply-helpers: 1.0.2
       get-intrinsic: 1.3.0
-    optional: true
 
   content-disposition@1.0.0:
     dependencies:
       safe-buffer: 5.2.1
-    optional: true
 
-  content-type@1.0.5:
-    optional: true
+  content-type@1.0.5: {}
 
-  cookie-signature@1.2.2:
-    optional: true
+  cookie-signature@1.2.2: {}
 
-  cookie@0.7.2:
-    optional: true
+  cookie@0.7.2: {}
 
   cors@2.8.5:
     dependencies:
       object-assign: 4.1.1
       vary: 1.1.2
-    optional: true
 
   cross-spawn@7.0.6:
     dependencies:
       path-key: 3.1.1
       shebang-command: 2.0.0
       which: 2.0.2
-    optional: true
 
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
 
-  depd@2.0.0:
-    optional: true
+  depd@2.0.0: {}
 
   dunder-proto@1.0.1:
     dependencies:
       call-bind-apply-helpers: 1.0.2
       es-errors: 1.3.0
       gopd: 1.2.0
-    optional: true
 
-  ee-first@1.1.1:
-    optional: true
+  ee-first@1.1.1: {}
 
-  encodeurl@2.0.0:
-    optional: true
+  encodeurl@2.0.0: {}
 
-  es-define-property@1.0.1:
-    optional: true
+  es-define-property@1.0.1: {}
 
-  es-errors@1.3.0:
-    optional: true
+  es-errors@1.3.0: {}
 
   es-object-atoms@1.1.1:
     dependencies:
       es-errors: 1.3.0
-    optional: true
 
   esbuild@0.25.10:
     optionalDependencies:
@@ -987,24 +974,19 @@ snapshots:
       '@esbuild/win32-ia32': 0.25.10
       '@esbuild/win32-x64': 0.25.10
 
-  escape-html@1.0.3:
-    optional: true
+  escape-html@1.0.3: {}
 
-  etag@1.8.1:
-    optional: true
+  etag@1.8.1: {}
 
-  eventsource-parser@3.0.6:
-    optional: true
+  eventsource-parser@3.0.6: {}
 
   eventsource@3.0.7:
     dependencies:
       eventsource-parser: 3.0.6
-    optional: true
 
   express-rate-limit@7.5.1(express@5.1.0):
     dependencies:
       express: 5.1.0
-    optional: true
 
   express@5.1.0:
     dependencies:
@@ -1037,15 +1019,12 @@ snapshots:
       vary: 1.1.2
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
-  fast-deep-equal@3.1.3:
-    optional: true
+  fast-deep-equal@3.1.3: {}
 
   fast-json-patch@3.1.1: {}
 
-  fast-json-stable-stringify@2.1.0:
-    optional: true
+  fast-json-stable-stringify@2.1.0: {}
 
   finalhandler@2.1.0:
     dependencies:
@@ -1057,19 +1036,15 @@ snapshots:
       statuses: 2.0.2
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
-  forwarded@0.2.0:
-    optional: true
+  forwarded@0.2.0: {}
 
-  fresh@2.0.0:
-    optional: true
+  fresh@2.0.0: {}
 
   fsevents@2.3.3:
     optional: true
 
-  function-bind@1.1.2:
-    optional: true
+  function-bind@1.1.2: {}
 
   get-intrinsic@1.3.0:
     dependencies:
@@ -1083,28 +1058,23 @@ snapshots:
       has-symbols: 1.1.0
       hasown: 2.0.2
       math-intrinsics: 1.1.0
-    optional: true
 
   get-proto@1.0.1:
     dependencies:
       dunder-proto: 1.0.1
       es-object-atoms: 1.1.1
-    optional: true
 
   get-tsconfig@4.10.1:
     dependencies:
       resolve-pkg-maps: 1.0.0
 
-  gopd@1.2.0:
-    optional: true
+  gopd@1.2.0: {}
 
-  has-symbols@1.1.0:
-    optional: true
+  has-symbols@1.1.0: {}
 
   hasown@2.0.2:
     dependencies:
       function-bind: 1.1.2
-    optional: true
 
   http-errors@2.0.0:
     dependencies:
@@ -1113,60 +1083,44 @@ snapshots:
       setprototypeof: 1.2.0
       statuses: 2.0.1
       toidentifier: 1.0.1
-    optional: true
 
   iconv-lite@0.6.3:
     dependencies:
       safer-buffer: 2.1.2
-    optional: true
 
   iconv-lite@0.7.0:
     dependencies:
       safer-buffer: 2.1.2
-    optional: true
 
-  inherits@2.0.4:
-    optional: true
+  inherits@2.0.4: {}
 
-  ipaddr.js@1.9.1:
-    optional: true
+  ipaddr.js@1.9.1: {}
 
-  is-promise@4.0.0:
-    optional: true
+  is-promise@4.0.0: {}
 
-  isexe@2.0.0:
-    optional: true
+  isexe@2.0.0: {}
 
-  json-schema-traverse@0.4.1:
-    optional: true
+  json-schema-traverse@0.4.1: {}
 
-  math-intrinsics@1.1.0:
-    optional: true
+  math-intrinsics@1.1.0: {}
 
-  media-typer@1.1.0:
-    optional: true
+  media-typer@1.1.0: {}
 
-  merge-descriptors@2.0.0:
-    optional: true
+  merge-descriptors@2.0.0: {}
 
-  mime-db@1.54.0:
-    optional: true
+  mime-db@1.54.0: {}
 
   mime-types@3.0.1:
     dependencies:
       mime-db: 1.54.0
-    optional: true
 
   ms@2.1.3: {}
 
-  negotiator@1.0.0:
-    optional: true
+  negotiator@1.0.0: {}
 
-  object-assign@4.1.1:
-    optional: true
+  object-assign@4.1.1: {}
 
-  object-inspect@1.13.4:
-    optional: true
+  object-inspect@1.13.4: {}
 
   ollama@0.5.18:
     dependencies:
@@ -1175,46 +1129,36 @@ snapshots:
   on-finished@2.4.1:
     dependencies:
       ee-first: 1.1.1
-    optional: true
 
   once@1.4.0:
     dependencies:
       wrappy: 1.0.2
-    optional: true
 
-  openai@5.23.1(ws@8.18.3)(zod@3.25.76):
+  openai@5.23.2(ws@8.18.3)(zod@3.25.76):
     optionalDependencies:
       ws: 8.18.3
       zod: 3.25.76
 
-  parseurl@1.3.3:
-    optional: true
+  parseurl@1.3.3: {}
 
-  path-key@3.1.1:
-    optional: true
+  path-key@3.1.1: {}
 
-  path-to-regexp@8.3.0:
-    optional: true
+  path-to-regexp@8.3.0: {}
 
-  pkce-challenge@5.0.0:
-    optional: true
+  pkce-challenge@5.0.0: {}
 
   proxy-addr@2.0.7:
     dependencies:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
-    optional: true
 
-  punycode@2.3.1:
-    optional: true
+  punycode@2.3.1: {}
 
   qs@6.14.0:
     dependencies:
       side-channel: 1.1.0
-    optional: true
 
-  range-parser@1.2.1:
-    optional: true
+  range-parser@1.2.1: {}
 
   raw-body@3.0.1:
     dependencies:
@@ -1222,7 +1166,6 @@ snapshots:
       http-errors: 2.0.0
       iconv-lite: 0.7.0
       unpipe: 1.0.0
-    optional: true
 
   resolve-pkg-maps@1.0.0: {}
 
@@ -1235,7 +1178,6 @@ snapshots:
       path-to-regexp: 8.3.0
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   rxjs@7.8.1:
     dependencies:
@@ -1245,11 +1187,9 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  safe-buffer@5.2.1:
-    optional: true
+  safe-buffer@5.2.1: {}
 
-  safer-buffer@2.1.2:
-    optional: true
+  safer-buffer@2.1.2: {}
 
   send@1.2.0:
     dependencies:
@@ -1266,7 +1206,6 @@ snapshots:
       statuses: 2.0.2
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   serve-static@2.2.0:
     dependencies:
@@ -1276,24 +1215,19 @@ snapshots:
       send: 1.2.0
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
-  setprototypeof@1.2.0:
-    optional: true
+  setprototypeof@1.2.0: {}
 
   shebang-command@2.0.0:
     dependencies:
       shebang-regex: 3.0.0
-    optional: true
 
-  shebang-regex@3.0.0:
-    optional: true
+  shebang-regex@3.0.0: {}
 
   side-channel-list@1.0.0:
     dependencies:
       es-errors: 1.3.0
       object-inspect: 1.13.4
-    optional: true
 
   side-channel-map@1.0.1:
     dependencies:
@@ -1301,7 +1235,6 @@ snapshots:
       es-errors: 1.3.0
       get-intrinsic: 1.3.0
       object-inspect: 1.13.4
-    optional: true
 
   side-channel-weakmap@1.0.2:
     dependencies:
@@ -1310,7 +1243,6 @@ snapshots:
       get-intrinsic: 1.3.0
       object-inspect: 1.13.4
       side-channel-map: 1.0.1
-    optional: true
 
   side-channel@1.1.0:
     dependencies:
@@ -1319,16 +1251,12 @@ snapshots:
       side-channel-list: 1.0.0
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
-    optional: true
 
-  statuses@2.0.1:
-    optional: true
+  statuses@2.0.1: {}
 
-  statuses@2.0.2:
-    optional: true
+  statuses@2.0.2: {}
 
-  toidentifier@1.0.1:
-    optional: true
+  toidentifier@1.0.1: {}
 
   tslib@2.8.1: {}
 
@@ -1344,42 +1272,35 @@ snapshots:
       content-type: 1.0.5
       media-typer: 1.1.0
       mime-types: 3.0.1
-    optional: true
 
   typescript@5.9.2: {}
 
   undici-types@6.21.0: {}
 
-  unpipe@1.0.0:
-    optional: true
+  unpipe@1.0.0: {}
 
   untruncate-json@0.0.1: {}
 
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
-    optional: true
 
   uuid@11.1.0: {}
 
-  vary@1.1.2:
-    optional: true
+  vary@1.1.2: {}
 
   whatwg-fetch@3.6.20: {}
 
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
-    optional: true
 
-  wrappy@1.0.2:
-    optional: true
+  wrappy@1.0.2: {}
 
   ws@8.18.3: {}
 
   zod-to-json-schema@3.24.6(zod@3.25.76):
     dependencies:
       zod: 3.25.76
-    optional: true
 
   zod@3.25.76: {}

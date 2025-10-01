@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import readline from 'node:readline/promises';
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
-import { Agent, Runner, tool, OpenAIProvider, AgentInputItem } from '@openai/agents';
-import { RunConfig, RunState, RunToolApprovalItem } from '@openai/agents-core';
+import { Agent, run, hostedMcpTool, RunToolApprovalItem, Runner, tool, OpenAIProvider, AgentInputItem } from '@openai/agents';
+import { RunConfig, RunState } from '@openai/agents-core';
 import { MultiProvider, MultiProviderMap } from './multi_provider';
 import { OllamaModelProvider } from './ollama_model_provider';
+import { fetchMcpTools } from './mcp_server_proxy';
 
 
 // Prompt user for yes/no confirmation
@@ -61,31 +62,45 @@ async function runTestClient(
   approvalOptions: { alwaysApprove?: boolean; alwaysReject?: boolean } = {}
 ) {
   const { alwaysApprove = false, alwaysReject = false } = approvalOptions;
-  const getWeatherTool = tool({
-    name: 'get_weather',
-    description: 'Get the weather for a given city',
-    parameters: z.object({ city: z.string() }),
-    needsApproval: true,
-    async execute({ city }) {
-      return `The weather in ${city} is sunny.`;
-    },
-  });
 
+  // Fetch built-in tools for weather agent (only log on first run)
+  const isFirstRun = userInput !== "approve" && userInput !== "reject";
+  if (isFirstRun) {
+    console.log('[MCP] Loading tools...');
+  }
+
+  // Configure approval policies
+  const requireApproval = {
+    never: { toolNames: ['search_codex_code', 'fetch_codex_documentation'] },
+    always: { toolNames: ['get_weather', 'fetch_generic_url_content'] },
+  };
+
+  const weatherTools = await fetchMcpTools(null, true, requireApproval);
+
+  // Create weather agent with built-in tools
   const weatherAgent = new Agent({
     model: modelId,
     name: 'Weather agent',
     instructions: 'You provide weather information.',
     handoffDescription: 'Handles weather-related queries',
-    tools: [getWeatherTool],
+    tools: weatherTools,
   });
 
+  // Fetch remote MCP tools from the codex server
+  const mcpTools = await fetchMcpTools('https://gitmcp.io/timestep-ai/timestep', false, requireApproval);
+
+  if (isFirstRun) {
+    console.log(`[MCP] Loaded ${weatherTools.length + mcpTools.length} tools\n`);
+  }
+
+  // Create main agent with remote MCP tools and weather handoff
   const agent = new Agent({
     model: modelId,
-    name: 'Main agent',
+    name: 'Main Assistant',
     instructions:
-      'You are a general assistant. For weather questions, call the weather agent tool with a short input string and then answer.',
+      'You are a helpful assistant. For questions about the openai/codex repository, use the MCP tools. For weather questions, hand off to the weather agent.',
+    tools: mcpTools,
     handoffs: [weatherAgent],
-    tools: [],
   });
 
   let agentInput: AgentInput = userInput;
@@ -93,7 +108,6 @@ async function runTestClient(
 
   if (userInput === "approve" || userInput === "reject") {
     const isApproving = userInput === "approve";
-    console.log(`[${userInput}] Loading saved state...`);
     const modelNameForFile = modelId.replace(':', '_').replace('/', '_');
     const stateFilename = `data/${modelNameForFile}.state.json`;
     const raw = readFileSync(stateFilename, 'utf8');
@@ -102,7 +116,6 @@ async function runTestClient(
       agent,
       JSON.stringify(savedState),
     );
-    console.log(`[${userInput}] Loaded state from file.`);
 
     // Find the tool approval item from generated items
     const approvalItem = runState._generatedItems
@@ -110,14 +123,12 @@ async function runTestClient(
       .pop() as RunToolApprovalItem | undefined;
 
     if (!approvalItem) {
-      throw new Error(`[${userInput}] No tool approval item found in state.`);
+      throw new Error(`No tool approval item found in state.`);
     }
 
     if (isApproving) {
-      console.log('[approve] Approving tool call...');
       runState.approve(approvalItem, { alwaysApprove });
     } else {
-      console.log('[reject] Rejecting tool call...');
       runState.reject(approvalItem, { alwaysReject });
     }
 
@@ -220,6 +231,25 @@ async function runTestClient(
           }
           break;
 
+        case 'message_output_created':
+          const messageItem = (chunk as any).item;
+          if (messageItem?.rawItem?.content) {
+            const content = messageItem.rawItem.content;
+            // Handle array of content blocks
+            if (Array.isArray(content)) {
+              for (const part of content) {
+                if ((part.type === 'text' || part.type === 'output_text') && part.text) {
+                  process.stdout.write(part.text);
+                }
+              }
+            }
+            // Handle string content
+            else if (typeof content === 'string') {
+              process.stdout.write(content);
+            }
+          }
+          break;
+
         default:
           break;
       }
@@ -231,11 +261,10 @@ async function runTestClient(
       try {
         const savedState = JSON.parse(JSON.stringify(state));
         writeFileSync(stateFilename, JSON.stringify(savedState, null, 2));
-        console.log(`📝 Saved stream state to ${stateFilename}`);
+        // State saved silently
       } catch (err) {
         console.error('Failed to serialize stream state:', err);
       }
-      console.log('⏸️ Exiting run after saving approval state. Re-run with approval to continue.');
       break;
     }
   }
@@ -243,16 +272,19 @@ async function runTestClient(
   // Close the file stream when done
   fileStream.end();
 
-  await stream.completed;
+  // Only wait for stream completion if we didn't exit early for approval
+  if (!shouldExitAfterSave) {
+    await stream.completed;
 
-  // If we completed without needing to exit for approval, delete any existing state file
-  const stateFilename = `data/${modelNameForFile}.state.json`;
-  if (!shouldExitAfterSave && existsSync(stateFilename)) {
-    unlinkSync(stateFilename);
-    console.log(`🗑️  Deleted state file ${stateFilename} (run completed successfully)`);
+    // Add newline after response
+    console.log();
+
+    // If we completed without needing to exit for approval, delete any existing state file
+    const stateFilename = `data/${modelNameForFile}.state.json`;
+    if (existsSync(stateFilename)) {
+      unlinkSync(stateFilename);
+    }
   }
-
-  console.log('\n\nDone');
 }
 
 
@@ -266,8 +298,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
-  let userInput = "What's the weather in Oakland and San Francisco?";
-
   const modelName = modelId.replace(':', '_').replace('/', '_');
   const stateFilename = `data/${modelName}.state.json`;
 
@@ -277,7 +307,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       output: process.stdout,
     });
 
-    let currentInput = userInput;
+    let currentInput: string | null = null;
     let justHandledApproval = false;
 
     // Main loop for handling chat and tool approvals
@@ -337,25 +367,38 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           break;
         }
         continue; // Start next iteration with new input
-      }
-
-      // No pending approvals, run with user input
-      await runTestClient(currentInput, modelId, openaiUseResponses);
-
-      // Check if there's a saved state after the run
-      if (!existsSync(stateFilename)) {
-        // No saved state means the run completed without needing approval
-        const continueChat = await confirm(rl, 'Do you want to continue the conversation?');
-        if (!continueChat) {
-          break;
-        }
+      } else if (!currentInput) {
+        // First time or no input yet, prompt for input
         currentInput = await rl.question('You: ');
         if (!currentInput.trim()) {
           break;
         }
-        continue; // Start next iteration with new input
       }
-      // If there is a saved state after the run, loop will continue to check for approvals
+
+      // No pending approvals, run with user input
+      try {
+        await runTestClient(currentInput, modelId, openaiUseResponses);
+      } catch (error) {
+        console.error('\n❌ Error during run:', error.message);
+      }
+
+      // Check if there's a saved state after the run
+      if (existsSync(stateFilename)) {
+        // A saved state was created, which means approval is needed
+        // Loop will continue to the top to handle the approval
+        continue;
+      }
+
+      // No saved state means the run completed without needing approval
+      const continueChat = await confirm(rl, 'Do you want to continue the conversation?');
+      if (!continueChat) {
+        break;
+      }
+      currentInput = await rl.question('You: ');
+      if (!currentInput.trim()) {
+        break;
+      }
+      // Loop will continue with new input
     }
 
     rl.close();

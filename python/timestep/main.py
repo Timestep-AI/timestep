@@ -1,37 +1,66 @@
-import json
+"""Main interactive client matching TypeScript version."""
+
 import asyncio
-import aiofiles
-import time
 import os
-from typing import Dict, Any, List
-from agents import Agent, Runner, function_tool, ModelProvider, RunConfig, ItemHelpers
-from agents import OpenAIResponsesModel
+import sys
+from agents import Agent, Runner, RunConfig
+from agents import OpenAIProvider
 from multi_provider import MultiProvider, MultiProviderMap
 from ollama_model_provider import OllamaModelProvider
+from mcp_server_proxy import fetch_mcp_tools
 
-async def main(model_id: str, openai_use_responses: bool = False):
-    """Create and return the stream without consuming it."""
 
-    # Define a tool that requires approval for certain inputs
-    @function_tool
-    def get_weather(city: str) -> str:
-        """Get the weather for a given city"""
-        return f"The weather in {city} is sunny."
+async def confirm(question: str) -> bool:
+    """Prompt user for yes/no confirmation."""
+    while True:
+        answer = input(f"{question} (y/n): ").strip().lower()
+        if answer in ['y', 'yes']:
+            return True
+        elif answer in ['n', 'no']:
+            return False
 
+
+async def run_test_client(
+    user_input: str,
+    model_id: str,
+    openai_use_responses: bool = False
+):
+    """Run the test client with user input."""
+    is_first_run = True
+    if is_first_run:
+        print('[MCP] Loading tools...')
+
+    # Configure approval policies
+    require_approval = {
+        "never": {"toolNames": ["search_codex_code", "fetch_codex_documentation"]},
+        "always": {"toolNames": ["get_weather", "fetch_generic_url_content"]},
+    }
+
+    # Fetch built-in tools for weather agent
+    weather_tools = await fetch_mcp_tools(None, True, require_approval)
+
+    # Create weather agent with built-in tools
     weather_agent = Agent(
+        model=model_id,
         name='Weather agent',
         instructions='You provide weather information.',
         handoff_description='Handles weather-related queries',
-        model=model_id,
-        tools=[get_weather]
+        tools=weather_tools,
     )
 
-    main_agent = Agent(
-        name='Main agent',
-        instructions='You are a general assistant. For weather questions, call the weather agent tool with a short input string and then answer.',
+    # Fetch remote MCP tools from the codex server
+    mcp_tools = await fetch_mcp_tools('https://gitmcp.io/timestep-ai/timestep', False, require_approval)
+
+    if is_first_run:
+        print(f'[MCP] Loaded {len(weather_tools) + len(mcp_tools)} tools\n')
+
+    # Create main agent with remote MCP tools and weather handoff
+    agent = Agent(
         model=model_id,
+        name='Main Assistant',
+        instructions='You are a helpful assistant. For questions about the openai/codex repository, use the MCP tools. For weather questions, hand off to the weather agent.',
+        tools=mcp_tools,
         handoffs=[weather_agent],
-        tools=[]
     )
 
     # Create model provider map
@@ -42,7 +71,6 @@ async def main(model_id: str, openai_use_responses: bool = False):
     ))
 
     # Add Anthropic provider using OpenAI interface
-    from agents import OpenAIProvider
     model_provider_map.add_provider("anthropic", OpenAIProvider(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
         base_url="https://api.anthropic.com/v1/",
@@ -63,104 +91,82 @@ async def main(model_id: str, openai_use_responses: bool = False):
 
     runner = Runner()
 
+    # Run the agent
     result = Runner.run_streamed(
-        main_agent,
-        'What is the weather and temperature in San Francisco and Oakland? Use available tools as needed.',
+        agent,
+        user_input,
         run_config=run_config
     )
 
-    return result
+    # Process the stream
+    async for event in result.stream_events():
+        # Handle different types of stream events
+        if event.type == "agent_updated_stream_event":
+            print(f"\n🔄 Handoff requested")
+            print(f"   From: {event.data.get('from_agent', 'Unknown')}")
+            print(f"✅ Handoff completed: Main Assistant → {event.new_agent.name}")
+        elif event.type == "run_item_stream_event":
+            if event.item.type == "tool_call_item":
+                tool_name = event.item.name if hasattr(event.item, 'name') else 'Unknown'
+                print(f"🔧 Tool called: {tool_name}")
+                if hasattr(event.item, 'arguments'):
+                    print(f"   Agent: {agent.name}")
+                    print(f"   Arguments: {event.item.arguments}")
+            elif event.item.type == "tool_call_output_item":
+                tool_name = event.item.name if hasattr(event.item, 'name') else 'Unknown'
+                print(f"✅ Tool output from {tool_name}:")
+                print(f"   Result: {event.item.output}")
+            elif event.item.type == "message_output_item":
+                # Extract text from message output
+                if hasattr(event.item, 'content') and isinstance(event.item.content, list):
+                    for content_block in event.item.content:
+                        if hasattr(content_block, 'text'):
+                            print(content_block.text, end='')
+                        elif hasattr(content_block, 'output_text'):
+                            print(content_block.output_text, end='')
 
-if __name__ == "__main__":
-    async def run_test_client(model_id: str, openai_use_responses: bool = False):
-        # Get the stream
-        result = await main(model_id, openai_use_responses)
+    print('\n')
 
-        # Create filename in data folder (without timestamp)
-        model_name = model_id.replace(':', '_')  # Replace colon with underscore for filename
-        model_name_for_file = model_name.replace('/', '_')
 
-        # Only include openai_use_responses flag for OpenAI models (no slash in model name)
-        is_openai_model = '/' not in model_id
-        filename = f"data/{model_name_for_file}.{openai_use_responses}.jsonl" if is_openai_model else f"data/{model_name_for_file}.jsonl"
+async def main():
+    """Main entry point."""
+    model_id = os.getenv("MODEL_ID")
+    openai_use_responses = (os.getenv("OPENAI_USE_RESPONSES") or "false").lower() == "true"
 
-        # Ensure data directory exists
-        os.makedirs('data', exist_ok=True)
-
-        # Demonstrate usage by consuming the stream
-        async with aiofiles.open(filename, 'w') as file_stream:
-            print("=== Run starting ===")
-            event_count = 0
-            async for event in result.stream_events():
-                # Deep-serialize events to JSON-compatible structures
-                def deep_serialize(obj):
-                    # primitives
-                    if obj is None or isinstance(obj, (bool, int, float, str)):
-                        return obj
-                    # lists/tuples
-                    if isinstance(obj, (list, tuple)):
-                        return [deep_serialize(x) for x in obj]
-                    # dicts
-                    if isinstance(obj, dict):
-                        return {k: deep_serialize(v) for k, v in obj.items()}
-                    # pydantic model-like (openai types expose model_dump)
-                    model_dump = getattr(obj, 'model_dump', None)
-                    if callable(model_dump):
-                        try:
-                            return deep_serialize(model_dump())
-                        except Exception:
-                            pass
-                    # generic objects with __dict__
-                    if hasattr(obj, '__dict__'):
-                        try:
-                            return {k: deep_serialize(v) for k, v in obj.__dict__.items() if not k.startswith('_')}
-                        except Exception:
-                            return str(obj)
-                    # fallback
-                    return str(obj)
-
-                event_dict = {
-                    'type': getattr(event, 'type', None),
-                    'timestamp': getattr(event, 'timestamp', None),
-                }
-                if hasattr(event, 'data'):
-                    event_dict['data'] = deep_serialize(getattr(event, 'data'))
-                # Optional standard fields occasionally present on events
-                if hasattr(event, 'new_agent'):
-                    event_dict['new_agent'] = deep_serialize(getattr(event, 'new_agent'))
-                if hasattr(event, 'item'):
-                    event_dict['item'] = deep_serialize(getattr(event, 'item'))
-                if hasattr(event, 'response'):
-                    event_dict['response'] = deep_serialize(getattr(event, 'response'))
-                await file_stream.write(json.dumps(event_dict) + '\n')
-
-                # Handle different types of stream events with improved formatting
-                if event.type == "raw_response_event":
-                    continue  # Ignore raw response events
-                elif event.type == "agent_updated_stream_event":
-                    print(f"🔄 Agent updated: {event.new_agent.name}")
-                elif event.type == "run_item_stream_event":
-                    if event.item.type == "tool_call_item":
-                        print("🔧 Tool was called")
-                    elif event.item.type == "tool_call_output_item":
-                        print(f"✅ Tool output: {event.item.output}")
-                    elif event.item.type == "message_output_item":
-                        print(f"💬 Message output:\n{ItemHelpers.text_message_output(event.item)}")
-                    else:
-                        pass  # Ignore other event types
-                else:
-                    # Uncomment the line below to see all events
-                    # print(f"📝 Event: {event.type}")
-                    pass
-
-        print('\n\nDone')
-
-    model_id_env = os.getenv("MODEL_ID")
-    openai_use_responses_env = (os.getenv("OPENAI_USE_RESPONSES") or "false").lower() == "true"
-
-    if not model_id_env:
+    if not model_id:
         print("Missing required env var MODEL_ID")
         print("Usage: MODEL_ID=\"gpt-5|anthropic/claude-sonnet-4-5|ollama/smollm2:1.7b|ollama/gpt-oss:120b-cloud\" uv run main.py")
-        raise SystemExit(1)
+        sys.exit(1)
 
-    asyncio.run(run_test_client(model_id_env, openai_use_responses=openai_use_responses_env))
+    # Main loop for handling chat
+    while True:
+        # Prompt for user input
+        try:
+            current_input = input("You: ").strip()
+            if not current_input:
+                break
+        except (EOFError, KeyboardInterrupt):
+            print("\n\nConversation completed.")
+            break
+
+        print()
+
+        try:
+            await run_test_client(current_input, model_id, openai_use_responses)
+        except Exception as error:
+            print(f"\n❌ Error during run: {error}")
+
+        # Ask if user wants to continue
+        try:
+            continue_chat = await confirm('Do you want to continue the conversation?')
+            if not continue_chat:
+                break
+        except (EOFError, KeyboardInterrupt):
+            print("\n\nConversation completed.")
+            break
+
+    print("\n\nConversation completed.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

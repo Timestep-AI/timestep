@@ -683,6 +683,8 @@ source = { virtual = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "aiofiles" },
+    { name = "httpx" },
+    { name = "mcp" },
     { name = "ollama" },
     { name = "openai-agents" },
     { name = "pydantic" },
@@ -693,6 +695,8 @@ dependencies = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.0" },
     { name = "aiofiles", specifier = ">=23.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "mcp", specifier = ">=1.0.0" },
     { name = "ollama", specifier = ">=0.2.0" },
     { name = "openai-agents", specifier = ">=0.3.2" },
     { name = "pydantic", specifier = ">=2.0.0" },

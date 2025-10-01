@@ -24,9 +24,7 @@ async def chat_loop():
     while True:
         try:
             # Get user input
-            user_input = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: input("> ")
-            )
+            user_input = input("> ")
 
             if not user_input.strip():
                 continue

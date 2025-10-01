@@ -10,6 +10,7 @@ import { Agent, Runner, tool, OpenAIProvider } from '@openai/agents'
 import { RunConfig } from '@openai/agents-core'
 import { MultiProvider, MultiProviderMap } from './multi_provider'
 import { OllamaModelProvider } from './ollama_model_provider'
+import { fetchMcpTools } from './mcp_server_proxy'
 
 export class TimestepAgent extends AbstractAgent {
   private modelId: string
@@ -73,31 +74,39 @@ export class TimestepAgent extends AbstractAgent {
       tracingDisabled: false,
     }
 
-    // Create a simple tool for demonstration (no approval for AG-UI integration)
-    const getWeatherTool = tool({
-      name: 'get_weather',
-      description: 'Get the weather for a given city',
-      parameters: z.object({ city: z.string() }),
-      needsApproval: false,  // Don't require approval in AG-UI integration
-      async execute({ city }) {
-        return `The weather in ${city} is sunny.`
-      },
-    })
+    // Configure approval policies (get_weather doesn't require approval for AG-UI)
+    const requireApproval = {
+      never: { toolNames: ['search_codex_code', 'fetch_codex_documentation', 'get_weather'] },
+      always: { toolNames: ['fetch_generic_url_content'] },
+    }
 
+    // Fetch built-in tools for weather agent
+    console.log('[MCP] Loading built-in tools...')
+    const weatherTools = await fetchMcpTools(null, true, requireApproval)
+    console.log(`[MCP] Loaded ${weatherTools.length} built-in tools`)
+
+    // Create weather agent with built-in tools
     const weatherAgent = new Agent({
       model: this.modelId,
       name: 'Weather agent',
       instructions: 'You provide weather information.',
       handoffDescription: 'Handles weather-related queries',
-      tools: [getWeatherTool],
+      tools: weatherTools,
     })
 
+    // Fetch remote MCP tools from the codex server
+    console.log('[MCP] Fetching tools from https://gitmcp.io/timestep-ai/timestep...')
+    const mcpTools = await fetchMcpTools('https://gitmcp.io/timestep-ai/timestep', false, requireApproval)
+    console.log(`[MCP] Loaded ${mcpTools.length} remote tools`)
+
+    // Create main agent with remote MCP tools and weather handoff
     const agent = new Agent({
       model: this.modelId,
-      name: 'Main agent',
-      instructions: 'You are a general assistant. For weather questions, call the weather agent tool with a short input string and then answer.',
+      name: 'Main Assistant',
+      instructions:
+        'You are a helpful assistant. For questions about the openai/codex repository, use the MCP tools. For weather questions, hand off to the weather agent.',
+      tools: mcpTools,
       handoffs: [weatherAgent],
-      tools: [],
     })
 
     const runner = new Runner(runConfig)
