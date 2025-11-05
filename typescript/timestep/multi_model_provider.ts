@@ -1,8 +1,7 @@
 import { Model, ModelProvider } from '@openai/agents-core';
-import { OpenAIProvider } from '@openai/agents';
+import { OpenAIProvider } from '@openai/agents-openai';
 
-
-export class MultiProviderMap {
+export class MultiModelProviderMap {
   /** A map of model name prefixes to ModelProviders. */
   private _mapping: Map<string, ModelProvider> = new Map();
 
@@ -50,8 +49,7 @@ export class MultiProviderMap {
   }
 }
 
-
-export class MultiProvider implements ModelProvider {
+export class MultiModelProvider implements ModelProvider {
   /** This ModelProvider maps to a Model based on the prefix of the model name. By default, the
     mapping is:
     - "openai/" prefix or no prefix -> OpenAIProvider. e.g. "openai/gpt-4.1", "gpt-4.1"
@@ -60,23 +58,25 @@ export class MultiProvider implements ModelProvider {
     You can override or customize this mapping.
     */
 
-  private provider_map: MultiProviderMap | undefined;
+  private provider_map: MultiModelProviderMap | undefined;
   private openai_provider: OpenAIProvider;
   private _fallback_providers: Map<string, ModelProvider> = new Map();
 
-  constructor(options: {
-    provider_map?: MultiProviderMap;
-    openai_api_key?: string;
-    openai_base_url?: string;
-    openai_client?: any; // AsyncOpenAI type
-    openai_organization?: string;
-    openai_project?: string;
-    openai_use_responses?: boolean;
-  } = {}) {
+  constructor(
+    options: {
+      provider_map?: MultiModelProviderMap;
+      openai_api_key?: string;
+      openai_base_url?: string;
+      openai_client?: any; // AsyncOpenAI type
+      openai_organization?: string;
+      openai_project?: string;
+      openai_use_responses?: boolean;
+    } = {}
+  ) {
     /** Create a new OpenAI provider.
 
         Args:
-            provider_map: A MultiProviderMap that maps prefixes to ModelProviders. If not provided,
+            provider_map: A MultiModelProviderMap that maps prefixes to ModelProviders. If not provided,
                 we will use a default mapping. See the documentation for this class to see the
                 default mapping.
             openai_api_key: The API key to use for the OpenAI provider. If not provided, we will use
@@ -100,21 +100,23 @@ export class MultiProvider implements ModelProvider {
     });
   }
 
-  private _getPrefixAndModelName(model_name: string | undefined): [string | undefined, string | undefined] {
+  private _getPrefixAndModelName(
+    model_name: string | undefined
+  ): [string | undefined, string | undefined] {
     if (model_name === undefined) {
       return [undefined, undefined];
-    } else if (model_name.includes("/")) {
-      const [prefix, ...rest] = model_name.split("/");
-      return [prefix, rest.join("/")];
+    } else if (model_name.includes('/')) {
+      const [prefix, ...rest] = model_name.split('/');
+      return [prefix, rest.join('/')];
     } else {
       return [undefined, model_name];
     }
   }
 
   private async _createFallbackProvider(prefix: string): Promise<ModelProvider> {
-    if (prefix === "ollama") {
+    if (prefix === 'ollama') {
       // Import OllamaModelProvider only when needed
-      const { OllamaModelProvider } = await import('./ollama_model_provider.js');
+      const { OllamaModelProvider } = await import('./ollama_model_provider.ts');
       return new OllamaModelProvider();
     } else {
       throw new Error(`Unknown prefix: ${prefix}`);
@@ -122,7 +124,7 @@ export class MultiProvider implements ModelProvider {
   }
 
   private async _getFallbackProvider(prefix: string | undefined): Promise<ModelProvider> {
-    if (prefix === undefined || prefix === "openai") {
+    if (prefix === undefined || prefix === 'openai') {
       return this.openai_provider;
     } else if (this._fallback_providers.has(prefix)) {
       return this._fallback_providers.get(prefix)!;
@@ -152,8 +154,9 @@ export class MultiProvider implements ModelProvider {
         return provider.getModel(actualModelName);
       }
     }
-    
+
     const fallbackProvider = await this._getFallbackProvider(prefix);
     return fallbackProvider.getModel(actualModelName);
   }
 }
+

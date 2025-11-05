@@ -1,57 +1,80 @@
-from __future__ import annotations
+from typing import Optional, Any
+from agents import Model, ModelProvider
+from .ollama_model import OllamaModel
 
-from typing import Optional
-from agents import ModelProvider
-from ollama_model import OllamaModel
-from ollama import AsyncClient
 
 class OllamaModelProvider(ModelProvider):
+    """The provider of Ollama's models"""
+
     def __init__(
         self,
-        *,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        ollama_client: AsyncClient | None = None,
-    ) -> None:
-        """Create a new Ollama provider.
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        ollama_client: Optional[Any] = None,  # Will be dynamically imported
+    ):
+        # Match TypeScript: constructor accepts options dict directly
+        options = type('Options', (), {
+            'api_key': api_key,
+            'base_url': base_url,
+            'ollama_client': ollama_client,
+        })()
 
-        Args:
-            api_key: The API key to use for the Ollama client. If not provided, we will use the
-                default API key.
-            base_url: The base URL to use for the Ollama client. If not provided, we will use the
-                default base URL.
-            ollama_client: An optional Ollama client to use. If not provided, we will create a new
-                Ollama client using the api_key and base_url.
-        """
-        if ollama_client is not None:
-            assert api_key is None and base_url is None, (
-                "Don't provide api_key or base_url if you provide ollama_client"
-            )
-            self._client: AsyncClient | None = ollama_client
+        if options.ollama_client:
+            if options.api_key:
+                raise ValueError("Cannot provide both apiKey and ollamaClient")
+            if options.base_url:
+                raise ValueError("Cannot provide both baseURL and ollamaClient")
+            self._client = options.ollama_client
         else:
             self._client = None
-            self._stored_api_key = api_key
-            self._stored_base_url = base_url
 
-    # We lazy load the client in case you never actually use OllamaModelProvider(). Otherwise
-    # AsyncClient() raises an error if you don't have an API key set.
-    def _get_client(self) -> AsyncClient:
+        self._options = options
+        self._current_model_name: Optional[str] = None
+
+    def _get_client(self) -> Any:
+        """Lazy loads the Ollama client to not throw an error if you don't have an API key set but
+        never actually use the client.
+        
+        Note: This is synchronous because Python ModelProvider.get_model must be synchronous.
+        """
         if self._client is None:
+            # Dynamically import Ollama AsyncClient only when needed
+            # We use AsyncClient because we call chat() with await
+            try:
+                from ollama import AsyncClient
+            except ImportError:
+                raise ImportError(
+                    "ollama package is required. Install it with: pip install ollama"
+                )
+
             # Use Ollama Cloud URL if model name ends with "-cloud", otherwise use localhost
-            default_host = "https://ollama.com" if hasattr(self, '_current_model_name') and self._current_model_name.endswith('-cloud') else "http://localhost:11434"
+            default_host = (
+                "https://ollama.com"
+                if self._current_model_name and self._current_model_name.endswith("-cloud")
+                else "http://localhost:11434"
+            )
+
+            host = self._options.base_url or default_host
             
-            config = {
-                'host': self._stored_base_url or default_host
-            }
-            
-            if self._stored_api_key:
-                config['headers'] = {'Authorization': f'Bearer {self._stored_api_key}'}
-            
-            self._client = AsyncClient(**config)
+            # Python ollama.AsyncClient takes host as first positional argument
+            # and headers can be passed via kwargs to httpx
+            client_kwargs: dict[str, Any] = {}
+            if self._options.api_key:
+                client_kwargs["headers"] = {
+                    "Authorization": f"Bearer {self._options.api_key}",
+                }
+
+            self._client = AsyncClient(host=host, **client_kwargs)
+
         return self._client
 
     def get_model(self, model_name: str) -> Model:
+        """Get a model instance for the given model name.
+        
+        Note: This must be synchronous to match Python ModelProvider interface.
+        """
         # Store the model name to determine the default host
         self._current_model_name = model_name
         client = self._get_client()
-        return OllamaModel(model=model_name, ollama_client=client)
+        return OllamaModel(model_name, client)
+

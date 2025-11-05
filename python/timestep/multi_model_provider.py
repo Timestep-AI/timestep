@@ -1,29 +1,26 @@
-from __future__ import annotations
-
-from openai import AsyncOpenAI
-
-from agents import Model, ModelProvider, OpenAIProvider, UserError
+from typing import Optional, Dict, Any
+from agents import Model, ModelProvider, OpenAIProvider
 
 
-class MultiProviderMap:
+class MultiModelProviderMap:
     """A map of model name prefixes to ModelProviders."""
 
     def __init__(self):
-        self._mapping: dict[str, ModelProvider] = {}
+        self._mapping: Dict[str, ModelProvider] = {}
 
     def has_prefix(self, prefix: str) -> bool:
         """Returns True if the given prefix is in the mapping."""
         return prefix in self._mapping
 
-    def get_mapping(self) -> dict[str, ModelProvider]:
+    def get_mapping(self) -> Dict[str, ModelProvider]:
         """Returns a copy of the current prefix -> ModelProvider mapping."""
-        return self._mapping.copy()
+        return dict(self._mapping)
 
-    def set_mapping(self, mapping: dict[str, ModelProvider]):
+    def set_mapping(self, mapping: Dict[str, ModelProvider]) -> None:
         """Overwrites the current mapping with a new one."""
-        self._mapping = mapping
+        self._mapping = dict(mapping)
 
-    def get_provider(self, prefix: str) -> ModelProvider | None:
+    def get_provider(self, prefix: str) -> Optional[ModelProvider]:
         """Returns the ModelProvider for the given prefix.
 
         Args:
@@ -31,7 +28,7 @@ class MultiProviderMap:
         """
         return self._mapping.get(prefix)
 
-    def add_provider(self, prefix: str, provider: ModelProvider):
+    def add_provider(self, prefix: str, provider: ModelProvider) -> None:
         """Adds a new prefix -> ModelProvider mapping.
 
         Args:
@@ -40,16 +37,17 @@ class MultiProviderMap:
         """
         self._mapping[prefix] = provider
 
-    def remove_provider(self, prefix: str):
+    def remove_provider(self, prefix: str) -> None:
         """Removes the mapping for the given prefix.
 
         Args:
             prefix: The prefix of the model name e.g. "openai" or "my_prefix".
         """
-        del self._mapping[prefix]
+        if prefix in self._mapping:
+            del self._mapping[prefix]
 
 
-class MultiProvider(ModelProvider):
+class MultiModelProvider(ModelProvider):
     """This ModelProvider maps to a Model based on the prefix of the model name. By default, the
     mapping is:
     - "openai/" prefix or no prefix -> OpenAIProvider. e.g. "openai/gpt-4.1", "gpt-4.1"
@@ -60,19 +58,18 @@ class MultiProvider(ModelProvider):
 
     def __init__(
         self,
-        *,
-        provider_map: MultiProviderMap | None = None,
-        openai_api_key: str | None = None,
-        openai_base_url: str | None = None,
-        openai_client: AsyncOpenAI | None = None,
-        openai_organization: str | None = None,
-        openai_project: str | None = None,
-        openai_use_responses: bool | None = None,
-    ) -> None:
-        """Create a new OpenAI provider.
+        provider_map: Optional[MultiModelProviderMap] = None,
+        openai_api_key: Optional[str] = None,
+        openai_base_url: Optional[str] = None,
+        openai_client: Optional[Any] = None,  # AsyncOpenAI type
+        openai_organization: Optional[str] = None,
+        openai_project: Optional[str] = None,
+        openai_use_responses: Optional[bool] = None,
+    ):
+        """Create a new MultiModelProvider.
 
         Args:
-            provider_map: A MultiProviderMap that maps prefixes to ModelProviders. If not provided,
+            provider_map: A MultiModelProviderMap that maps prefixes to ModelProviders. If not provided,
                 we will use a default mapping. See the documentation for this class to see the
                 default mapping.
             openai_api_key: The API key to use for the OpenAI provider. If not provided, we will use
@@ -86,6 +83,24 @@ class MultiProvider(ModelProvider):
             openai_use_responses: Whether to use the OpenAI responses API.
         """
         self.provider_map = provider_map
+        self._fallback_providers: Dict[str, ModelProvider] = {}
+
+        # Create OpenAIProvider
+        provider_kwargs = {}
+        # if openai_api_key:
+        #     provider_kwargs['api_key'] = openai_api_key
+        # if openai_base_url:
+        #     provider_kwargs['base_url'] = openai_base_url
+        # if openai_client:
+        #     provider_kwargs['client'] = openai_client
+        # if openai_organization:
+        #     provider_kwargs['organization'] = openai_organization
+        # if openai_project:
+        #     provider_kwargs['project'] = openai_project
+        # if openai_use_responses is not None:
+        #     provider_kwargs['use_responses'] = openai_use_responses
+
+        # self.openai_provider = OpenAIProvider(**provider_kwargs)
         self.openai_provider = OpenAIProvider(
             api_key=openai_api_key,
             base_url=openai_base_url,
@@ -95,35 +110,39 @@ class MultiProvider(ModelProvider):
             use_responses=openai_use_responses,
         )
 
-        self._fallback_providers: dict[str, ModelProvider] = {}
-
-    def _get_prefix_and_model_name(self, model_name: str | None) -> tuple[str | None, str | None]:
+    def _get_prefix_and_model_name(
+        self, model_name: Optional[str]
+    ) -> tuple[Optional[str], Optional[str]]:
         if model_name is None:
             return None, None
         elif "/" in model_name:
-            prefix, model_name = model_name.split("/", 1)
-            return prefix, model_name
+            parts = model_name.split("/", 1)
+            return parts[0], parts[1]
         else:
             return None, model_name
 
     def _create_fallback_provider(self, prefix: str) -> ModelProvider:
         if prefix == "ollama":
             # Import OllamaModelProvider only when needed
-            from ollama_model_provider import OllamaModelProvider
+            from .ollama_model_provider import OllamaModelProvider
+
             return OllamaModelProvider()
         else:
-            raise UserError(f"Unknown prefix: {prefix}")
+            raise ValueError(f"Unknown prefix: {prefix}")
 
-    def _get_fallback_provider(self, prefix: str | None) -> ModelProvider:
+    def _get_fallback_provider(
+        self, prefix: Optional[str]
+    ) -> ModelProvider:
         if prefix is None or prefix == "openai":
             return self.openai_provider
         elif prefix in self._fallback_providers:
             return self._fallback_providers[prefix]
         else:
-            self._fallback_providers[prefix] = self._create_fallback_provider(prefix)
-            return self._fallback_providers[prefix]
+            provider = self._create_fallback_provider(prefix)
+            self._fallback_providers[prefix] = provider
+            return provider
 
-    def get_model(self, model_name: str | None) -> Model:
+    def get_model(self, model_name: Optional[str]) -> Model:
         """Returns a Model based on the model name. The model name can have a prefix, ending with
         a "/", which will be used to look up the ModelProvider. If there is no prefix, we will use
         the OpenAI provider.
@@ -134,9 +153,13 @@ class MultiProvider(ModelProvider):
         Returns:
             A Model.
         """
-        prefix, model_name = self._get_prefix_and_model_name(model_name)
+        prefix, actual_model_name = self._get_prefix_and_model_name(model_name)
 
-        if prefix and self.provider_map and (provider := self.provider_map.get_provider(prefix)):
-            return provider.get_model(model_name)
-        else:
-            return self._get_fallback_provider(prefix).get_model(model_name)
+        if prefix and self.provider_map:
+            provider = self.provider_map.get_provider(prefix)
+            if provider:
+                return provider.get_model(actual_model_name)
+
+        fallback_provider = self._get_fallback_provider(prefix)
+        return fallback_provider.get_model(actual_model_name)
+
