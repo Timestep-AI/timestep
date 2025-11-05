@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "timestep"
-version = "2026.0.0"
+version = "2026.0.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
