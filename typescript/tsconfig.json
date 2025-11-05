@@ -17,7 +17,7 @@
     "noEmit": true
   },
   "include": [
-    "*.ts"
+    "timestep/*.ts"
   ],
   "exclude": [
     "node_modules",

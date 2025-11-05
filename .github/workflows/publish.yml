@@ -29,20 +29,20 @@ jobs:
       - name: Read version from pyproject.toml
         id: read_version
         run: |
-          cd python/timestep
+          cd python
           VERSION=$(grep -E '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using version: $VERSION"
       
       - name: Build package
         run: |
-          cd python/timestep
+          cd python
           uv build
       
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: python/timestep/dist/
+          packages-dir: python/dist/
           password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-typescript:
@@ -67,29 +67,29 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
-          cache-dependency-path: 'typescript/timestep/pnpm-lock.yaml'
+          cache-dependency-path: 'typescript/pnpm-lock.yaml'
       
       - name: Read version from package.json
         id: read_version
         run: |
-          cd typescript/timestep
+          cd typescript
           VERSION=$(grep -E '"version"' package.json | sed 's/.*"version": "\(.*\)".*/\1/' | head -1)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using version: $VERSION"
       
       - name: Install dependencies
         run: |
-          cd typescript/timestep
+          cd typescript
           pnpm install --frozen-lockfile
       
       - name: Build package
         run: |
-          cd typescript/timestep
+          cd typescript
           pnpm run build
       
       - name: Publish to npm
         run: |
-          cd typescript/timestep
+          cd typescript
           pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
