@@ -575,7 +575,7 @@ export class OllamaModel implements Model {
                 output: [
                   {
                     id: responseId,
-                    type: 'function_call',
+                    type: 'function_call' as const,
                     arguments: JSON.stringify(tool_call.function.arguments),
                     name: tool_call.function.name,
                     callId: callId,

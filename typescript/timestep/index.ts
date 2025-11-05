@@ -1,4 +1,4 @@
-export { OllamaModel } from './ollama_model.js';
-export { OllamaModelProvider, type OllamaModelProviderOptions } from './ollama_model_provider.js';
-export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provider.js';
+export { OllamaModel } from './ollama_model.ts';
+export { OllamaModelProvider, type OllamaModelProviderOptions } from './ollama_model_provider.ts';
+export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provider.ts';
 
