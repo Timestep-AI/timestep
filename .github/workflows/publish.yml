@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # Required for trusted publishing to PyPI
     
     steps:
       - name: Checkout code
@@ -44,6 +43,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: python/timestep/dist/
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-typescript:
     name: Publish TypeScript Package to npm
