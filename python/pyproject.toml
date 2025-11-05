@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "timestep"
-version = "2026.0.2"
+version = "2026.0.3"
 description = "Multi-model provider implementations for OpenAI Agents, supporting both OpenAI and Ollama models"
 readme = "README.md"
 license = { text = "MIT" }

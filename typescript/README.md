@@ -19,97 +19,84 @@ yarn add @timestep-ai/timestep
 The `MultiModelProvider` automatically routes requests to the appropriate provider based on model name prefixes:
 
 ```typescript
-import { MultiModelProvider } from '@timestep-ai/timestep';
-import { Agent } from '@openai/agents';
+import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
+import { Agent, Runner } from '@openai/agents';
 
-// Create a provider that supports both OpenAI and Ollama
-const provider = new MultiModelProvider({
-  openai_api_key: 'your-openai-key' // Optional, uses default if not provided
+// Create a provider map and add Ollama support
+const modelProviderMap = new MultiModelProviderMap();
+
+if (Deno.env.get('OLLAMA_API_KEY')) {
+  modelProviderMap.addProvider(
+    'ollama',
+    new OllamaModelProvider({
+      apiKey: Deno.env.get('OLLAMA_API_KEY'),
+    })
+  );
+}
+
+// Create MultiModelProvider with OpenAI fallback
+const modelProvider = new MultiModelProvider({
+  provider_map: modelProviderMap,
+  openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
 });
 
-// Create an agent that can use any model
-const agent = new Agent({
-  model: 'gpt-4', // Uses OpenAI
-  provider
-});
+// Create agent with model name
+const agent = new Agent({ model: 'gpt-4' }); // Uses OpenAI by default
+// Or: new Agent({ model: 'ollama/llama3' }) // Uses Ollama
 
-// Or use Ollama models
-const ollamaAgent = new Agent({
-  model: 'ollama/llama3', // Uses Ollama
-  provider
-});
+// Run agent with Runner
+const runner = new Runner({ modelProvider });
+const result = await runner.run(agent, agentInput, { stream: true });
 ```
 
 ### Using OllamaModelProvider Directly
 
 ```typescript
 import { OllamaModelProvider } from '@timestep-ai/timestep';
-import { Agent } from '@openai/agents';
+import { Agent, Runner } from '@openai/agents';
 
 // Create an Ollama provider for local Ollama instance
-const ollamaProvider = new OllamaModelProvider({
-  baseURL: 'http://localhost:11434' // Optional, defaults to localhost
-});
-
-// Create an agent using Ollama
-const agent = new Agent({
-  model: 'llama3',
-  provider: ollamaProvider
-});
+const ollamaProvider = new OllamaModelProvider(); // Defaults to localhost:11434
 
 // For Ollama Cloud, use the API key
 const cloudProvider = new OllamaModelProvider({
   apiKey: 'your-ollama-cloud-key',
-  baseURL: 'https://ollama.com' // Optional, auto-detected for models ending with "-cloud"
 });
 
-// Or provide a custom Ollama client
-import { Ollama } from 'ollama';
-const customClient = new Ollama({ host: 'http://custom-host:11434' });
-const customProvider = new OllamaModelProvider({ ollamaClient: customClient });
-```
-
-### Using OllamaModel Directly
-
-```typescript
-import { OllamaModel } from '@timestep-ai/timestep';
-import { Ollama } from 'ollama';
-import { Agent } from '@openai/agents';
-
-// Create an Ollama client
-const client = new Ollama({ host: 'http://localhost:11434' });
-
-// Create a model instance directly
-const model = new OllamaModel('llama3', client);
-
-// Use with agents
-const agent = new Agent({ model });
+// Create agent and run
+const agent = new Agent({ model: 'llama3' });
+const runner = new Runner({ modelProvider: ollamaProvider });
+const result = await runner.run(agent, agentInput, { stream: true });
 ```
 
 ### Custom Provider Mapping
 
 ```typescript
-import { 
-  MultiModelProvider, 
-  MultiModelProviderMap, 
-  OllamaModelProvider 
-} from '@timestep-ai/timestep';
-import { Agent } from '@openai/agents';
+import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
+import { Agent, Runner } from '@openai/agents';
 
 // Create a custom mapping
-const providerMap = new MultiModelProviderMap();
-providerMap.addProvider('custom', yourCustomProvider);
+const modelProviderMap = new MultiModelProviderMap();
+
+// Add Ollama provider
+if (Deno.env.get('OLLAMA_API_KEY')) {
+  modelProviderMap.addProvider(
+    'ollama',
+    new OllamaModelProvider({
+      apiKey: Deno.env.get('OLLAMA_API_KEY'),
+    })
+  );
+}
 
 // Use the custom mapping
-const provider = new MultiModelProvider({
-  provider_map: providerMap,
-  openai_api_key: 'your-key'
+const modelProvider = new MultiModelProvider({
+  provider_map: modelProviderMap,
+  openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
 });
 
-const agent = new Agent({
-  model: 'custom/my-model',
-  provider
-});
+const agent = new Agent({ model: 'ollama/llama3' });
+const runner = new Runner({ modelProvider });
+const result = await runner.run(agent, agentInput, { stream: true });
 ```
 
 ## Components

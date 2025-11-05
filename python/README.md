@@ -15,93 +15,79 @@ pip install timestep
 The `MultiModelProvider` automatically routes requests to the appropriate provider based on model name prefixes:
 
 ```python
-from timestep import MultiModelProvider
-from agents import Agent
+from timestep import MultiModelProvider, MultiModelProviderMap
+from agents import Agent, Runner, RunConfig
+import os
 
-# Create a provider that supports both OpenAI and Ollama
-provider = MultiModelProvider(
-    openai_api_key="your-openai-key"  # Optional, uses default if not provided
+# Create a provider map and add Ollama support
+model_provider_map = MultiModelProviderMap()
+
+if os.environ.get("OLLAMA_API_KEY"):
+    from timestep import OllamaModelProvider
+    model_provider_map.add_provider(
+        "ollama",
+        OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
+    )
+
+# Create MultiModelProvider with OpenAI fallback
+model_provider = MultiModelProvider(
+    provider_map=model_provider_map,
+    openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
 )
 
-# Create an agent that can use any model
-agent = Agent(
-    model="gpt-4",  # Uses OpenAI
-    provider=provider
-)
+# Create agent with model name
+agent = Agent(model="gpt-4")  # Uses OpenAI by default
+# Or: agent = Agent(model="ollama/llama3")  # Uses Ollama
 
-# Or use Ollama models
-agent = Agent(
-    model="ollama/llama3",  # Uses Ollama
-    provider=provider
-)
+# Run agent with RunConfig
+run_config = RunConfig(model_provider=model_provider)
+result = Runner.run_streamed(agent, agent_input, run_config=run_config)
 ```
 
 ### Using OllamaModelProvider Directly
 
 ```python
 from timestep import OllamaModelProvider
-from agents import Agent
+from agents import Agent, Runner, RunConfig
 
 # Create an Ollama provider for local Ollama instance
-ollama_provider = OllamaModelProvider(
-    base_url="http://localhost:11434"  # Optional, defaults to localhost
-)
-
-# Create an agent using Ollama
-agent = Agent(
-    model="llama3",
-    provider=ollama_provider
-)
+ollama_provider = OllamaModelProvider()  # Defaults to localhost:11434
 
 # For Ollama Cloud, use the API key
-cloud_provider = OllamaModelProvider(
-    api_key="your-ollama-cloud-key",
-    base_url="https://ollama.com"  # Optional, auto-detected for models ending with "-cloud"
-)
+cloud_provider = OllamaModelProvider(api_key="your-ollama-cloud-key")
 
-# Or provide a custom Ollama client
-from ollama import AsyncClient
-custom_client = AsyncClient(host="http://custom-host:11434")
-custom_provider = OllamaModelProvider(ollama_client=custom_client)
-```
-
-### Using OllamaModel Directly
-
-```python
-from timestep import OllamaModel
-from ollama import AsyncClient
-
-# Create an Ollama client
-client = AsyncClient(host="http://localhost:11434")
-
-# Create a model instance directly
-model = OllamaModel(model="llama3", ollama_client=client)
-
-# Use with agents
-from agents import Agent
-agent = Agent(model=model)
+# Create agent and run
+agent = Agent(model="llama3")
+run_config = RunConfig(model_provider=ollama_provider)
+result = Runner.run_streamed(agent, agent_input, run_config=run_config)
 ```
 
 ### Custom Provider Mapping
 
 ```python
 from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-from agents import Agent
+from agents import Agent, Runner, RunConfig
+import os
 
 # Create a custom mapping
-provider_map = MultiModelProviderMap()
-provider_map.add_provider("custom", your_custom_provider)
+model_provider_map = MultiModelProviderMap()
+
+# Add Ollama provider
+if os.environ.get("OLLAMA_API_KEY"):
+    model_provider_map.add_provider(
+        "ollama",
+        OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
+    )
 
 # Use the custom mapping
-provider = MultiModelProvider(
-    provider_map=provider_map,
-    openai_api_key="your-key"
+model_provider = MultiModelProvider(
+    provider_map=model_provider_map,
+    openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
 )
 
-agent = Agent(
-    model="custom/my-model",
-    provider=provider
-)
+agent = Agent(model="ollama/llama3")
+run_config = RunConfig(model_provider=model_provider)
+result = Runner.run_streamed(agent, agent_input, run_config=run_config)
 ```
 
 ## Components

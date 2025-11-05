@@ -18,12 +18,27 @@ pip install timestep
 ```
 
 ```python
-from timestep import MultiModelProvider
-from agents import Agent
+from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
+from agents import Agent, Runner, RunConfig
+import os
 
-provider = MultiModelProvider(openai_api_key="your-key")
-agent = Agent(model="gpt-4", provider=provider)
-# Or use Ollama: Agent(model="ollama/llama3", provider=provider)
+# Setup provider
+model_provider_map = MultiModelProviderMap()
+if os.environ.get("OLLAMA_API_KEY"):
+    model_provider_map.add_provider(
+        "ollama",
+        OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
+    )
+
+model_provider = MultiModelProvider(
+    provider_map=model_provider_map,
+    openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+)
+
+# Create agent and run
+agent = Agent(model="ollama/llama3")
+run_config = RunConfig(model_provider=model_provider)
+result = Runner.run_streamed(agent, agent_input, run_config=run_config)
 ```
 
 ### TypeScript
@@ -35,12 +50,27 @@ pnpm add @timestep-ai/timestep
 ```
 
 ```typescript
-import { MultiModelProvider } from '@timestep-ai/timestep';
-import { Agent } from '@openai/agents';
+import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
+import { Agent, Runner } from '@openai/agents';
 
-const provider = new MultiModelProvider({ openai_api_key: 'your-key' });
-const agent = new Agent({ model: 'gpt-4', provider });
-// Or use Ollama: new Agent({ model: 'ollama/llama3', provider })
+// Setup provider
+const modelProviderMap = new MultiModelProviderMap();
+if (Deno.env.get('OLLAMA_API_KEY')) {
+  modelProviderMap.addProvider(
+    'ollama',
+    new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+  );
+}
+
+const modelProvider = new MultiModelProvider({
+  provider_map: modelProviderMap,
+  openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+});
+
+// Create agent and run
+const agent = new Agent({ model: 'ollama/llama3' });
+const runner = new Runner({ modelProvider });
+const result = await runner.run(agent, agentInput, { stream: true });
 ```
 
 ## Components
