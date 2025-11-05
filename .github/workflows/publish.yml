@@ -67,6 +67,7 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
+          cache-dependency-path: 'typescript/timestep/pnpm-lock.yaml'
       
       - name: Read version from package.json
         id: read_version
