@@ -73,6 +73,28 @@ const runner = new Runner({ modelProvider });
 const result = await runner.run(agent, agentInput, { stream: true });
 ```
 
+## Development
+
+### Running Tests
+
+Run the behavior test harness to verify both Python and TypeScript implementations:
+
+```bash
+cd rust && OPENAI_API_KEY="your-api-key-here" cargo run -- test --format json
+```
+
+This command runs all behavior tests against both Python and TypeScript implementations and outputs the results in JSON format. Replace `your-api-key-here` with your actual OpenAI API key.
+
+### Bumping Versions
+
+To bump the patch version for both Python and TypeScript packages:
+
+```bash
+cd python && uv version --bump patch && cd ../typescript && npm version patch --no-git-tag-version --no-commit-hooks
+```
+
+This increments the patch version (e.g., `2026.0.3` → `2026.0.4`) for both packages in a single command.
+
 ## Components
 
 Both implementations provide:

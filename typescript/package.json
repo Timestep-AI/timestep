@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.3",
+  "version": "2026.0.4",
   "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,9 +26,10 @@
   "license": "MIT",
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
-    "@openai/agents-core": "^0.2.1",
-    "@openai/agents-openai": "^0.2.1",
-    "ollama": "^0.6.2"
+    "@openai/agents": "^0.3.3",
+    "@openai/agents-core": "^0.3.3",
+    "@openai/agents-openai": "^0.3.3",
+    "ollama": "^0.6.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
