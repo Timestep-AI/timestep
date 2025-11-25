@@ -87,6 +87,11 @@ async fn main() -> Result<()> {
                     results.print_text_report();
                 }
             }
+            
+            // Exit with non-zero code if any tests failed or had errors
+            if results.failed > 0 || results.errors > 0 {
+                std::process::exit(1);
+            }
         }
     }
     
