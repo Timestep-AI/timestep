@@ -16,9 +16,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -51,18 +48,19 @@ jobs:
           cd typescript
           pnpm install --frozen-lockfile
       
-      - name: Build Rust test harness
+      - name: Run Python tests
         run: |
-          cd rust
-          cargo build
-      
-      - name: Run tests
-        run: |
-          cd rust
-          cargo run -- test --format json
+          cd python
+          uv run pytest tests/test_run_agent.py -v
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        continue-on-error: false
+      
+      - name: Run TypeScript tests
+        run: |
+          cd typescript
+          npx tsx tests/test_run_agent.ts
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   publish-python:
     name: Publish Python Package to PyPI

@@ -20,6 +20,9 @@ importers:
       ollama:
         specifier: ^0.6.3
         version: 0.6.3
+      openai:
+        specifier: ^6.0.0
+        version: 6.8.0(ws@8.18.3)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^20.10.0

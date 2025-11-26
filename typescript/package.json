@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.4",
+  "version": "2026.0.5",
   "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,7 +18,7 @@
     "start": "tsx main.ts",
     "dev": "tsx watch main.ts",
     "build": "tsup timestep/index.ts --format esm --dts --sourcemap",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx tests/test_main.ts",
     "ag_ui_client": "tsx ag_ui_client.ts"
   },
   "keywords": [],
@@ -29,7 +29,8 @@
     "@openai/agents": "^0.3.3",
     "@openai/agents-core": "^0.3.3",
     "@openai/agents-openai": "^0.3.3",
-    "ollama": "^0.6.3"
+    "ollama": "^0.6.3",
+    "openai": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

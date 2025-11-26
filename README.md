@@ -77,13 +77,32 @@ const result = await runner.run(agent, agentInput, { stream: true });
 
 ### Running Tests
 
-Run the behavior test harness to verify both Python and TypeScript implementations:
+Run tests for both Python and TypeScript implementations:
 
 ```bash
-cd rust && OPENAI_API_KEY="your-api-key-here" cargo run -- test --format json
+# Run all tests
+make test-all
+
+# Or run individually
+make test-python
+make test-typescript
 ```
 
-This command runs all behavior tests against both Python and TypeScript implementations and outputs the results in JSON format. Replace `your-api-key-here` with your actual OpenAI API key.
+You can also run tests directly:
+
+**Python:**
+```bash
+cd python
+OPENAI_API_KEY="your-api-key-here" uv run pytest tests/test_run_agent.py -v
+```
+
+**TypeScript:**
+```bash
+cd typescript
+OPENAI_API_KEY="your-api-key-here" npx tsx tests/test_run_agent.ts
+```
+
+Replace `your-api-key-here` with your actual OpenAI API key.
 
 ### Bumping Versions
 
