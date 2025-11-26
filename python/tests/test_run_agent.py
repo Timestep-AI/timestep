@@ -13,15 +13,27 @@ def get_weather(city: str) -> str:
     """returns weather info for the specified city."""
     return f"The weather in {city} is sunny"
 
+RUN_INPUTS: list[list[TResponseInputItem]] = [
+    [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's 2+2?"}]}
+    ],
+    [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Oakland?"}]}
+    ],
+    [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's three times that number you calculated earlier?"}]}
+    ]
+]
+
 def clean_items(items):
-    """Remove IDs, status, and call_id from conversation items and convert to dicts."""
+    """Remove IDs, status, call_id, annotations, and logprobs from conversation items and convert to dicts."""
     def to_dict(obj):
         if isinstance(obj, dict):
-            return {k: to_dict(v) for k, v in obj.items() if k not in ('id', 'status', 'call_id')}
+            return {k: to_dict(v) for k, v in obj.items() if k not in ('id', 'status', 'call_id', 'annotations', 'logprobs')}
         if isinstance(obj, list):
             return [to_dict(item) for item in obj]
         if hasattr(obj, 'model_dump'):
-            return {k: to_dict(v) for k, v in obj.model_dump().items() if k not in ('id', 'status', 'call_id')}
+            return {k: to_dict(v) for k, v in obj.model_dump().items() if k not in ('id', 'status', 'call_id', 'annotations', 'logprobs')}
         return obj
     
     return [to_dict(item) for item in items]
@@ -47,8 +59,8 @@ async def run_agent_test(stream: bool = False):
 
     session = OpenAIConversationsSession()
 
-    run_input: list[TResponseInputItem] = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Oakland?"}]}]
-    await run_agent(personal_assistant_agent, run_input, session, stream)
+    for run_input in RUN_INPUTS:
+        await run_agent(personal_assistant_agent, run_input, session, stream)
     
     conversation_id = await session._get_session_id()
     if not conversation_id:
@@ -63,6 +75,16 @@ async def run_agent_test(stream: bool = False):
     return items_response.data
 
 EXPECTED_ITEMS = [
+    {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "What's 2+2?"}]
+    },
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "2 + 2 = 4."}]
+    },
     {
         "type": "message",
         "role": "user",
@@ -89,23 +111,40 @@ EXPECTED_ITEMS = [
     {
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "output_text", "text": ""}]  # Text may vary
+        "content": [{"type": "output_text", "text": "The weather in Oakland is currently sunny. If you need more details like temperature or forecast, let me know!"}]
+    },
+    {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "What's three times that number you calculated earlier?"}]
+    },
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "12"}]
     }
 ]
 
 def assert_conversation_items(cleaned, expected):
     """Assert conversation items match expected structure."""
     assert len(cleaned) == len(expected), f"Expected {len(expected)} items, got {len(cleaned)}"
-    assert cleaned[0] == expected[0], f"First item mismatch: {cleaned[0]} != {expected[0]}"
-    assert cleaned[1] == expected[1], f"Second item mismatch: {cleaned[1]} != {expected[1]}"
-    assert cleaned[2] == expected[2], f"Third item mismatch: {cleaned[2]} != {expected[2]}"
-    assert cleaned[3] == expected[3], f"Fourth item mismatch: {cleaned[3]} != {expected[3]}"
-    assert cleaned[4] == expected[4], f"Fifth item mismatch: {cleaned[4]} != {expected[4]}"
-    # Last message content may vary, just check structure
-    assert cleaned[5]["type"] == expected[5]["type"]
-    assert cleaned[5]["role"] == expected[5]["role"]
-    assert "content" in cleaned[5]
-    assert len(cleaned[5]["content"]) > 0
+    for i, (cleaned_item, expected_item) in enumerate(zip(cleaned, expected)):
+        # For assistant messages with output_text, check that actual text contains expected text
+        if (cleaned_item.get("type") == "message" and 
+            cleaned_item.get("role") == "assistant" and 
+            expected_item.get("type") == "message" and 
+            expected_item.get("role") == "assistant"):
+            # Extract text from both actual and expected
+            actual_text = " ".join([block.get("text", "") for block in cleaned_item.get("content", []) if block.get("type") == "output_text"])
+            expected_text = " ".join([block.get("text", "") for block in expected_item.get("content", []) if block.get("type") == "output_text"])
+            # Check that actual contains expected (case-insensitive for flexibility)
+            assert expected_text.lower() in actual_text.lower(), f"Item {i} text mismatch: expected '{expected_text}' to be contained in '{actual_text}'"
+            # Also check structure matches
+            assert cleaned_item["type"] == expected_item["type"]
+            assert cleaned_item["role"] == expected_item["role"]
+        else:
+            # For all other items, exact match
+            assert cleaned_item == expected_item, f"Item {i} mismatch: {cleaned_item} != {expected_item}"
 
 @pytest.mark.asyncio
 async def test_run_agent_non_streaming():

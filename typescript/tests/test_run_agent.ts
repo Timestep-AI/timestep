@@ -23,6 +23,18 @@ const getWeather = tool({
   }
 });
 
+const RUN_INPUTS: AgentInputItem[][] = [
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's 2+2?" }] }
+  ],
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's the weather in Oakland?" }] }
+  ],
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's three times that number you calculated earlier?" }] }
+  ]
+];
+
 function cleanItems(items: any[]): any[] {
   function removeId(obj: any): any {
     if (Array.isArray(obj)) {
@@ -31,7 +43,7 @@ function cleanItems(items: any[]): any[] {
     if (obj && typeof obj === 'object') {
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
-        if (key !== 'id' && key !== 'status' && key !== 'call_id') {
+        if (key !== 'id' && key !== 'status' && key !== 'call_id' && key !== 'annotations' && key !== 'logprobs') {
           result[key] = removeId(value);
         }
       }
@@ -63,8 +75,9 @@ async function runAgentTest(stream: boolean = false): Promise<any[]> {
 
   const session = new OpenAIConversationsSession();
 
-  const runInput: AgentInputItem[] = [{ type: "message", role: "user", content: [{ type: "input_text", text: "What's the weather in Oakland?" }] }];
-  await runAgent(personalAssistantAgent, runInput, session, stream);
+  for (const runInput of RUN_INPUTS) {
+    await runAgent(personalAssistantAgent, runInput, session, stream);
+  }
 
   const conversationId = await session.getSessionId();
   if (!conversationId) {
@@ -85,17 +98,27 @@ const EXPECTED_ITEMS = [
   {
     type: "message",
     role: "user",
+    content: [{ type: "input_text", text: "What's 2+2?" }]
+  },
+  {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "2 + 2 = 4." }]
+  },
+  {
+    type: "message",
+    role: "user",
     content: [{ type: "input_text", text: "What's the weather in Oakland?" }]
   },
-    {
-      type: "function_call",
-      name: "transfer_to_Weather_Assistant",
-      arguments: "{}"
-    },
-    {
-      type: "function_call_output",
-      output: '{"assistant":"Weather Assistant"}'
-    },
+  {
+    type: "function_call",
+    name: "transfer_to_Weather_Assistant",
+    arguments: "{}"
+  },
+  {
+    type: "function_call_output",
+    output: '{"assistant":"Weather Assistant"}'
+  },
   {
     type: "function_call",
     name: "get_weather",
@@ -108,7 +131,17 @@ const EXPECTED_ITEMS = [
   {
     type: "message",
     role: "assistant",
-    content: [{ type: "output_text", text: "" }]  // Text may vary
+    content: [{ type: "output_text", text: "The weather in Oakland is currently sunny. If you need more details like temperature or forecast, let me know!" }]
+  },
+  {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "What's three times that number you calculated earlier?" }]
+  },
+  {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "12" }]
   }
 ];
 
@@ -139,15 +172,36 @@ function assertConversationItems(cleaned: any[], expected: any[]): void {
     throw new Error(`Expected ${expected.length} items, got ${cleaned.length}`);
   }
   
-  assertEqual(cleaned[0], expected[0], "First item (user message) mismatch");
-  assertEqual(cleaned[1], expected[1], "Second item (handoff call) mismatch");
-  assertEqual(cleaned[2], expected[2], "Third item (handoff output) mismatch");
-  assertEqual(cleaned[3], expected[3], "Fourth item (get_weather call) mismatch");
-  assertEqual(cleaned[4], expected[4], "Fifth item (get_weather output) mismatch");
-  
-  // Last message content may vary, just check structure
-  if (cleaned[5].type !== expected[5].type || cleaned[5].role !== expected[5].role || !cleaned[5].content || cleaned[5].content.length === 0) {
-    throw new Error(`Last item structure mismatch: ${JSON.stringify(cleaned[5], null, 2)}`);
+  for (let i = 0; i < cleaned.length; i++) {
+    const cleanedItem = cleaned[i];
+    const expectedItem = expected[i];
+    
+    // For assistant messages with output_text, check that actual text contains expected text
+    if (cleanedItem.type === "message" && 
+        cleanedItem.role === "assistant" && 
+        expectedItem.type === "message" && 
+        expectedItem.role === "assistant") {
+      // Extract text from both actual and expected
+      const actualText = cleanedItem.content
+        .filter((block: any) => block.type === "output_text")
+        .map((block: any) => block.text || "")
+        .join(" ");
+      const expectedText = expectedItem.content
+        .filter((block: any) => block.type === "output_text")
+        .map((block: any) => block.text || "")
+        .join(" ");
+      // Check that actual contains expected (case-insensitive for flexibility)
+      if (!actualText.toLowerCase().includes(expectedText.toLowerCase())) {
+        throw new Error(`Item ${i} text mismatch: expected '${expectedText}' to be contained in '${actualText}'`);
+      }
+      // Also check structure matches
+      if (cleanedItem.type !== expectedItem.type || cleanedItem.role !== expectedItem.role) {
+        throw new Error(`Item ${i} structure mismatch: type or role doesn't match`);
+      }
+    } else {
+      // For all other items, exact match
+      assertEqual(cleanedItem, expectedItem, `Item ${i} mismatch`);
+    }
   }
 }
 
