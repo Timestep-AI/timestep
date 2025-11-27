@@ -18,6 +18,10 @@ const getWeather = tool({
     required: ['city'],
     additionalProperties: false
   } as any,
+  needsApproval: async (_ctx: any, args: any) => {
+    // Require approval for Berkeley
+    return args.city?.includes('Berkeley') || false;
+  },
   execute: async (args: any): Promise<string> => {
     return `The weather in ${args.city} is sunny`;
   }
@@ -32,6 +36,9 @@ const RUN_INPUTS: AgentInputItem[][] = [
   ],
   [
     { type: "message", role: "user", content: [{ type: "input_text", text: "What's three times that number you calculated earlier?" }] }
+  ],
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's the weather in Berkeley?" }] }
   ]
 ];
 
@@ -58,7 +65,7 @@ function cleanItems(items: any[]): any[] {
 
 async function runAgentTest(stream: boolean = false): Promise<any[]> {
   const weatherAssistantAgent = new Agent({
-    instructions: `${RECOMMENDED_PROMPT_PREFIX}You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
+    instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
     model: "gpt-4.1",
     modelSettings: { temperature: 0 },
     name: "Weather Assistant",
@@ -67,7 +74,7 @@ async function runAgentTest(stream: boolean = false): Promise<any[]> {
 
   const personalAssistantAgent = new Agent({
     handoffs: [weatherAssistantAgent],
-    instructions: "# System context\n\nYou are part of a multi-agent system called the Agents SDK, designed to make agent coordination and execution easy. Agents uses two primary abstraction: **Agents** and **Handoffs**. An agent encompasses instructions and tools and can hand off a conversation to another agent when appropriate. Handoffs are achieved by calling a handoff function, generally named `transfer_to_<agent_name>`. Transfers between agents are handled seamlessly in the background; do not mention or draw attention to these transfers in your conversation with the user.\n\nYou are an AI agent acting as a personal assistant.",
+    instructions: `${RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.`,
     model: "gpt-4.1",
     modelSettings: { temperature: 0 },
     name: "Personal Assistant",
@@ -131,7 +138,7 @@ const EXPECTED_ITEMS = [
   {
     type: "message",
     role: "assistant",
-    content: [{ type: "output_text", text: "The weather in Oakland is currently sunny. If you need more details like temperature or forecast, let me know!" }]
+    content: [{ type: "output_text", text: "sunny" }]
   },
   {
     type: "message",
@@ -142,6 +149,34 @@ const EXPECTED_ITEMS = [
     type: "message",
     role: "assistant",
     content: [{ type: "output_text", text: "12" }]
+  },
+  {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "What's the weather in Berkeley?" }]
+  },
+  {
+    type: "function_call",
+    name: "transfer_to_Weather_Assistant",
+    arguments: "{}"
+  },
+  {
+    type: "function_call_output",
+    output: '{"assistant":"Weather Assistant"}'
+  },
+  {
+    type: "function_call",
+    name: "get_weather",
+    arguments: '{"city":"Berkeley"}'
+  },
+  {
+    type: "function_call_output",
+    output: "The weather in Berkeley is sunny"
+  },
+  {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "sunny" }]
   }
 ];
 

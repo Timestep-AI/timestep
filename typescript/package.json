@@ -15,20 +15,17 @@
     }
   },
   "scripts": {
-    "start": "tsx main.ts",
-    "dev": "tsx watch main.ts",
     "build": "tsup timestep/index.ts --format esm --dts --sourcemap",
-    "test": "tsx tests/test_main.ts",
-    "ag_ui_client": "tsx ag_ui_client.ts"
+    "test": "tsx tests/test_run_agent.ts"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
-    "@openai/agents": "^0.3.3",
-    "@openai/agents-core": "^0.3.3",
-    "@openai/agents-openai": "^0.3.3",
+    "@openai/agents": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents",
+    "@openai/agents-core": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-core",
+    "@openai/agents-openai": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-openai",
     "ollama": "^0.6.3",
     "openai": "^6.0.0"
   },

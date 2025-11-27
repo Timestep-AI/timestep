@@ -8,10 +8,16 @@ from timestep import run_agent
 
 RECOMMENDED_PROMPT_PREFIX = "# System context\nYou are part of a multi-agent system called the Agents SDK, designed to make agent coordination and execution easy. Agents uses two primary abstraction: **Agents** and **Handoffs**. An agent encompasses instructions and tools and can hand off a conversation to another agent when appropriate. Handoffs are achieved by calling a handoff function, generally named `transfer_to_<agent_name>`. Transfers between agents are handled seamlessly in the background; do not mention or draw attention to these transfers in your conversation with the user.\n"
 
+async def needs_approval_for_get_weather(ctx, args, call_id):
+    """Require approval for Berkeley."""
+    return "Berkeley" in args.get("city", "")
+
 @function_tool
 def get_weather(city: str) -> str:
     """returns weather info for the specified city."""
     return f"The weather in {city} is sunny"
+
+get_weather.needs_approval = needs_approval_for_get_weather
 
 RUN_INPUTS: list[list[TResponseInputItem]] = [
     [
@@ -22,6 +28,9 @@ RUN_INPUTS: list[list[TResponseInputItem]] = [
     ],
     [
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's three times that number you calculated earlier?"}]}
+    ],
+    [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Berkeley?"}]}
     ]
 ]
 
@@ -122,6 +131,34 @@ EXPECTED_ITEMS = [
         "type": "message",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "12"}]
+    },
+    {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "What's the weather in Berkeley?"}]
+    },
+    {
+        "type": "function_call",
+        "name": "transfer_to_weather_assistant",
+        "arguments": "{}"
+    },
+    {
+        "type": "function_call_output",
+        "output": '{"assistant": "Weather Assistant"}'
+    },
+    {
+        "type": "function_call",
+        "name": "get_weather",
+        "arguments": '{"city":"Berkeley"}'
+    },
+    {
+        "type": "function_call_output",
+        "output": "The weather in Berkeley is sunny"
+    },
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "sunny"}]
     }
 ]
 

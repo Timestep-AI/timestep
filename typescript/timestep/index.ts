@@ -5,7 +5,15 @@ export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provide
 import { Agent, Runner, Session } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 
-export async function runAgent(agent: Agent, runInput: AgentInputItem[], session: Session, stream: boolean): Promise<void> {
+export type ApprovalCallback = (interruption: any) => Promise<boolean>;
+
+export async function runAgent(
+  agent: Agent,
+  runInput: AgentInputItem[],
+  session: Session,
+  stream: boolean,
+  approvalCallback?: ApprovalCallback
+): Promise<void> {
   const runner = new Runner();
   
   const sessionInputCallback = async (existingItems: AgentInputItem[], newInput: AgentInputItem[]): Promise<AgentInputItem[]> => {
@@ -13,11 +21,12 @@ export async function runAgent(agent: Agent, runInput: AgentInputItem[], session
   };
   
   if (stream) {
-    const result = await runner.run(agent, runInput, {
+    let result = await runner.run(agent, runInput, {
       session,
       sessionInputCallback,
       stream: true 
     });
+    
     const textStream = result.toTextStream({
       compatibleWithNodeStreams: true,
     });
@@ -25,7 +34,54 @@ export async function runAgent(agent: Agent, runInput: AgentInputItem[], session
       // Consume stream chunks
     }
     await result.completed;
+    
+    // Handle interruptions
+    while (result.interruptions?.length) {
+      const state = result.state;
+      for (const interruption of result.interruptions) {
+        const approved = approvalCallback 
+          ? await approvalCallback(interruption)
+          : true; // Auto-approve if no callback provided
+        if (approved) {
+          state.approve(interruption);
+        } else {
+          state.reject(interruption);
+        }
+      }
+      
+      // Resume execution
+      result = await runner.run(agent, state, {
+        session,
+        sessionInputCallback,
+        stream: true
+      });
+      const resumeTextStream = result.toTextStream({
+        compatibleWithNodeStreams: true,
+      });
+      for await (const chunk of resumeTextStream) {
+        // Consume stream chunks
+      }
+      await result.completed;
+    }
   } else {
-    await runner.run(agent, runInput, { session, sessionInputCallback });
+    let result = await runner.run(agent, runInput, { session, sessionInputCallback });
+    
+    // Handle interruptions
+    while (result.interruptions?.length) {
+      const state = result.state;
+      for (const interruption of result.interruptions) {
+        const approved = approvalCallback 
+          ? await approvalCallback(interruption)
+          : true; // Auto-approve if no callback provided
+        if (approved) {
+          state.approve(interruption);
+        } else {
+          state.reject(interruption);
+        }
+      }
+      
+      // Resume execution
+      result = await runner.run(agent, state, { session, sessionInputCallback });
+    }
   }
 }

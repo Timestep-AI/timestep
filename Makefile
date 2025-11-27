@@ -8,7 +8,7 @@ test: test-python test-typescript
 test-all: test
 
 test-python:
-	cd python && uv sync && uv run pytest tests/test_run_agent.py -v
+	cd python && uv pip install --force-reinstall /home/mjschock/Projects/personal/openai-agents-python && uv run pytest tests/test_run_agent.py -v
 
 test-typescript:
 	cd typescript && npx tsx tests/test_run_agent.ts
