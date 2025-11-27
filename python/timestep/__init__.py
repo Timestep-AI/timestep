@@ -10,21 +10,64 @@ __all__ = [
     "MultiModelProvider",
     "MultiModelProviderMap",
     "run_agent",
-    "ApprovalCallback",
+    "consume_result",
+    "InterruptionException",
+    "RunStateStore",
 ]
 
-from typing import Awaitable, Callable
-from agents import Agent, Runner, RunConfig, TResponseInputItem
+from typing import Any
+from agents import Agent, Runner, RunConfig, RunState, TResponseInputItem
 from agents.memory.session import SessionABC
+from pathlib import Path
+import json
 
-ApprovalCallback = Callable[[any], Awaitable[bool]]
+class InterruptionException(Exception):
+    """Exception raised when agent execution is interrupted for approval."""
+    def __init__(self, message: str = "Agent execution interrupted for approval"):
+        super().__init__(message)
+
+class RunStateStore:
+    """Store for persisting run state to file."""
+    def __init__(self, file_path: str, agent: Agent):
+        self.file_path = Path(file_path)
+        self.agent = agent
+
+    async def save(self, state: Any) -> None:
+        """Save state to file."""
+        self.file_path.write_text(json.dumps(state.to_json()))
+
+    async def load(self) -> Any:
+        """Load state from file."""
+        content = self.file_path.read_text()
+        state_json = json.loads(content)
+        return await RunState.from_json(self.agent, state_json)
+
+    async def clear(self) -> None:
+        """Delete the state file."""
+        if self.file_path.exists():
+            self.file_path.unlink()
+
+async def consume_result(result: Any) -> Any:
+    """
+    Consume all events from a result (streaming or non-streaming).
+
+    Args:
+        result: RunResult or RunResultStreaming from run_agent
+
+    Returns:
+        The same result object after consuming stream (if applicable)
+    """
+    if hasattr(result, 'stream_events'):
+        async for _ in result.stream_events():
+            pass
+    return result
+
 
 async def run_agent(
     agent: Agent,
-    run_input: list[TResponseInputItem],
+    run_input: list[TResponseInputItem] | RunState,
     session: SessionABC,
-    stream: bool,
-    approval_callback: ApprovalCallback | None = None
+    stream: bool
 ):
     """Run an agent with the given session and stream setting."""
     async def session_input_callback(existing_items: list, new_input: list) -> list:
@@ -35,35 +78,7 @@ async def run_agent(
 
     if stream:
         result = Runner.run_streamed(agent, run_input, run_config=run_config, session=session)
-        async for event in result.stream_events():
-            pass  # Consume all events
-
-        # Handle interruptions
-        while result.interruptions:
-            state = result.to_state()
-            for interruption in result.interruptions:
-                approved = await approval_callback(interruption) if approval_callback else True
-                if approved:
-                    state.approve(interruption)
-                else:
-                    state.reject(interruption)
-
-            # Resume execution
-            result = Runner.run_streamed(agent, state, run_config=run_config, session=session)
-            async for event in result.stream_events():
-                pass  # Consume all events
     else:
         result = await Runner.run(agent, run_input, run_config=run_config, session=session)
 
-        # Handle interruptions
-        while result.interruptions:
-            state = result.to_state()
-            for interruption in result.interruptions:
-                approved = await approval_callback(interruption) if approval_callback else True
-                if approved:
-                    state.approve(interruption)
-                else:
-                    state.reject(interruption)
-
-            # Resume execution
-            result = await Runner.run(agent, state, run_config=run_config, session=session)
+    return result

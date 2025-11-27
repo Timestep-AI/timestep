@@ -2,9 +2,10 @@
 
 import pytest
 import os
+from pathlib import Path
 from agents import Agent, OpenAIConversationsSession, ModelSettings, function_tool, Runner, TResponseInputItem
 from openai import OpenAI
-from timestep import run_agent
+from timestep import run_agent, consume_result, RunStateStore
 
 RECOMMENDED_PROMPT_PREFIX = "# System context\nYou are part of a multi-agent system called the Agents SDK, designed to make agent coordination and execution easy. Agents uses two primary abstraction: **Agents** and **Handoffs**. An agent encompasses instructions and tools and can hand off a conversation to another agent when appropriate. Handoffs are achieved by calling a handoff function, generally named `transfer_to_<agent_name>`. Transfers between agents are handled seamlessly in the background; do not mention or draw attention to these transfers in your conversation with the user.\n"
 
@@ -68,9 +69,36 @@ async def run_agent_test(stream: bool = False):
 
     session = OpenAIConversationsSession()
 
+    # Get session ID for state file naming
+    session_id = await session._get_session_id()
+    if not session_id:
+        raise ValueError("Failed to get session ID")
+
+    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{session_id}.json"
+    state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
+
     for run_input in RUN_INPUTS:
-        await run_agent(personal_assistant_agent, run_input, session, stream)
-    
+        result = await run_agent(personal_assistant_agent, run_input, session, stream)
+        result = await consume_result(result)
+
+        # Handle interruptions
+        if result.interruptions:
+            # Save state
+            state = result.to_state()
+            await state_store.save(state)
+
+            # Load and approve
+            loaded_state = await state_store.load()
+            for interruption in loaded_state.get_interruptions():
+                loaded_state.approve(interruption)
+
+            # Resume with state
+            result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
+            result = await consume_result(result)
+
+    # Clean up state file
+    await state_store.clear()
+
     conversation_id = await session._get_session_id()
     if not conversation_id:
         raise ValueError("Session does not have a conversation ID")

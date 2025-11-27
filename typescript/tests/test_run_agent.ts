@@ -1,9 +1,14 @@
 /** Tests for runAgent functionality with conversation items assertions. */
 
-import { Agent, OpenAIConversationsSession, Runner, tool } from '@openai/agents';
+import { Agent, OpenAIConversationsSession, Runner, tool, RunState } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 import OpenAI from 'openai';
-import { runAgent } from '../timestep/index';
+import { runAgent, consumeResult, RunStateStore } from '../timestep/index';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const RECOMMENDED_PROMPT_PREFIX = "# System context\nYou are part of a multi-agent system called the Agents SDK, designed to make agent coordination and execution easy. Agents uses two primary abstraction: **Agents** and **Handoffs**. An agent encompasses instructions and tools and can hand off a conversation to another agent when appropriate. Handoffs are achieved by calling a handoff function, generally named `transfer_to_<agent_name>`. Transfers between agents are handled seamlessly in the background; do not mention or draw attention to these transfers in your conversation with the user.\n"
 
@@ -82,9 +87,42 @@ async function runAgentTest(stream: boolean = false): Promise<any[]> {
 
   const session = new OpenAIConversationsSession();
 
-  for (const runInput of RUN_INPUTS) {
-    await runAgent(personalAssistantAgent, runInput, session, stream);
+  // Get session ID for state file naming
+  const sessionId = await session.getSessionId();
+  if (!sessionId) {
+    throw new Error('Failed to get session ID');
   }
+
+  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${sessionId}.json`);
+  const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
+
+  for (let i = 0; i < RUN_INPUTS.length; i++) {
+    let runInput: AgentInputItem[] | any = RUN_INPUTS[i];
+
+    let result = await runAgent(personalAssistantAgent, runInput, session, stream);
+    result = await consumeResult(result);
+
+    // Handle interruptions
+    if (result.interruptions?.length) {
+      // Save state
+      const state = result.state;
+      await stateStore.save(state);
+
+      // Load and approve
+      const loadedState = await stateStore.load();
+      const interruptions = loadedState.getInterruptions();
+      for (const interruption of interruptions) {
+        loadedState.approve(interruption);
+      }
+
+      // Resume with state
+      result = await runAgent(personalAssistantAgent, loadedState, session, stream);
+      result = await consumeResult(result);
+    }
+  }
+
+  // Clean up state file
+  await stateStore.clear();
 
   const conversationId = await session.getSessionId();
   if (!conversationId) {
