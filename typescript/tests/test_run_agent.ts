@@ -1,11 +1,22 @@
 /** Tests for runAgent functionality with conversation items assertions. */
 
-import { Agent, OpenAIConversationsSession, Runner, tool, RunState } from '@openai/agents';
+import {
+  Agent,
+  OpenAIConversationsSession,
+  Runner,
+  tool,
+  RunState,
+  InputGuardrail,
+  OutputGuardrail,
+  InputGuardrailTripwireTriggered,
+  OutputGuardrailTripwireTriggered,
+} from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 import OpenAI from 'openai';
 import { runAgent, consumeResult, RunStateStore } from '../timestep/index';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +55,15 @@ const RUN_INPUTS: AgentInputItem[][] = [
   ],
   [
     { type: "message", role: "user", content: [{ type: "input_text", text: "What's the weather in Berkeley?" }] }
+  ],
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's the weather on The Dark Side of the Moon?" }] }
+  ],
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's four times the last number we calculated minus one?" }] }
+  ],
+  [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "What's four times the last number we calculated minus six?" }] }
   ]
 ];
 
@@ -68,7 +88,35 @@ function cleanItems(items: any[]): any[] {
 }
 
 
-async function runAgentTest(stream: boolean = false): Promise<any[]> {
+async function runAgentTest(runInParallel: boolean = true, stream: boolean = false): Promise<any[]> {
+  // Define guardrails
+  const moonGuardrail: InputGuardrail = {
+    name: 'Moon Guardrail',
+    runInParallel: runInParallel,
+    execute: async ({ input }) => {
+      const inputText = typeof input === 'string' ? input : JSON.stringify(input);
+      const mentionsMoon = inputText.toLowerCase().includes('moon');
+
+      return {
+        outputInfo: { mentionsMoon },
+        tripwireTriggered: mentionsMoon,
+      };
+    },
+  };
+
+  const no47Guardrail: OutputGuardrail<any> = {
+    name: 'No 47 Guardrail',
+    execute: async ({ agentOutput }) => {
+      const outputText = typeof agentOutput === 'string' ? agentOutput : JSON.stringify(agentOutput);
+      const contains47 = outputText.includes('47');
+
+      return {
+        outputInfo: { contains47 },
+        tripwireTriggered: contains47,
+      };
+    },
+  };
+
   const weatherAssistantAgent = new Agent({
     instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
     model: "gpt-4.1",
@@ -83,6 +131,8 @@ async function runAgentTest(stream: boolean = false): Promise<any[]> {
     model: "gpt-4.1",
     modelSettings: { temperature: 0 },
     name: "Personal Assistant",
+    inputGuardrails: [moonGuardrail],
+    outputGuardrails: [no47Guardrail],
   });
 
   const session = new OpenAIConversationsSession();
@@ -99,25 +149,53 @@ async function runAgentTest(stream: boolean = false): Promise<any[]> {
   for (let i = 0; i < RUN_INPUTS.length; i++) {
     let runInput: AgentInputItem[] | any = RUN_INPUTS[i];
 
-    let result = await runAgent(personalAssistantAgent, runInput, session, stream);
-    result = await consumeResult(result);
-
-    // Handle interruptions
-    if (result.interruptions?.length) {
-      // Save state
-      const state = result.state;
-      await stateStore.save(state);
-
-      // Load and approve
-      const loadedState = await stateStore.load();
-      const interruptions = loadedState.getInterruptions();
-      for (const interruption of interruptions) {
-        loadedState.approve(interruption);
-      }
-
-      // Resume with state
-      result = await runAgent(personalAssistantAgent, loadedState, session, stream);
+    try {
+      let result = await runAgent(personalAssistantAgent, runInput, session, stream);
       result = await consumeResult(result);
+
+      // Handle interruptions
+      if (result.interruptions?.length) {
+        // Save state
+        const state = result.state;
+        await stateStore.save(state);
+
+        // Load and approve
+        const loadedState = await stateStore.load();
+        const interruptions = loadedState.getInterruptions();
+        for (const interruption of interruptions) {
+          loadedState.approve(interruption);
+        }
+
+        // Resume with state
+        result = await runAgent(personalAssistantAgent, loadedState, session, stream);
+        result = await consumeResult(result);
+      }
+    } catch (e) {
+      if (e instanceof InputGuardrailTripwireTriggered || e instanceof OutputGuardrailTripwireTriggered) {
+        // Guardrail was triggered - pop items until we've removed the user message
+        // First, peek at the last few items to see what needs to be removed
+        const recentItems = await session.getItems(2);
+        // Count how many items to pop (from most recent back to the user message)
+        let itemsToPop = 0;
+        let foundUserMessage = false;
+        for (let i = recentItems.length - 1; i >= 0; i--) {
+          itemsToPop++;
+          const item = recentItems[i];
+          if (typeof item === 'object' && 'role' in item && item.role === 'user') {
+            foundUserMessage = true;
+            break;  // Found the user message, stop counting
+          }
+        }
+
+        // Only pop if we found a user message in the recent items
+        if (foundUserMessage) {
+          for (let i = 0; i < itemsToPop; i++) {
+            await session.popItem();
+          }
+        }
+      } else {
+        throw e;
+      }
     }
   }
 
@@ -215,6 +293,16 @@ const EXPECTED_ITEMS = [
     type: "message",
     role: "assistant",
     content: [{ type: "output_text", text: "sunny" }]
+  },
+  {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "What's four times the last number we calculated minus six?" }]
+  },
+  {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "42" }]
   }
 ];
 
@@ -244,15 +332,15 @@ function assertConversationItems(cleaned: any[], expected: any[]): void {
   if (cleaned.length !== expected.length) {
     throw new Error(`Expected ${expected.length} items, got ${cleaned.length}`);
   }
-  
+
   for (let i = 0; i < cleaned.length; i++) {
     const cleanedItem = cleaned[i];
     const expectedItem = expected[i];
-    
+
     // For assistant messages with output_text, check that actual text contains expected text
-    if (cleanedItem.type === "message" && 
-        cleanedItem.role === "assistant" && 
-        expectedItem.type === "message" && 
+    if (cleanedItem.type === "message" &&
+        cleanedItem.role === "assistant" &&
+        expectedItem.type === "message" &&
         expectedItem.role === "assistant") {
       // Extract text from both actual and expected
       const actualText = cleanedItem.content
@@ -270,6 +358,20 @@ function assertConversationItems(cleaned: any[], expected: any[]): void {
       // Also check structure matches
       if (cleanedItem.type !== expectedItem.type || cleanedItem.role !== expectedItem.role) {
         throw new Error(`Item ${i} structure mismatch: type or role doesn't match`);
+      }
+    } else if (cleanedItem.type === "function_call" && expectedItem.type === "function_call") {
+      // For function_call items, compare arguments as JSON objects (not strings)
+      if (cleanedItem.type !== expectedItem.type) {
+        throw new Error(`Item ${i} type mismatch: ${cleanedItem.type} !== ${expectedItem.type}`);
+      }
+      if (cleanedItem.name !== expectedItem.name) {
+        throw new Error(`Item ${i} name mismatch: ${cleanedItem.name} !== ${expectedItem.name}`);
+      }
+      // Parse and compare JSON arguments
+      const actualArgs = JSON.parse(cleanedItem.arguments);
+      const expectedArgs = JSON.parse(expectedItem.arguments);
+      if (JSON.stringify(actualArgs) !== JSON.stringify(expectedArgs)) {
+        throw new Error(`Item ${i} arguments mismatch: ${JSON.stringify(actualArgs)} !== ${JSON.stringify(expectedArgs)}`);
       }
     } else {
       // For all other items, exact match
@@ -289,22 +391,36 @@ async function runTest(name: string, testFn: () => Promise<void>): Promise<void>
   }
 }
 
-async function testRunAgentNonStreaming(): Promise<void> {
-  const items = await runAgentTest(false);
+async function testRunAgentBlockingNonStreaming(): Promise<void> {
+  const items = await runAgentTest(false, false);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 }
 
-async function testRunAgentStreaming(): Promise<void> {
-  const items = await runAgentTest(true);
+async function testRunAgentBlockingStreaming(): Promise<void> {
+  const items = await runAgentTest(false, true);
+  const cleaned = cleanItems(items);
+  assertConversationItems(cleaned, EXPECTED_ITEMS);
+}
+
+async function testRunAgentParallelNonStreaming(): Promise<void> {
+  const items = await runAgentTest(true, false);
+  const cleaned = cleanItems(items);
+  assertConversationItems(cleaned, EXPECTED_ITEMS);
+}
+
+async function testRunAgentParallelStreaming(): Promise<void> {
+  const items = await runAgentTest(true, true);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 }
 
 (async () => {
   try {
-    await runTest('test_run_agent_non_streaming', testRunAgentNonStreaming);
-    await runTest('test_run_agent_streaming', testRunAgentStreaming);
+    await runTest('test_run_agent_blocking_non_streaming', testRunAgentBlockingNonStreaming);
+    await runTest('test_run_agent_blocking_streaming', testRunAgentBlockingStreaming);
+    await runTest('test_run_agent_parallel_non_streaming', testRunAgentParallelNonStreaming);
+    await runTest('test_run_agent_parallel_streaming', testRunAgentParallelStreaming);
     console.log('\nAll tests passed!');
   } catch (error) {
     console.error('\nTests failed!');

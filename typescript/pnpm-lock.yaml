@@ -22,7 +22,7 @@ importers:
         version: 0.6.3
       openai:
         specifier: ^6.0.0
-        version: 6.8.0(ws@8.18.3)(zod@3.25.76)
+        version: 6.8.0(ws@8.18.3)(zod@4.1.13)
     devDependencies:
       '@types/node':
         specifier: ^20.10.0
@@ -36,6 +36,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.2
+      zod:
+        specifier: ^4.1.13
+        version: 4.1.13
 
 packages:
 
@@ -716,8 +719,8 @@ packages:
       utf-8-validate:
         optional: true
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.1.13:
+    resolution: {integrity: sha512-AvvthqfqrAhNH9dnfmrfKzX5upOdjUVJYFqNSlkmGf64gRaTzlPwz99IHYnVs28qYAybvAlBV+H7pn0saFY4Ig==}
 
 snapshots:
 
@@ -1069,10 +1072,10 @@ snapshots:
     dependencies:
       whatwg-fetch: 3.6.20
 
-  openai@6.8.0(ws@8.18.3)(zod@3.25.76):
+  openai@6.8.0(ws@8.18.3)(zod@4.1.13):
     optionalDependencies:
       ws: 8.18.3
-      zod: 3.25.76
+      zod: 4.1.13
 
   package-json-from-dist@1.0.1: {}
 
@@ -1273,5 +1276,4 @@ snapshots:
   ws@8.18.3:
     optional: true
 
-  zod@3.25.76:
-    optional: true
+  zod@4.1.13: {}
