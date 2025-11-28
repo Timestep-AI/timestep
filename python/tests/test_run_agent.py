@@ -2,6 +2,7 @@
 
 import pytest
 import os
+import base64
 from pathlib import Path
 from pydantic import BaseModel
 from agents import (
@@ -21,6 +22,16 @@ from agents import (
 from openai import OpenAI
 from timestep import run_agent, consume_result, RunStateStore
 
+def file_to_base64(file_path: str) -> str:
+    """Convert a file to base64 string."""
+    with open(file_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+def image_to_base64(image_path: str) -> str:
+    """Convert an image to base64 string."""
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
 RECOMMENDED_PROMPT_PREFIX = "# System context\nYou are part of a multi-agent system called the Agents SDK, designed to make agent coordination and execution easy. Agents uses two primary abstraction: **Agents** and **Handoffs**. An agent encompasses instructions and tools and can hand off a conversation to another agent when appropriate. Handoffs are achieved by calling a handoff function, generally named `transfer_to_<agent_name>`. Transfers between agents are handled seamlessly in the background; do not mention or draw attention to these transfers in your conversation with the user.\n"
 
 async def needs_approval_for_get_weather(ctx, args, call_id):
@@ -33,6 +44,14 @@ def get_weather(city: str) -> str:
     return f"The weather in {city} is sunny"
 
 get_weather.needs_approval = needs_approval_for_get_weather
+
+# File paths for test media
+PDF_PATH = Path(__file__).parent.parent.parent / "data" / "partial_o3-and-o4-mini-system-card.pdf"
+IMAGE_PATH = Path(__file__).parent.parent.parent / "data" / "image_bison.jpg"
+
+# Encode files once at module level
+PDF_BASE64 = file_to_base64(str(PDF_PATH))
+IMAGE_BASE64 = image_to_base64(str(IMAGE_PATH))
 
 RUN_INPUTS: list[list[TResponseInputItem]] = [
     [
@@ -55,6 +74,23 @@ RUN_INPUTS: list[list[TResponseInputItem]] = [
     ],
     [
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's four times the last number we calculated minus six?"}]}
+    ],
+    [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/jpeg;base64,{IMAGE_BASE64}",
+                    "detail": "auto",
+                },
+                {
+                    "type": "input_text",
+                    "text": "What do you see in this image?"
+                }
+            ],
+        },
     ]
 ]
 
@@ -270,6 +306,26 @@ EXPECTED_ITEMS = [
         "type": "message",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "42"}]
+    },
+    {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {
+                "type": "input_image",
+                "image_url": f"data:image/jpeg;base64,{IMAGE_BASE64}",
+                "detail": "auto",
+            },
+            {
+                "type": "input_text",
+                "text": "What do you see in this image?"
+            }
+        ]
+    },
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "bison"}]
     }
 ]
 
@@ -300,6 +356,27 @@ def assert_conversation_items(cleaned, expected):
             actual_args = json.loads(cleaned_item["arguments"])
             expected_args = json.loads(expected_item["arguments"])
             assert actual_args == expected_args, f"Item {i} arguments mismatch: {actual_args} != {expected_args}"
+        elif (cleaned_item.get("type") == "message" and
+              cleaned_item.get("role") == "user" and
+              expected_item.get("type") == "message" and
+              expected_item.get("role") == "user"):
+            # For user messages, check structure but handle images specially
+            assert cleaned_item["type"] == expected_item["type"]
+            assert cleaned_item["role"] == expected_item["role"]
+            assert len(cleaned_item.get("content", [])) == len(expected_item.get("content", []))
+
+            # Check each content block
+            for j, (actual_block, expected_block) in enumerate(zip(cleaned_item.get("content", []), expected_item.get("content", []))):
+                assert actual_block.get("type") == expected_block.get("type"), f"Item {i} content block {j} type mismatch"
+
+                if actual_block.get("type") == "input_image":
+                    # For images, check detail and validate file_id if present
+                    if "detail" in expected_block:
+                        assert actual_block.get("detail") == expected_block.get("detail"), f"Item {i} content block {j} detail mismatch"
+                elif actual_block.get("type") == "input_text":
+                    assert actual_block.get("text") == expected_block.get("text"), f"Item {i} content block {j} text mismatch"
+                else:
+                    assert actual_block == expected_block, f"Item {i} content block {j} mismatch"
         else:
             # For all other items, exact match
             assert cleaned_item == expected_item, f"Item {i} mismatch: {cleaned_item} != {expected_item}"

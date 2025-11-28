@@ -15,11 +15,17 @@ import type { AgentInputItem } from '@openai/agents-core';
 import OpenAI from 'openai';
 import { runAgent, consumeResult, RunStateStore } from '../timestep/index';
 import * as path from 'path';
+import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function imageToBase64(imagePath: string): string {
+  const imageBuffer = fs.readFileSync(imagePath);
+  return imageBuffer.toString('base64');
+}
 
 const RECOMMENDED_PROMPT_PREFIX = "# System context\nYou are part of a multi-agent system called the Agents SDK, designed to make agent coordination and execution easy. Agents uses two primary abstraction: **Agents** and **Handoffs**. An agent encompasses instructions and tools and can hand off a conversation to another agent when appropriate. Handoffs are achieved by calling a handoff function, generally named `transfer_to_<agent_name>`. Transfers between agents are handled seamlessly in the background; do not mention or draw attention to these transfers in your conversation with the user.\n"
 
@@ -43,6 +49,12 @@ const getWeather = tool({
   }
 });
 
+// File paths for test media
+const IMAGE_PATH = path.join(__dirname, '../../data', 'image_bison.jpg');
+
+// Encode files once at module level
+const IMAGE_BASE64 = imageToBase64(IMAGE_PATH);
+
 const RUN_INPUTS: AgentInputItem[][] = [
   [
     { type: "message", role: "user", content: [{ type: "input_text", text: "What's 2+2?" }] }
@@ -64,6 +76,23 @@ const RUN_INPUTS: AgentInputItem[][] = [
   ],
   [
     { type: "message", role: "user", content: [{ type: "input_text", text: "What's four times the last number we calculated minus six?" }] }
+  ],
+  [
+    {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_image",
+          image: `data:image/jpeg;base64,${IMAGE_BASE64}`,
+          detail: 'auto',
+        },
+        {
+          type: "input_text",
+          text: "What do you see in this image?"
+        }
+      ],
+    },
   ]
 ];
 
@@ -303,6 +332,26 @@ const EXPECTED_ITEMS = [
     type: "message",
     role: "assistant",
     content: [{ type: "output_text", text: "42" }]
+  },
+  {
+    type: "message",
+    role: "user",
+    content: [
+      {
+        type: "input_image",
+        image: `data:image/jpeg;base64,${IMAGE_BASE64}`,
+        detail: 'auto',
+      },
+      {
+        type: "input_text",
+        text: "What do you see in this image?"
+      }
+    ]
+  },
+  {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "bison" }]
   }
 ];
 
@@ -373,6 +422,43 @@ function assertConversationItems(cleaned: any[], expected: any[]): void {
       if (JSON.stringify(actualArgs) !== JSON.stringify(expectedArgs)) {
         throw new Error(`Item ${i} arguments mismatch: ${JSON.stringify(actualArgs)} !== ${JSON.stringify(expectedArgs)}`);
       }
+    } else if (cleanedItem.type === "message" &&
+               cleanedItem.role === "user" &&
+               expectedItem.type === "message" &&
+               expectedItem.role === "user") {
+      // For user messages, check structure but handle images specially
+      if (cleanedItem.type !== expectedItem.type) {
+        throw new Error(`Item ${i} type mismatch`);
+      }
+      if (cleanedItem.role !== expectedItem.role) {
+        throw new Error(`Item ${i} role mismatch`);
+      }
+      if (cleanedItem.content.length !== expectedItem.content.length) {
+        throw new Error(`Item ${i} content length mismatch`);
+      }
+
+      // Check each content block
+      for (let j = 0; j < cleanedItem.content.length; j++) {
+        const actualBlock = cleanedItem.content[j];
+        const expectedBlock = expectedItem.content[j];
+
+        if (actualBlock.type !== expectedBlock.type) {
+          throw new Error(`Item ${i} content block ${j} type mismatch`);
+        }
+
+        if (actualBlock.type === "input_image") {
+          // For images, only check type and detail, not image/file_id (API converts data URIs to file_ids)
+          if ("detail" in expectedBlock && actualBlock.detail !== expectedBlock.detail) {
+            throw new Error(`Item ${i} content block ${j} detail mismatch`);
+          }
+        } else if (actualBlock.type === "input_text") {
+          if (actualBlock.text !== expectedBlock.text) {
+            throw new Error(`Item ${i} content block ${j} text mismatch`);
+          }
+        } else {
+          assertEqual(actualBlock, expectedBlock, `Item ${i} content block ${j} mismatch`);
+        }
+      }
     } else {
       // For all other items, exact match
       assertEqual(cleanedItem, expectedItem, `Item ${i} mismatch`);
@@ -387,7 +473,8 @@ async function runTest(name: string, testFn: () => Promise<void>): Promise<void>
     console.log(`✓ ${name} passed`);
   } catch (error: any) {
     console.error(`✗ ${name} failed:`, error.message);
-    throw error;
+    console.error('\nTests failed!');
+    process.exit(1); // Fail fast - exit immediately on first failure
   }
 }
 
@@ -416,15 +503,10 @@ async function testRunAgentParallelStreaming(): Promise<void> {
 }
 
 (async () => {
-  try {
-    await runTest('test_run_agent_blocking_non_streaming', testRunAgentBlockingNonStreaming);
-    await runTest('test_run_agent_blocking_streaming', testRunAgentBlockingStreaming);
-    await runTest('test_run_agent_parallel_non_streaming', testRunAgentParallelNonStreaming);
-    await runTest('test_run_agent_parallel_streaming', testRunAgentParallelStreaming);
-    console.log('\nAll tests passed!');
-  } catch (error) {
-    console.error('\nTests failed!');
-    process.exit(1);
-  }
+  await runTest('test_run_agent_blocking_non_streaming', testRunAgentBlockingNonStreaming);
+  await runTest('test_run_agent_blocking_streaming', testRunAgentBlockingStreaming);
+  await runTest('test_run_agent_parallel_non_streaming', testRunAgentParallelNonStreaming);
+  await runTest('test_run_agent_parallel_streaming', testRunAgentParallelStreaming);
+  console.log('\nAll tests passed!');
 })();
 
