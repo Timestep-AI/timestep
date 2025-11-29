@@ -1,7 +1,7 @@
 """Common tools for agents, including web search using Firecrawl."""
 
 import os
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from agents import function_tool
 from firecrawl import Firecrawl
 
@@ -31,7 +31,7 @@ def _map_search_context_size_to_limit(search_context_size: str) -> int:
 def web_search(
     query: str,
     user_location: Optional[str] = None,
-    filters: Optional[dict] = None,
+    filters: Optional[Any] = None,
     search_context_size: Literal["low", "medium", "high"] = "medium",
 ) -> str:
     """A tool that lets the LLM search the web using Firecrawl.
