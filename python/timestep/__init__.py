@@ -3,6 +3,7 @@
 from .ollama_model import OllamaModel
 from .ollama_model_provider import OllamaModelProvider
 from .multi_model_provider import MultiModelProvider, MultiModelProviderMap
+from .tools import web_search
 
 __all__ = [
     "OllamaModel",
@@ -13,6 +14,7 @@ __all__ = [
     "consume_result",
     "InterruptionException",
     "RunStateStore",
+    "web_search",
 ]
 
 from typing import Any

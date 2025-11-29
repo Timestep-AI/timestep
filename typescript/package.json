@@ -26,6 +26,7 @@
     "@openai/agents": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents",
     "@openai/agents-core": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-core",
     "@openai/agents-openai": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-openai",
+    "@mendable/firecrawl-js": "^1.0.0",
     "ollama": "^0.6.3",
     "openai": "^6.0.0"
   },

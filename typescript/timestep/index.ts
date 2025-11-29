@@ -1,6 +1,7 @@
 export { OllamaModel } from './ollama_model.ts';
 export { OllamaModelProvider, type OllamaModelProviderOptions } from './ollama_model_provider.ts';
 export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provider.ts';
+export { webSearch } from './tools.ts';
 
 import { Agent, Runner, Session, RunState } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
