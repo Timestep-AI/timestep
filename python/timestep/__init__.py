@@ -76,7 +76,10 @@ async def run_agent(
         """Callback to merge new input with existing session items."""
         return existing_items + new_input
 
-    run_config = RunConfig(session_input_callback=session_input_callback)
+    run_config = RunConfig(
+        nest_handoff_history=False, # Match TypeScript: don't nest handoff history
+        session_input_callback=session_input_callback
+    )
 
     if stream:
         result = Runner.run_streamed(agent, run_input, run_config=run_config, session=session)
