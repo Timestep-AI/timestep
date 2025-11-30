@@ -19,6 +19,7 @@ __all__ = [
 
 from typing import Any
 from agents import Agent, Runner, RunConfig, RunState, TResponseInputItem
+from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError
 from agents.memory.session import SessionABC
 from pathlib import Path
 import json
@@ -81,9 +82,22 @@ async def run_agent(
         session_input_callback=session_input_callback
     )
 
-    if stream:
-        result = Runner.run_streamed(agent, run_input, run_config=run_config, session=session)
-    else:
-        result = await Runner.run(agent, run_input, run_config=run_config, session=session)
+    try:
+        if stream:
+            result = Runner.run_streamed(agent, run_input, run_config=run_config, session=session)
+        else:
+            result = await Runner.run(agent, run_input, run_config=run_config, session=session)
 
-    return result
+        return result
+    except MaxTurnsExceeded as e:
+        print(f"MaxTurnsExceeded: {e}")
+        raise
+    except ModelBehaviorError as e:
+        print(f"ModelBehaviorError: {e}")
+        raise
+    except UserError as e:
+        print(f"UserError: {e}")
+        raise
+    except AgentsException as e:
+        print(f"AgentsException: {e}")
+        raise

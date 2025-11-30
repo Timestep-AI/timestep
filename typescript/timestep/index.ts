@@ -3,7 +3,7 @@ export { OllamaModelProvider, type OllamaModelProviderOptions } from './ollama_m
 export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provider.ts';
 export { webSearch } from './tools.ts';
 
-import { Agent, Runner, Session, RunState } from '@openai/agents';
+import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 import * as fs from 'fs/promises';
 
@@ -71,18 +71,36 @@ export async function runAgent(
     return [...existingItems, ...newInput];
   };
 
-  if (stream) {
-    const result = await runner.run(agent, runInput, {
-      session,
-      sessionInputCallback,
-      stream: true
-    });
-    return result;
-  } else {
-    const result = await runner.run(agent, runInput, {
-      session,
-      sessionInputCallback
-    });
-    return result;
+  try {
+    if (stream) {
+      const result = await runner.run(agent, runInput, {
+        session,
+        sessionInputCallback,
+        stream: true
+      });
+      return result;
+    } else {
+      const result = await runner.run(agent, runInput, {
+        session,
+        sessionInputCallback
+      });
+      return result;
+    }
+  } catch (e) {
+    if (e instanceof MaxTurnsExceededError) {
+      console.error('MaxTurnsExceededError:', e.message);
+      throw e;
+    } else if (e instanceof ModelBehaviorError) {
+      console.error('ModelBehaviorError:', e.message);
+      throw e;
+    } else if (e instanceof UserError) {
+      console.error('UserError:', e.message);
+      throw e;
+    } else if (e instanceof AgentsError) {
+      console.error('AgentsError:', e.message);
+      throw e;
+    } else {
+      throw e;
+    }
   }
 }
