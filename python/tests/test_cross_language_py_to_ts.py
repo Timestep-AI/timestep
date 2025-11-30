@@ -1,0 +1,70 @@
+"""Orchestration script for Python -> TypeScript cross-language tests."""
+
+import pytest
+import subprocess
+import sys
+import os
+from pathlib import Path
+from test_run_agent import run_agent_test_partial
+
+
+async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
+    """Run a single cross-language test."""
+    print(f"Running test: {test_name}")
+    
+    # Step 1: Run Python partial test (inputs 0-3) which stops at interruption
+    session_id = await run_agent_test_partial(
+        run_in_parallel=run_in_parallel,
+        stream=stream,
+        session_id=None,
+        start_index=0,
+        end_index=4
+    )
+    print(f"Python test completed, session ID: {session_id}")
+    
+    # Step 2: Run TypeScript test that loads the state and continues, passing session ID as parameter
+    ts_test_path = Path(__file__).parent.parent.parent / "typescript" / "tests" / "test_cross_language_py_to_ts.ts"
+    ts_dir = ts_test_path.parent.parent
+    
+    print(f"Running TypeScript test: {run_in_parallel}, {stream}")
+    result = subprocess.run(
+        ["npx", "tsx", str(ts_test_path), str(run_in_parallel).lower(), str(stream).lower(), session_id],
+        cwd=str(ts_dir),
+        capture_output=True,
+        text=True,
+        env={**os.environ}
+    )
+    
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"TypeScript test failed with return code {result.returncode}")
+    
+    print(f"✓ {test_name} passed")
+
+
+@pytest.mark.asyncio
+async def test_cross_language_py_to_ts_blocking_non_streaming():
+    """Test Python -> TypeScript: blocking, non-streaming."""
+    await run_test("test_cross_language_py_to_ts_blocking_non_streaming", False, False)
+
+
+@pytest.mark.asyncio
+async def test_cross_language_py_to_ts_blocking_streaming():
+    """Test Python -> TypeScript: blocking, streaming."""
+    await run_test("test_cross_language_py_to_ts_blocking_streaming", False, True)
+
+
+@pytest.mark.asyncio
+async def test_cross_language_py_to_ts_parallel_non_streaming():
+    """Test Python -> TypeScript: parallel, non-streaming."""
+    await run_test("test_cross_language_py_to_ts_parallel_non_streaming", True, False)
+
+
+@pytest.mark.asyncio
+async def test_cross_language_py_to_ts_parallel_streaming():
+    """Test Python -> TypeScript: parallel, streaming."""
+    await run_test("test_cross_language_py_to_ts_parallel_streaming", True, True)
+

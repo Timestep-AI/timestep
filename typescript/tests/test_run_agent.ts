@@ -96,7 +96,7 @@ const RUN_INPUTS: AgentInputItem[][] = [
   ]
 ];
 
-function cleanItems(items: any[]): any[] {
+export function cleanItems(items: any[]): any[] {
   function removeId(obj: any): any {
     if (Array.isArray(obj)) {
       return obj.map(removeId);
@@ -117,7 +117,7 @@ function cleanItems(items: any[]): any[] {
 }
 
 
-async function runAgentTest(runInParallel: boolean = true, stream: boolean = false): Promise<any[]> {
+async function runAgentTest(runInParallel: boolean = true, stream: boolean = false, sessionId?: string): Promise<any[]> {
   // Define guardrails
   const moonGuardrail: InputGuardrail = {
     name: 'Moon Guardrail',
@@ -164,15 +164,15 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
     outputGuardrails: [no47Guardrail],
   });
 
-  const session = new OpenAIConversationsSession();
+  const session = sessionId ? new OpenAIConversationsSession({ conversationId: sessionId }) : new OpenAIConversationsSession();
 
   // Get session ID for state file naming
-  const sessionId = await session.getSessionId();
-  if (!sessionId) {
+  const currentSessionId = await session.getSessionId();
+  if (!currentSessionId) {
     throw new Error('Failed to get session ID');
   }
 
-  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${sessionId}.json`);
+  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${currentSessionId}.json`);
   const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
 
   for (let i = 0; i < RUN_INPUTS.length; i++) {
@@ -242,11 +242,247 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
   }
 
   const client = new OpenAI({ apiKey: openaiApiKey });
+  // Add a delay to ensure all items are persisted after cross-language resume
+  await new Promise(resolve => setTimeout(resolve, 2000));
   const itemsResponse = await client.conversations.items.list(conversationId, { limit: 100, order: 'asc' });
   return itemsResponse.data;
 }
 
-const EXPECTED_ITEMS = [
+export async function runAgentTestPartial(runInParallel: boolean = true, stream: boolean = false, sessionId?: string, startIndex: number = 0, endIndex?: number): Promise<string> {
+  if (endIndex === undefined) {
+    endIndex = RUN_INPUTS.length;
+  }
+
+  // Define guardrails
+  const moonGuardrail: InputGuardrail = {
+    name: 'Moon Guardrail',
+    runInParallel: runInParallel,
+    execute: async ({ input }) => {
+      const inputText = typeof input === 'string' ? input : JSON.stringify(input);
+      const mentionsMoon = inputText.toLowerCase().includes('moon');
+
+      return {
+        outputInfo: { mentionsMoon },
+        tripwireTriggered: mentionsMoon,
+      };
+    },
+  };
+
+  const no47Guardrail: OutputGuardrail<any> = {
+    name: 'No 47 Guardrail',
+    execute: async ({ agentOutput }) => {
+      const outputText = typeof agentOutput === 'string' ? agentOutput : JSON.stringify(agentOutput);
+      const contains47 = outputText.includes('47');
+
+      return {
+        outputInfo: { contains47 },
+        tripwireTriggered: contains47,
+      };
+    },
+  };
+
+  const weatherAssistantAgent = new Agent({
+    instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
+    model: "gpt-4.1",
+    modelSettings: { temperature: 0 },
+    name: "Weather Assistant",
+    tools: [getWeather],
+  });
+
+  const personalAssistantAgent = new Agent({
+    handoffs: [weatherAssistantAgent],
+    instructions: `${RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.`,
+    model: "gpt-4.1",
+    modelSettings: { temperature: 0 },
+    name: "Personal Assistant",
+    inputGuardrails: [moonGuardrail],
+    outputGuardrails: [no47Guardrail],
+  });
+
+  const session = sessionId ? new OpenAIConversationsSession({ conversationId: sessionId }) : new OpenAIConversationsSession();
+
+  // Get session ID for state file naming
+  const currentSessionId = await session.getSessionId();
+  if (!currentSessionId) {
+    throw new Error('Failed to get session ID');
+  }
+
+  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${currentSessionId}.json`);
+  const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
+
+  for (let i = startIndex; i < endIndex!; i++) {
+    let runInput: AgentInputItem[] | any = RUN_INPUTS[i];
+
+    try {
+      let result = await runAgent(personalAssistantAgent, runInput, session, stream);
+      result = await consumeResult(result);
+
+      // Handle interruptions - save state but don't approve
+      if (result.interruptions?.length) {
+        // Save state
+        const state = result.state;
+        await stateStore.save(state);
+        // Return session ID without approving
+        return currentSessionId;
+      }
+    } catch (e) {
+      if (e instanceof InputGuardrailTripwireTriggered || e instanceof OutputGuardrailTripwireTriggered) {
+        // Guardrail was triggered - pop items until we've removed the user message
+        const recentItems = await session.getItems(2);
+        let itemsToPop = 0;
+        let foundUserMessage = false;
+        for (let i = recentItems.length - 1; i >= 0; i--) {
+          itemsToPop++;
+          const item = recentItems[i];
+          if (typeof item === 'object' && 'role' in item && item.role === 'user') {
+            foundUserMessage = true;
+            break;
+          }
+        }
+
+        if (foundUserMessage) {
+          for (let i = 0; i < itemsToPop; i++) {
+            await session.popItem();
+          }
+        }
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  // If we got here without interruption, return session ID anyway
+  return currentSessionId;
+}
+
+export async function runAgentTestFromPython(runInParallel: boolean = true, stream: boolean = false, sessionId: string): Promise<any[]> {
+  // Define guardrails
+  const moonGuardrail: InputGuardrail = {
+    name: 'Moon Guardrail',
+    runInParallel: runInParallel,
+    execute: async ({ input }) => {
+      const inputText = typeof input === 'string' ? input : JSON.stringify(input);
+      const mentionsMoon = inputText.toLowerCase().includes('moon');
+
+      return {
+        outputInfo: { mentionsMoon },
+        tripwireTriggered: mentionsMoon,
+      };
+    },
+  };
+
+  const no47Guardrail: OutputGuardrail<any> = {
+    name: 'No 47 Guardrail',
+    execute: async ({ agentOutput }) => {
+      const outputText = typeof agentOutput === 'string' ? agentOutput : JSON.stringify(agentOutput);
+      const contains47 = outputText.includes('47');
+
+      return {
+        outputInfo: { contains47 },
+        tripwireTriggered: contains47,
+      };
+    },
+  };
+
+  const weatherAssistantAgent = new Agent({
+    instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
+    model: "gpt-4.1",
+    modelSettings: { temperature: 0 },
+    name: "Weather Assistant",
+    tools: [getWeather],
+  });
+
+  const personalAssistantAgent = new Agent({
+    handoffs: [weatherAssistantAgent],
+    instructions: `${RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.`,
+    model: "gpt-4.1",
+    modelSettings: { temperature: 0 },
+    name: "Personal Assistant",
+    inputGuardrails: [moonGuardrail],
+    outputGuardrails: [no47Guardrail],
+  });
+
+  // Use the same session ID
+  const session = new OpenAIConversationsSession({ conversationId: sessionId });
+
+  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${sessionId}.json`);
+  const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
+
+  // Load state saved by Python
+  const loadedState = await stateStore.load();
+  const interruptions = loadedState.getInterruptions();
+  for (const interruption of interruptions) {
+    loadedState.approve(interruption);
+  }
+
+  // Resume with state
+  let result = await runAgent(personalAssistantAgent, loadedState, session, stream);
+  result = await consumeResult(result);
+
+  // Continue with remaining inputs (indices 4-7)
+  for (let i = 4; i < RUN_INPUTS.length; i++) {
+    let runInput: AgentInputItem[] | any = RUN_INPUTS[i];
+
+    try {
+      result = await runAgent(personalAssistantAgent, runInput, session, stream);
+      result = await consumeResult(result);
+
+      // Handle any new interruptions
+      if (result.interruptions?.length) {
+        const state = result.state;
+        await stateStore.save(state);
+        const loadedState = await stateStore.load();
+        const interruptions = loadedState.getInterruptions();
+        for (const interruption of interruptions) {
+          loadedState.approve(interruption);
+        }
+        result = await runAgent(personalAssistantAgent, loadedState, session, stream);
+        result = await consumeResult(result);
+      }
+    } catch (e) {
+      if (e instanceof InputGuardrailTripwireTriggered || e instanceof OutputGuardrailTripwireTriggered) {
+        const recentItems = await session.getItems(2);
+        let itemsToPop = 0;
+        let foundUserMessage = false;
+        for (let i = recentItems.length - 1; i >= 0; i--) {
+          itemsToPop++;
+          const item = recentItems[i];
+          if (typeof item === 'object' && 'role' in item && item.role === 'user') {
+            foundUserMessage = true;
+            break;
+          }
+        }
+
+        if (foundUserMessage) {
+          for (let i = 0; i < itemsToPop; i++) {
+            await session.popItem();
+          }
+        }
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  // Clean up state file
+  await stateStore.clear();
+
+  const conversationId = await session.getSessionId();
+  if (!conversationId) {
+    throw new Error('Session does not have a conversation ID');
+  }
+
+  const openaiApiKey = process.env.OPENAI_API_KEY || '';
+  if (!openaiApiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is required');
+  }
+
+  const client = new OpenAI({ apiKey: openaiApiKey });
+  const itemsResponse = await client.conversations.items.list(conversationId, { limit: 100, order: 'asc' });
+  return itemsResponse.data;
+}
+
+export const EXPECTED_ITEMS = [
   {
     type: "message",
     role: "user",
@@ -377,7 +613,7 @@ function assertEqual(actual: any, expected: any, message: string): void {
   }
 }
 
-function assertConversationItems(cleaned: any[], expected: any[]): void {
+export function assertConversationItems(cleaned: any[], expected: any[]): void {
   if (cleaned.length !== expected.length) {
     throw new Error(`Expected ${expected.length} items, got ${cleaned.length}`);
   }
@@ -413,7 +649,8 @@ function assertConversationItems(cleaned: any[], expected: any[]): void {
       if (cleanedItem.type !== expectedItem.type) {
         throw new Error(`Item ${i} type mismatch: ${cleanedItem.type} !== ${expectedItem.type}`);
       }
-      if (cleanedItem.name !== expectedItem.name) {
+      // Function names may differ in casing between languages (e.g., transfer_to_Weather_Assistant vs transfer_to_weather_assistant)
+      if (cleanedItem.name.toLowerCase() !== expectedItem.name.toLowerCase()) {
         throw new Error(`Item ${i} name mismatch: ${cleanedItem.name} !== ${expectedItem.name}`);
       }
       // Parse and compare JSON arguments
@@ -458,6 +695,27 @@ function assertConversationItems(cleaned: any[], expected: any[]): void {
         } else {
           assertEqual(actualBlock, expectedBlock, `Item ${i} content block ${j} mismatch`);
         }
+      }
+    } else if (cleanedItem.type === "function_call_output" && expectedItem.type === "function_call_output") {
+      // For function_call_output items, parse JSON output if present
+      if (cleanedItem.type !== expectedItem.type) {
+        throw new Error(`Item ${i} type mismatch: ${cleanedItem.type} !== ${expectedItem.type}`);
+      }
+      if (cleanedItem.output && expectedItem.output) {
+        try {
+          const actualOutput = JSON.parse(cleanedItem.output);
+          const expectedOutput = JSON.parse(expectedItem.output);
+          if (JSON.stringify(actualOutput) !== JSON.stringify(expectedOutput)) {
+            throw new Error(`Item ${i} output mismatch: ${JSON.stringify(actualOutput)} !== ${JSON.stringify(expectedOutput)}`);
+          }
+        } catch (e) {
+          // If not JSON, compare as strings
+          if (cleanedItem.output !== expectedItem.output) {
+            throw new Error(`Item ${i} output mismatch: ${cleanedItem.output} !== ${expectedItem.output}`);
+          }
+        }
+      } else {
+        assertEqual(cleanedItem, expectedItem, `Item ${i} mismatch`);
       }
     } else {
       // For all other items, exact match

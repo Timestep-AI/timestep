@@ -108,7 +108,7 @@ def clean_items(items):
     return [to_dict(item) for item in items]
 
 
-async def run_agent_test(run_in_parallel: bool = True, stream: bool = False):
+async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None):
     """Run the agent test and return conversation items."""
     # Define guardrails
     @input_guardrail(run_in_parallel=run_in_parallel)
@@ -158,14 +158,17 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False):
         output_guardrails=[no_47_guardrail],
     )
 
-    session = OpenAIConversationsSession()
+    if session_id:
+        session = OpenAIConversationsSession(conversation_id=session_id)
+    else:
+        session = OpenAIConversationsSession()
 
     # Get session ID for state file naming
-    session_id = await session._get_session_id()
-    if not session_id:
+    current_session_id = await session._get_session_id()
+    if not current_session_id:
         raise ValueError("Failed to get session ID")
 
-    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{session_id}.json"
+    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{current_session_id}.json"
     state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
 
     for run_input in RUN_INPUTS:
@@ -217,6 +220,259 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False):
         raise ValueError("OPENAI_API_KEY environment variable is required")
 
     client = OpenAI(api_key=openai_api_key)
+    items_response = client.conversations.items.list(conversation_id, limit=100, order="asc")
+    return items_response.data
+
+
+async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None, start_index: int = 0, end_index: int = None):
+    """Run partial agent test up to interruption and save state without approving.
+    
+    Returns the session_id for use in cross-language tests.
+    """
+    if end_index is None:
+        end_index = len(RUN_INPUTS)
+    
+    # Define guardrails
+    @input_guardrail(run_in_parallel=run_in_parallel)
+    async def moon_guardrail(
+        ctx: RunContextWrapper[None],
+        agent: Agent,
+        input: str | list[TResponseInputItem]
+    ) -> GuardrailFunctionOutput:
+        """Prevent questions about the Moon."""
+        input_text = input if isinstance(input, str) else str(input)
+        mentions_moon = "moon" in input_text.lower()
+
+        return GuardrailFunctionOutput(
+            output_info={"mentions_moon": mentions_moon},
+            tripwire_triggered=mentions_moon,
+        )
+
+    @output_guardrail
+    async def no_47_guardrail(
+        ctx: RunContextWrapper,
+        agent: Agent,
+        output: str
+    ) -> GuardrailFunctionOutput:
+        """Prevent output containing the number 47."""
+        contains_47 = "47" in str(output)
+
+        return GuardrailFunctionOutput(
+            output_info={"contains_47": contains_47},
+            tripwire_triggered=contains_47,
+        )
+
+    weather_assistant_agent = Agent(
+        instructions="You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.",
+        model="gpt-4.1",
+        model_settings=ModelSettings(temperature=0),
+        name="Weather Assistant",
+        tools=[get_weather],
+    )
+
+    personal_assistant_agent = Agent(
+        handoffs=[weather_assistant_agent],
+        instructions=f"{RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.",
+        model="gpt-4.1",
+        model_settings=ModelSettings(temperature=0),
+        name="Personal Assistant",
+        input_guardrails=[moon_guardrail],
+        output_guardrails=[no_47_guardrail],
+    )
+
+    if session_id:
+        session = OpenAIConversationsSession(conversation_id=session_id)
+    else:
+        session = OpenAIConversationsSession()
+
+    # Get session ID for state file naming
+    current_session_id = await session._get_session_id()
+    if not current_session_id:
+        raise ValueError("Failed to get session ID")
+
+    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{current_session_id}.json"
+    state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
+
+    for i in range(start_index, end_index):
+        run_input = RUN_INPUTS[i]
+        try:
+            result = await run_agent(personal_assistant_agent, run_input, session, stream)
+            result = await consume_result(result)
+
+            # Handle interruptions - save state but don't approve
+            if result.interruptions:
+                # Save state
+                state = result.to_state()
+                await state_store.save(state)
+                # Return session ID without approving
+                return current_session_id
+        except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
+            # Guardrail was triggered - pop items until we've removed the user message
+            recent_items = await session.get_items(2)
+            items_to_pop = 0
+            found_user_message = False
+            for item in reversed(recent_items):
+                items_to_pop += 1
+                if isinstance(item, dict) and item.get('role') == 'user':
+                    found_user_message = True
+                    break
+
+            if found_user_message:
+                for _ in range(items_to_pop):
+                    await session.pop_item()
+
+    # If we got here without interruption, return session ID anyway
+    return current_session_id
+
+
+async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool = True, stream: bool = False):
+    """Load state saved by TypeScript, approve, and continue execution."""
+    # Define guardrails
+    @input_guardrail(run_in_parallel=run_in_parallel)
+    async def moon_guardrail(
+        ctx: RunContextWrapper[None],
+        agent: Agent,
+        input: str | list[TResponseInputItem]
+    ) -> GuardrailFunctionOutput:
+        """Prevent questions about the Moon."""
+        input_text = input if isinstance(input, str) else str(input)
+        mentions_moon = "moon" in input_text.lower()
+
+        return GuardrailFunctionOutput(
+            output_info={"mentions_moon": mentions_moon},
+            tripwire_triggered=mentions_moon,
+        )
+
+    @output_guardrail
+    async def no_47_guardrail(
+        ctx: RunContextWrapper,
+        agent: Agent,
+        output: str
+    ) -> GuardrailFunctionOutput:
+        """Prevent output containing the number 47."""
+        contains_47 = "47" in str(output)
+
+        return GuardrailFunctionOutput(
+            output_info={"contains_47": contains_47},
+            tripwire_triggered=contains_47,
+        )
+
+    weather_assistant_agent = Agent(
+        instructions="You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.",
+        model="gpt-4.1",
+        model_settings=ModelSettings(temperature=0),
+        name="Weather Assistant",
+        tools=[get_weather],
+    )
+
+    personal_assistant_agent = Agent(
+        handoffs=[weather_assistant_agent],
+        instructions=f"{RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.",
+        model="gpt-4.1",
+        model_settings=ModelSettings(temperature=0),
+        name="Personal Assistant",
+        input_guardrails=[moon_guardrail],
+        output_guardrails=[no_47_guardrail],
+    )
+
+    # Use the same session ID
+    session = OpenAIConversationsSession(conversation_id=session_id)
+
+    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{session_id}.json"
+    state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
+
+    # Load state saved by TypeScript
+    loaded_state = await state_store.load()
+    
+    # DEBUG: Print what's in the loaded state
+    print("\n[CROSS-LANG-DEBUG] Loaded state from TypeScript:")
+    print(f"  generated_items count: {len(loaded_state._generated_items)}")
+    for idx, item in enumerate(loaded_state._generated_items):
+        item_type = item.type
+        raw_type = "unknown"
+        name = "unknown"
+        call_id = "unknown"
+        if hasattr(item, 'raw_item') and isinstance(item.raw_item, dict):
+            raw_type = item.raw_item.get("type", "unknown")
+            name = item.raw_item.get("name", "unknown")
+            call_id = item.raw_item.get("call_id") or item.raw_item.get("callId") or "unknown"
+        print(f"  [{idx}] type={item_type}, raw_type={raw_type}, name={name}, call_id={call_id}")
+    
+    # DEBUG: Print what's already in the session
+    existing_items = await session.get_items()
+    print(f"\n[CROSS-LANG-DEBUG] Existing session items count: {len(existing_items)}")
+    for idx, item in enumerate(existing_items):
+        if isinstance(item, dict):
+            item_type = item.get("type", "unknown")
+            name = item.get("name", "unknown")
+            call_id = item.get("call_id") or item.get("callId") or "unknown"
+            print(f"  [{idx}] type={item_type}, name={name}, call_id={call_id}")
+    
+    interruptions = loaded_state.get_interruptions()
+    for interruption in interruptions:
+        loaded_state.approve(interruption)
+
+    # Resume with state
+    result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
+    result = await consume_result(result)
+    
+    # DEBUG: Print what's in the session after resuming
+    items_after_resume = await session.get_items()
+    print(f"\n[CROSS-LANG-DEBUG] Session items after resume count: {len(items_after_resume)}")
+    for idx, item in enumerate(items_after_resume):
+        if isinstance(item, dict):
+            item_type = item.get("type", "unknown")
+            name = item.get("name", "unknown")
+            call_id = item.get("call_id") or item.get("callId") or "unknown"
+            output = item.get("output", "")[:100] if item_type == "function_call_output" else None
+            print(f"  [{idx}] type={item_type}, name={name}, call_id={call_id}, output={output}")
+
+    # Continue with remaining inputs (indices 4-7)
+    for i in range(4, len(RUN_INPUTS)):
+        run_input = RUN_INPUTS[i]
+        try:
+            result = await run_agent(personal_assistant_agent, run_input, session, stream)
+            result = await consume_result(result)
+
+            # Handle any new interruptions
+            if result.interruptions:
+                state = result.to_state()
+                await state_store.save(state)
+                loaded_state = await state_store.load()
+                for interruption in loaded_state.get_interruptions():
+                    loaded_state.approve(interruption)
+                result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
+                result = await consume_result(result)
+        except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
+            recent_items = await session.get_items(2)
+            items_to_pop = 0
+            found_user_message = False
+            for item in reversed(recent_items):
+                items_to_pop += 1
+                if isinstance(item, dict) and item.get('role') == 'user':
+                    found_user_message = True
+                    break
+
+            if found_user_message:
+                for _ in range(items_to_pop):
+                    await session.pop_item()
+
+    # Clean up state file
+    await state_store.clear()
+
+    conversation_id = await session._get_session_id()
+    if not conversation_id:
+        raise ValueError("Session does not have a conversation ID")
+
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is required")
+
+    client = OpenAI(api_key=openai_api_key)
+    # Add a delay to ensure all items are persisted after cross-language resume
+    # The function_call_output might take a moment to be added to the conversation
+    import asyncio
+    await asyncio.sleep(2.0)
     items_response = client.conversations.items.list(conversation_id, limit=100, order="asc")
     return items_response.data
 
@@ -351,7 +607,8 @@ def assert_conversation_items(cleaned, expected):
         elif cleaned_item.get("type") == "function_call" and expected_item.get("type") == "function_call":
             # For function_call items, compare arguments as JSON objects (not strings)
             assert cleaned_item["type"] == expected_item["type"]
-            assert cleaned_item["name"] == expected_item["name"]
+            # Function names may differ in casing between languages (e.g., transfer_to_Weather_Assistant vs transfer_to_weather_assistant)
+            assert cleaned_item["name"].lower() == expected_item["name"].lower(), f"Item {i} name mismatch: {cleaned_item['name']} != {expected_item['name']}"
             # Parse and compare JSON arguments
             actual_args = json.loads(cleaned_item["arguments"])
             expected_args = json.loads(expected_item["arguments"])
@@ -377,6 +634,19 @@ def assert_conversation_items(cleaned, expected):
                     assert actual_block.get("text") == expected_block.get("text"), f"Item {i} content block {j} text mismatch"
                 else:
                     assert actual_block == expected_block, f"Item {i} content block {j} mismatch"
+        elif cleaned_item.get("type") == "function_call_output" and expected_item.get("type") == "function_call_output":
+            # For function_call_output items, parse JSON output if present
+            assert cleaned_item["type"] == expected_item["type"]
+            if "output" in cleaned_item and "output" in expected_item:
+                try:
+                    actual_output = json.loads(cleaned_item["output"])
+                    expected_output = json.loads(expected_item["output"])
+                    assert actual_output == expected_output, f"Item {i} output mismatch: {actual_output} != {expected_output}"
+                except (json.JSONDecodeError, TypeError):
+                    # If not JSON, compare as strings
+                    assert cleaned_item["output"] == expected_item["output"], f"Item {i} output mismatch: {cleaned_item['output']} != {expected_item['output']}"
+            else:
+                assert cleaned_item == expected_item, f"Item {i} mismatch: {cleaned_item} != {expected_item}"
         else:
             # For all other items, exact match
             assert cleaned_item == expected_item, f"Item {i} mismatch: {cleaned_item} != {expected_item}"
@@ -386,6 +656,65 @@ async def test_run_agent_blocking_non_streaming():
     """Test blocking (run_in_parallel=False) non-streaming execution."""
     items = await run_agent_test(run_in_parallel=False, stream=False)
     cleaned = clean_items(items)
+    
+    # Debug: Print all items to identify the extra one
+    if len(cleaned) != len(EXPECTED_ITEMS):
+        print(f"\n{'='*80}")
+        print(f"ITEM COUNT MISMATCH: Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items")
+        print(f"{'='*80}\n")
+        
+        # Print item types
+        actual_types = [item.get('type', 'unknown') for item in cleaned]
+        expected_types = [item.get('type', 'unknown') for item in EXPECTED_ITEMS]
+        print(f"Actual item types ({len(actual_types)}): {actual_types}")
+        print(f"Expected item types ({len(expected_types)}): {expected_types}\n")
+        
+        # Print detailed comparison
+        max_len = max(len(cleaned), len(EXPECTED_ITEMS))
+        for i in range(max_len):
+            print(f"\n--- Position {i} ---")
+            if i < len(cleaned):
+                actual_item = cleaned[i]
+                item_type = actual_item.get('type', 'unknown')
+                if item_type == 'message':
+                    role = actual_item.get('role', 'unknown')
+                    content = actual_item.get('content', [])
+                    text = content[0].get('text', '')[:50] if content else ''
+                    print(f"ACTUAL:   type={item_type}, role={role}, text={text}...")
+                elif item_type == 'function_call':
+                    name = actual_item.get('name', 'unknown')
+                    args = actual_item.get('arguments', '')[:50]
+                    print(f"ACTUAL:   type={item_type}, name={name}, args={args}...")
+                elif item_type == 'function_call_output':
+                    output = str(actual_item.get('output', ''))[:50]
+                    print(f"ACTUAL:   type={item_type}, output={output}...")
+                else:
+                    print(f"ACTUAL:   {json.dumps(actual_item, indent=2)}")
+            else:
+                print(f"ACTUAL:   <missing>")
+            
+            if i < len(EXPECTED_ITEMS):
+                expected_item = EXPECTED_ITEMS[i]
+                item_type = expected_item.get('type', 'unknown')
+                if item_type == 'message':
+                    role = expected_item.get('role', 'unknown')
+                    content = expected_item.get('content', [])
+                    text = content[0].get('text', '')[:50] if content else ''
+                    print(f"EXPECTED: type={item_type}, role={role}, text={text}...")
+                elif item_type == 'function_call':
+                    name = expected_item.get('name', 'unknown')
+                    args = expected_item.get('arguments', '')[:50]
+                    print(f"EXPECTED: type={item_type}, name={name}, args={args}...")
+                elif item_type == 'function_call_output':
+                    output = str(expected_item.get('output', ''))[:50]
+                    print(f"EXPECTED: type={item_type}, output={output}...")
+                else:
+                    print(f"EXPECTED: {json.dumps(expected_item, indent=2)}")
+            else:
+                print(f"EXPECTED: <missing>")
+        
+        print(f"\n{'='*80}\n")
+    
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
