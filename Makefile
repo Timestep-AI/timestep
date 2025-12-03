@@ -3,7 +3,7 @@ default: test
 patch:
 	cd python && uv version --bump patch && cd ../typescript && npm version patch --no-git-tag-version --no-commit-hooks
 
-test: test-python test-typescript test-cross-language
+test: test-typescript test-python test-cross-language
 
 test-all: test
 

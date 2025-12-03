@@ -60,5 +60,9 @@ async function runTest(runInParallel: boolean, stream: boolean): Promise<void> {
 
 (async () => {
   await runTest(false, false);
+  await runTest(false, true);
+  await runTest(true, false);
+  await runTest(true, true);
+  console.log('\nAll tests passed!');
 })();
 

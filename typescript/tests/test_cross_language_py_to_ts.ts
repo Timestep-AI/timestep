@@ -43,7 +43,7 @@ async function runTest(runInParallel: boolean, stream: boolean, sessionId: strin
     const cleaned = cleanItems(items);
     
     // Items should match exactly - if they don't, log and fail
-    if (cleaned.length !== EXPECTED_ITEMS.length || JSON.stringify(cleaned) !== JSON.stringify(EXPECTED_ITEMS)) {
+    if (cleaned.length !== EXPECTED_ITEMS.length || cleaned !== EXPECTED_ITEMS) {
       logItemDifferences(cleaned, EXPECTED_ITEMS);
       throw new Error(`Cross-language test failed: items don't match. Got ${cleaned.length} items, expected ${EXPECTED_ITEMS.length} items.`);
     }

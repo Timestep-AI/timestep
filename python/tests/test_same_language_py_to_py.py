@@ -12,6 +12,7 @@ from test_run_agent import (
     clean_items,
     assert_conversation_items,
     EXPECTED_ITEMS,
+    truncate_image_data,
 )
 
 # Enable DEBUG logging to see debug logs
@@ -40,13 +41,15 @@ def log_item_differences(cleaned, expected, max_items=None):
         print(f"\n--- Position {i} ---")
         if i < len(cleaned):
             actual_item = cleaned[i]
-            print(f"ACTUAL:   {json.dumps(actual_item, indent=2)}")
+            truncated_actual = truncate_image_data(actual_item)
+            print(f"ACTUAL:   {json.dumps(truncated_actual, indent=2)}")
         else:
             print(f"ACTUAL:   <missing>")
         
         if i < len(expected):
             expected_item = expected[i]
-            print(f"EXPECTED: {json.dumps(expected_item, indent=2)}")
+            truncated_expected = truncate_image_data(expected_item)
+            print(f"EXPECTED: {json.dumps(truncated_expected, indent=2)}")
         else:
             print(f"EXPECTED: <missing>")
 
@@ -55,7 +58,8 @@ def log_item_differences(cleaned, expected, max_items=None):
 async def test_same_language_py_to_py_blocking_non_streaming():
     """Test Python -> Python: blocking, non-streaming."""
     # Step 1: Run Python partial test (inputs 0-3) which stops at interruption
-    session_id = await run_agent_test_partial(run_in_parallel=False, stream=False, start_index=0, end_index=4)
+    # Explicitly pass session_id=None to ensure a fresh session for each test
+    session_id = await run_agent_test_partial(run_in_parallel=False, stream=False, session_id=None, start_index=0, end_index=4)
     print(f"Python test completed, session ID: {session_id}")
     
     # Step 2: Resume in Python (instead of TypeScript) using the same pattern as cross-language
@@ -72,11 +76,20 @@ async def test_same_language_py_to_py_blocking_non_streaming():
 @pytest.mark.asyncio
 async def test_same_language_py_to_py_blocking_streaming():
     """Test Python -> Python: blocking, streaming."""
-    session_id = await run_agent_test_partial(run_in_parallel=False, stream=True, start_index=0, end_index=4)
+    # Explicitly pass session_id=None to ensure a fresh session for each test
+    session_id = await run_agent_test_partial(run_in_parallel=False, stream=True, session_id=None, start_index=0, end_index=4)
     print(f"Python test completed, session ID: {session_id}")
     
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=True)
     cleaned = clean_items(items)
+    
+    # Debug: Print item count and types
+    print(f"\n[TEST-DEBUG] test_same_language_py_to_py_blocking_streaming: Got {len(cleaned)} items")
+    print(f"[TEST-DEBUG] Expected {len(EXPECTED_ITEMS)} items")
+    if len(cleaned) != len(EXPECTED_ITEMS):
+        print(f"[TEST-DEBUG] Item count mismatch! This suggests test isolation issue.")
+        print(f"[TEST-DEBUG] First few item types: {[item.get('type', 'unknown') for item in cleaned[:5]]}")
+        print(f"[TEST-DEBUG] Last few item types: {[item.get('type', 'unknown') for item in cleaned[-5:]]}")
     
     try:
         assert_conversation_items(cleaned, EXPECTED_ITEMS)
@@ -88,7 +101,8 @@ async def test_same_language_py_to_py_blocking_streaming():
 @pytest.mark.asyncio
 async def test_same_language_py_to_py_parallel_non_streaming():
     """Test Python -> Python: parallel, non-streaming."""
-    session_id = await run_agent_test_partial(run_in_parallel=True, stream=False, start_index=0, end_index=4)
+    # Explicitly pass session_id=None to ensure a fresh session for each test
+    session_id = await run_agent_test_partial(run_in_parallel=True, stream=False, session_id=None, start_index=0, end_index=4)
     print(f"Python test completed, session ID: {session_id}")
     
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=False)
@@ -104,7 +118,8 @@ async def test_same_language_py_to_py_parallel_non_streaming():
 @pytest.mark.asyncio
 async def test_same_language_py_to_py_parallel_streaming():
     """Test Python -> Python: parallel, streaming."""
-    session_id = await run_agent_test_partial(run_in_parallel=True, stream=True, start_index=0, end_index=4)
+    # Explicitly pass session_id=None to ensure a fresh session for each test
+    session_id = await run_agent_test_partial(run_in_parallel=True, stream=True, session_id=None, start_index=0, end_index=4)
     print(f"Python test completed, session ID: {session_id}")
     
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=True)
