@@ -116,6 +116,30 @@ export function cleanItems(items: any[]): any[] {
   return items.map(removeId);
 }
 
+function truncateImageData(obj: any, maxLength: number = 100): any {
+  if (Array.isArray(obj)) {
+    return obj.map((item) => truncateImageData(item, maxLength));
+  }
+  if (obj && typeof obj === 'object') {
+    const result: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (
+        (key === 'image' || key === 'image_url' || key === 'imageUrl') &&
+        typeof value === 'string'
+      ) {
+        result[key] =
+          value.length > maxLength
+            ? `${value.slice(0, maxLength)}... [truncated]`
+            : value;
+      } else {
+        result[key] = truncateImageData(value, maxLength);
+      }
+    }
+    return result;
+  }
+  return obj;
+}
+
 
 async function runAgentTest(runInParallel: boolean = true, stream: boolean = false, sessionId?: string): Promise<any[]> {
   // Define guardrails
@@ -612,6 +636,16 @@ function assertEqual(actual: any, expected: any, message: string): void {
 }
 
 export function assertConversationItems(cleaned: any[], expected: any[]): void {
+  // Debugging logs to inspect the full actual and expected conversation items
+  console.log(
+    '--- DEBUG: Actual cleaned conversation items ---\n',
+    JSON.stringify(truncateImageData(cleaned), null, 2),
+  );
+  console.log(
+    '--- DEBUG: Expected conversation items ---\n',
+    JSON.stringify(truncateImageData(expected), null, 2),
+  );
+
   if (cleaned.length !== expected.length) {
     throw new Error(`Expected ${expected.length} items, got ${cleaned.length}`);
   }

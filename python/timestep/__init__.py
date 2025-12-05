@@ -61,8 +61,25 @@ async def consume_result(result: Any) -> Any:
         The same result object after consuming stream (if applicable)
     """
     if hasattr(result, 'stream_events'):
+        # Consume all stream events - this already waits for _run_impl_task in the finally block
         async for _ in result.stream_events():
             pass
+
+        # After consuming stream_events(), the _run_impl_task should have been awaited
+        # in the finally block of stream_events(). However, to match TypeScript's
+        # await result.completed behavior and ensure ALL background operations are done,
+        # we should explicitly wait for the _run_impl_task if it exists.
+        if hasattr(result, '_run_impl_task') and result._run_impl_task is not None:
+            import asyncio
+            try:
+                # Wait for the main implementation task to complete
+                # This ensures all background session operations have finished
+                await result._run_impl_task
+            except Exception:
+                # Exception handling is done in stream_events(), so we can ignore here
+                # The exception will be raised when accessing result.output or other properties
+                pass
+
     return result
 
 

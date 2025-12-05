@@ -219,13 +219,35 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{current_session_id}.json"
     state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
 
-    for run_input in RUN_INPUTS:
+    for idx, run_input in enumerate(RUN_INPUTS):
         try:
+            # Debug: Check session state before processing input
+            items_before = await session.get_items()
+            print(f"\n[DEBUG-TEST] Processing input {idx}: {run_input[0].get('content', [{}])[0].get('text', 'unknown')[:50] if run_input else 'empty'}")
+            print(f"[DEBUG-TEST] Session items before input {idx}: {len(items_before)} items")
+            
             result = await run_agent(personal_assistant_agent, run_input, session, stream)
             result = await consume_result(result)
+            
+            # Debug: Check session state after processing input
+            items_after = await session.get_items()
+            print(f"[DEBUG-TEST] Session items after input {idx}: {len(items_after)} items")
+            if len(items_after) > len(items_before):
+                new_items = items_after[len(items_before):]
+                print(f"[DEBUG-TEST] New items added for input {idx}: {len(new_items)} items")
+                for i, item in enumerate(new_items[:3]):  # Show first 3 new items
+                    item_type = item.get('type', 'unknown') if isinstance(item, dict) else getattr(item, 'type', 'unknown')
+                    if item_type == 'message':
+                        role = item.get('role', 'unknown') if isinstance(item, dict) else getattr(item, 'role', 'unknown')
+                        content = item.get('content', []) if isinstance(item, dict) else getattr(item, 'content', [])
+                        text = content[0].get('text', '')[:50] if content and isinstance(content[0], dict) else (content[0].text[:50] if content and hasattr(content[0], 'text') else '')
+                        print(f"  [{i}] type={item_type}, role={role}, text={text}...")
+                    else:
+                        print(f"  [{i}] type={item_type}")
 
             # Handle interruptions
             if result.interruptions and len(result.interruptions) > 0:
+                print(f"[DEBUG-TEST] Input {idx} has {len(result.interruptions)} interruptions")
                 # Save state
                 state = result.to_state()
                 await state_store.save(state)
@@ -235,9 +257,29 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
                 for interruption in loaded_state.get_interruptions():
                     loaded_state.approve(interruption)
 
+                # Debug: Check session state before resuming
+                items_before_resume = await session.get_items()
+                print(f"[DEBUG-TEST] Session items before resuming input {idx}: {len(items_before_resume)} items")
+
                 # Resume with state
                 result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
                 result = await consume_result(result)
+                
+                # Debug: Check session state after resuming
+                items_after_resume = await session.get_items()
+                print(f"[DEBUG-TEST] Session items after resuming input {idx}: {len(items_after_resume)} items")
+                if len(items_after_resume) > len(items_before_resume):
+                    new_items = items_after_resume[len(items_before_resume):]
+                    print(f"[DEBUG-TEST] New items added after resuming input {idx}: {len(new_items)} items")
+                    for i, item in enumerate(new_items[:3]):  # Show first 3 new items
+                        item_type = item.get('type', 'unknown') if isinstance(item, dict) else getattr(item, 'type', 'unknown')
+                        if item_type == 'message':
+                            role = item.get('role', 'unknown') if isinstance(item, dict) else getattr(item, 'role', 'unknown')
+                            content = item.get('content', []) if isinstance(item, dict) else getattr(item, 'content', [])
+                            text = content[0].get('text', '')[:50] if content and isinstance(content[0], dict) else (content[0].text[:50] if content and hasattr(content[0], 'text') else '')
+                            print(f"  [{i}] type={item_type}, role={role}, text={text}...")
+                        else:
+                            print(f"  [{i}] type={item_type}")
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
             # Guardrail was triggered - pop items until we've removed the user message
             # First, peek at the last few items to see what needs to be removed
@@ -258,6 +300,20 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
 
     # Clean up state file
     await state_store.clear()
+
+    # Wait for all background operations to complete before fetching from API.
+    # This is necessary because Python's streaming doesn't have a completion Promise
+    # like TypeScript's result.completed, so background operations may still be in progress.
+    # We wait here (after all consume_result calls) rather than in consume_result itself
+    # to avoid excessive delays when consume_result is called many times.
+    # Parallel mode may need longer due to concurrent operations.
+    if stream:
+        import asyncio
+        # Wait for all background operations to complete. Parallel mode needs longer
+        # due to concurrent operations. The delay is necessary because Python's streaming
+        # doesn't have a completion Promise like TypeScript's result.completed.
+        delay = 3.0 if run_in_parallel else 2.0
+        await asyncio.sleep(delay)  # Wait for all background operations
 
     conversation_id = await session._get_session_id()
     if not conversation_id:
@@ -285,6 +341,15 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
                     role = item.get("role", "unknown")
                     content = item.get("content", [])
                     text = content[0].get("text", "")[:50] if content else ""
+                    print(f"  [{idx}] type={item_type}, role={role}, text={text}...")
+                else:
+                    print(f"  [{idx}] type={item_type}")
+            elif hasattr(item, 'type'):
+                item_type = item.type
+                if item_type == "message" and hasattr(item, 'role') and hasattr(item, 'content'):
+                    role = item.role
+                    content = item.content
+                    text = content[0].text[:50] if (content and hasattr(content[0], 'text')) else ""
                     print(f"  [{idx}] type={item_type}, role={role}, text={text}...")
                 else:
                     print(f"  [{idx}] type={item_type}")

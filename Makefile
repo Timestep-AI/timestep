@@ -14,6 +14,8 @@ test-python:
 	uv run pytest tests/test_same_language_py_to_py.py -v -x
 
 test-typescript:
+	cd /home/mjschock/Projects/personal/openai-agents-js && \
+	pnpm build && cd - && \
 	cd typescript && \
 	npx tsx tests/test_run_agent.ts && \
 	npx tsx tests/test_same_language_ts_to_ts.ts
