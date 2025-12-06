@@ -3,6 +3,8 @@
 import sys
 import types
 import importlib
+import importlib.util
+from pathlib import Path
 
 # Try to import from vendored code first (for published packages), 
 # then fall back to installed package (for development)
@@ -19,16 +21,26 @@ try:
     sys.modules['agents'] = _agents_proxy
     
     # Pre-populate key submodules that are imported during module initialization
-    # We need to import them from the vendored location and manually register them
-    # with the 'agents.' prefix so absolute imports work
+    # Load them directly from file system to avoid import resolution issues
     try:
-        _model_settings_module = importlib.import_module('timestep._vendored.agents.model_settings')
-        _model_settings_module.__name__ = 'agents.model_settings'
-        _model_settings_module.__package__ = 'agents'
-        sys.modules['agents.model_settings'] = _model_settings_module
-        # Also set it as an attribute on the agents module
-        setattr(_agents_proxy, 'model_settings', _model_settings_module)
-    except ImportError:
+        # Get the path to the model_settings module
+        _vendored_path = Path(__file__).parent / '_vendored' / 'agents'
+        _model_settings_file = _vendored_path / 'model_settings.py'
+        
+        if _model_settings_file.exists():
+            # Load the module directly from file
+            spec = importlib.util.spec_from_file_location('agents.model_settings', _model_settings_file)
+            if spec and spec.loader:
+                _model_settings_module = importlib.util.module_from_spec(spec)
+                _model_settings_module.__name__ = 'agents.model_settings'
+                _model_settings_module.__package__ = 'agents'
+                # Execute the module
+                spec.loader.exec_module(_model_settings_module)
+                # Register it in sys.modules
+                sys.modules['agents.model_settings'] = _model_settings_module
+                # Also set it as an attribute on the agents module
+                setattr(_agents_proxy, 'model_settings', _model_settings_module)
+    except (ImportError, FileNotFoundError, AttributeError):
         pass
     
     # Now import the main vendored module - its internal imports will find 'agents' in sys.modules
