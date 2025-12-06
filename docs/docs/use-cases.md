@@ -14,7 +14,10 @@ One of Timestep's core features is durable execution with built-in state persist
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    state_store = RunStateStore("agent_state.json", agent)
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Run agent
     result = await run_agent(agent, input_items, session, stream=False)
@@ -44,7 +47,10 @@ One of Timestep's core features is durable execution with built-in state persist
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    const stateStore = new RunStateStore('agent_state.json', agent);
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Run agent
     let result = await runAgent(agent, inputItems, session, false);
@@ -83,7 +89,10 @@ Start execution in Python, interrupt for tool approval, and resume in TypeScript
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    state_store = RunStateStore("cross_lang_state.json", agent)
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Run until interruption
     result = await run_agent(agent, input_items, session, stream=False)
@@ -105,7 +114,10 @@ Start execution in Python, interrupt for tool approval, and resume in TypeScript
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Load state saved from Python
     const savedState = await stateStore.load();
@@ -131,7 +143,10 @@ Start execution in TypeScript, interrupt for tool approval, and resume in Python
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Run until interruption
     let result = await runAgent(agent, inputItems, session, false);
@@ -153,7 +168,10 @@ Start execution in TypeScript, interrupt for tool approval, and resume in Python
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    state_store = RunStateStore("cross_lang_state.json", agent)
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Load state saved from TypeScript
     saved_state = await state_store.load()

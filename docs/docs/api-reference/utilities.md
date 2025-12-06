@@ -196,7 +196,7 @@ This is particularly important for streaming results, where background operation
 
 ## RunStateStore
 
-A utility class for persisting and loading agent run state to/from files. Useful for saving and resuming agent conversations.
+A utility class for persisting and loading agent run state to/from a database (PGLite by default, or PostgreSQL). Useful for saving and resuming agent conversations with cross-language compatibility.
 
 ### Class Definition
 
@@ -204,20 +204,35 @@ A utility class for persisting and loading agent run state to/from files. Useful
 
     ```python
     class RunStateStore:
-        def __init__(self, file_path: str, agent: Agent)
+        def __init__(
+            self,
+            agent: Agent,
+            session_id: Optional[str] = None,
+            connection_string: Optional[str] = None,
+            use_pglite: Optional[bool] = None,
+            pglite_path: Optional[str] = None
+        )
         async def save(self, state: Any) -> None
         async def load(self) -> Any
         async def clear(self) -> None
+        async def close(self) -> None
     ```
 
 === "TypeScript"
 
     ```typescript
     export class RunStateStore {
-      constructor(filePath: string, agent: Agent)
+      constructor(options: {
+        agent: Agent;
+        sessionId?: string;
+        connectionString?: string;
+        usePglite?: boolean;
+        pglitePath?: string;
+      })
       async save(state: any): Promise<void>
       async load(): Promise<any>
       async clear(): Promise<void>
+      async close(): Promise<void>
     }
     ```
 
@@ -226,27 +241,43 @@ A utility class for persisting and loading agent run state to/from files. Useful
 === "Python"
 
     ```python
-    def __init__(self, file_path: str, agent: Agent)
+    def __init__(
+        self,
+        agent: Agent,
+        session_id: Optional[str] = None,
+        connection_string: Optional[str] = None,
+        use_pglite: Optional[bool] = None,
+        pglite_path: Optional[str] = None
+    )
     ```
 
 === "TypeScript"
 
     ```typescript
-    constructor(filePath: string, agent: Agent)
+    constructor(options: {
+      agent: Agent;
+      sessionId?: string;
+      connectionString?: string;
+      usePglite?: boolean;
+      pglitePath?: string;
+    })
     ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `file_path` / `filePath` | `string` | The path to the file where state will be stored. |
 | `agent` | `Agent` | The agent instance. Required for loading state. |
+| `session_id` / `sessionId` | `string \| undefined` | Session ID to use as identifier. If not provided, will be generated automatically. |
+| `connection_string` / `connectionString` | `string \| undefined` | PostgreSQL connection string. If not provided, uses PGLite (default). |
+| `use_pglite` / `usePglite` | `boolean \| undefined` | Whether to use PGLite. Defaults to `True` if no connection string is provided. |
+| `pglite_path` / `pglitePath` | `string \| undefined` | Path for PGLite data directory. Defaults to platform-specific app directory. |
 
 ### Methods
 
 #### `save()`
 
-Saves the run state to a file.
+Saves the run state to the database.
 
 === "Python"
 
@@ -272,31 +303,39 @@ Saves the run state to a file.
 
     ```python
     from timestep import RunStateStore
-    from agents import Agent, RunState
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
-    store = RunStateStore("state.json", agent)
+    session = Session()
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Save state
-    await store.save(run_state)
+    await state_store.save(run_state)
     ```
 
 === "TypeScript"
 
     ```typescript
     import { RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, RunState } from '@openai/agents';
+    import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4.1' });
-    const store = new RunStateStore('state.json', agent);
+    const session = new Session();
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Save state
-    await store.save(runState);
+    await stateStore.save(runState);
     ```
 
 #### `load()`
 
-Loads run state from a file.
+Loads run state from the database.
 
 === "Python"
 
@@ -322,31 +361,39 @@ Loads run state from a file.
 
     ```python
     from timestep import RunStateStore
-    from agents import Agent
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
-    store = RunStateStore("state.json", agent)
+    session = Session()
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Load state
-    run_state = await store.load()
+    run_state = await state_store.load()
     ```
 
 === "TypeScript"
 
     ```typescript
     import { RunStateStore } from '@timestep-ai/timestep';
-    import { Agent } from '@openai/agents';
+    import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4.1' });
-    const store = new RunStateStore('state.json', agent);
+    const session = new Session();
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Load state
-    const runState = await store.load();
+    const runState = await stateStore.load();
     ```
 
 #### `clear()`
 
-Deletes the state file.
+Marks the state as inactive (soft delete) in the database.
 
 === "Python"
 
@@ -366,26 +413,66 @@ Deletes the state file.
 
     ```python
     from timestep import RunStateStore
-    from agents import Agent
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
-    store = RunStateStore("state.json", agent)
+    session = Session()
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Clear saved state
-    await store.clear()
+    await state_store.clear()
     ```
 
 === "TypeScript"
 
     ```typescript
     import { RunStateStore } from '@timestep-ai/timestep';
-    import { Agent } from '@openai/agents';
+    import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4.1' });
-    const store = new RunStateStore('state.json', agent);
+    const session = new Session();
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Clear saved state
-    await store.clear();
+    await stateStore.clear();
+    ```
+
+#### `close()`
+
+Closes the database connection.
+
+=== "Python"
+
+    ```python
+    async def close(self) -> None
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    async close(): Promise<void>
+    ```
+
+##### Example
+
+=== "Python"
+
+    ```python
+    # Close connection when done
+    await state_store.close()
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    // Close connection when done
+    await stateStore.close();
     ```
 
 ### Complete Example
@@ -398,11 +485,14 @@ Deletes the state file.
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    store = RunStateStore("conversation.json", agent)
+    state_store = RunStateStore(
+        agent=agent,
+        session_id=await session._get_session_id()
+    )
 
     # Try to load existing state
     try:
-        run_state = await store.load()
+        run_state = await state_store.load()
         print("Resuming conversation")
     except FileNotFoundError:
         run_state = [{"role": "user", "content": "Hello"}]
@@ -416,10 +506,10 @@ Deletes the state file.
     if result.interruptions:
         # Save state for later resume
         state = result.to_state()
-        await store.save(state)
+        await state_store.save(state)
         
         # Load and approve interruptions
-        loaded_state = await store.load()
+        loaded_state = await state_store.load()
         for interruption in loaded_state.get_interruptions():
             loaded_state.approve(interruption)
         
@@ -428,7 +518,10 @@ Deletes the state file.
         result = await consume_result(result)
 
     # Save state for next time
-    await store.save(result.state)
+    await state_store.save(result.to_state())
+    
+    # Close connection when done
+    await state_store.close()
     ```
 
 === "TypeScript"
@@ -439,12 +532,15 @@ Deletes the state file.
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    const store = new RunStateStore('conversation.json', agent);
+    const stateStore = new RunStateStore({
+      agent,
+      sessionId: await session.getSessionId()
+    });
 
     // Try to load existing state
     let runInput;
     try {
-      runInput = await store.load();
+      runInput = await stateStore.load();
       console.log('Resuming conversation');
     } catch {
       runInput = [{ role: 'user', content: 'Hello' }];
@@ -458,10 +554,10 @@ Deletes the state file.
     // Handle interruptions
     if (result.interruptions?.length) {
       // Save state for later resume
-      await store.save(result.state);
+      await stateStore.save(result.state);
       
       // Load and approve interruptions
-      const loadedState = await store.load();
+      const loadedState = await stateStore.load();
       for (const interruption of loadedState.getInterruptions()) {
         loadedState.approve(interruption);
       }
@@ -472,12 +568,15 @@ Deletes the state file.
     }
 
     // Save state for next time
-    await store.save(result.state);
+    await stateStore.save(result.state);
+    
+    // Close connection when done
+    await stateStore.close();
     ```
 
 ### Cross-Language State Transfer Example
 
-`RunStateStore` enables seamless state transfer between Python and TypeScript:
+`RunStateStore` enables seamless state transfer between Python and TypeScript using a shared database (PGLite or PostgreSQL):
 
 === "Python → TypeScript"
 
@@ -488,7 +587,8 @@ Deletes the state file.
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    store = RunStateStore("cross_lang_state.json", agent)
+    session_id = await session._get_session_id()
+    state_store = RunStateStore(agent=agent, session_id=session_id)
 
     result = await run_agent(agent, input_items, session, stream=False)
     result = await consume_result(result)
@@ -496,7 +596,8 @@ Deletes the state file.
     if result.interruptions:
         # Save state - can be loaded in TypeScript!
         state = result.to_state()
-        await store.save(state)
+        await state_store.save(state)
+        print(f"State saved. Resume in TypeScript with session_id: {session_id}")
     ```
 
     ```typescript
@@ -506,10 +607,11 @@ Deletes the state file.
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    const store = new RunStateStore('cross_lang_state.json', agent);
+    const sessionId = await session.getSessionId();
+    const stateStore = new RunStateStore({ agent, sessionId });
 
-    // Load state saved from Python
-    const savedState = await store.load();
+    // Load state saved from Python (using same session_id)
+    const savedState = await stateStore.load();
 
     // Approve interruptions
     for (const interruption of savedState.getInterruptions()) {
@@ -529,14 +631,16 @@ Deletes the state file.
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    const store = new RunStateStore('cross_lang_state.json', agent);
+    const sessionId = await session.getSessionId();
+    const stateStore = new RunStateStore({ agent, sessionId });
 
     let result = await runAgent(agent, inputItems, session, false);
     result = await consumeResult(result);
 
     if (result.interruptions?.length) {
       // Save state - can be loaded in Python!
-      await store.save(result.state);
+      await stateStore.save(result.state);
+      console.log(`State saved. Resume in Python with session_id: ${sessionId}`);
     }
     ```
 
@@ -547,10 +651,11 @@ Deletes the state file.
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    store = RunStateStore("cross_lang_state.json", agent)
+    session_id = await session._get_session_id()
+    state_store = RunStateStore(agent=agent, session_id=session_id)
 
-    # Load state saved from TypeScript
-    saved_state = await store.load()
+    # Load state saved from TypeScript (using same session_id)
+    saved_state = await state_store.load()
 
     # Approve interruptions
     for interruption in saved_state.get_interruptions():

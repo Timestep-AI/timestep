@@ -256,7 +256,7 @@ The `OllamaModel` class converts Ollama API responses to OpenAI-compatible forma
 
 - Same API names/signatures.
 - Same routing behavior and state format.
-- State files/rows are interchangeable between languages.
+- State records in the database are interchangeable between languages.
 
 ## Performance Considerations
 
