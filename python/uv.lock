@@ -981,7 +981,7 @@ wheels = [
 
 [[package]]
 name = "timestep"
-version = "2026.0.5"
+version = "2026.0.6"
 source = { editable = "." }
 dependencies = [
     { name = "firecrawl-py" },

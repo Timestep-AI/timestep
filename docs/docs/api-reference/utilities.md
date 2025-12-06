@@ -412,6 +412,21 @@ Deletes the state file.
     result = await run_agent(agent, run_state, session, stream=False)
     result = await consume_result(result)
 
+    # Handle interruptions
+    if result.interruptions:
+        # Save state for later resume
+        state = result.to_state()
+        await store.save(state)
+        
+        # Load and approve interruptions
+        loaded_state = await store.load()
+        for interruption in loaded_state.get_interruptions():
+            loaded_state.approve(interruption)
+        
+        # Resume execution
+        result = await run_agent(agent, loaded_state, session, stream=False)
+        result = await consume_result(result)
+
     # Save state for next time
     await store.save(result.state)
     ```
@@ -440,8 +455,109 @@ Deletes the state file.
     let result = await runAgent(agent, runInput, session, false);
     result = await consumeResult(result);
 
+    // Handle interruptions
+    if (result.interruptions?.length) {
+      // Save state for later resume
+      await store.save(result.state);
+      
+      // Load and approve interruptions
+      const loadedState = await store.load();
+      for (const interruption of loadedState.getInterruptions()) {
+        loadedState.approve(interruption);
+      }
+      
+      // Resume execution
+      result = await runAgent(agent, loadedState, session, false);
+      result = await consumeResult(result);
+    }
+
     // Save state for next time
     await store.save(result.state);
+    ```
+
+### Cross-Language State Transfer Example
+
+`RunStateStore` enables seamless state transfer between Python and TypeScript:
+
+=== "Python → TypeScript"
+
+    ```python
+    # Python: Save state
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    store = RunStateStore("cross_lang_state.json", agent)
+
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
+
+    if result.interruptions:
+        # Save state - can be loaded in TypeScript!
+        state = result.to_state()
+        await store.save(state)
+    ```
+
+    ```typescript
+    // TypeScript: Load Python state and resume
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const store = new RunStateStore('cross_lang_state.json', agent);
+
+    // Load state saved from Python
+    const savedState = await store.load();
+
+    // Approve interruptions
+    for (const interruption of savedState.getInterruptions()) {
+      savedState.approve(interruption);
+    }
+
+    // Resume execution
+    const result = await runAgent(agent, savedState, session, false);
+    ```
+
+=== "TypeScript → Python"
+
+    ```typescript
+    // TypeScript: Save state
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const store = new RunStateStore('cross_lang_state.json', agent);
+
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
+
+    if (result.interruptions?.length) {
+      // Save state - can be loaded in Python!
+      await store.save(result.state);
+    }
+    ```
+
+    ```python
+    # Python: Load TypeScript state and resume
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    store = RunStateStore("cross_lang_state.json", agent)
+
+    # Load state saved from TypeScript
+    saved_state = await store.load()
+
+    # Approve interruptions
+    for interruption in saved_state.get_interruptions():
+        saved_state.approve(interruption)
+
+    # Resume execution
+    result = await run_agent(agent, saved_state, session, False)
     ```
 
 ## InterruptionException

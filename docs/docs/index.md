@@ -1,6 +1,17 @@
 # Timestep Documentation
 
-Welcome to the Timestep documentation! Timestep provides multi-model provider implementations for OpenAI Agents, supporting both OpenAI and Ollama models. This library works seamlessly with **local Ollama instances** and **Ollama Cloud**, giving you the flexibility to run models locally or in the cloud.
+Welcome to the Timestep documentation! Timestep is a clean, RISC-style abstraction layer over the OpenAI Agents SDK, providing durable execution and cross-language state persistence for AI agent workflows.
+
+## Architecture Philosophy: RISC vs CISC
+
+Timestep is built on the principle that the OpenAI Agents SDK is like a **CISC (Complex Instruction Set Computer)** architecture—powerful and feature-rich, but with many abstractions and layers that can be complex to work with. Timestep provides a **RISC (Reduced Instruction Set Computer)** approach—a simpler, cleaner interface that exposes the fundamental components needed for building robust agent systems.
+
+### What This Means
+
+- **Simpler API**: Clean abstractions that focus on essential operations
+- **Durable Execution**: Built-in support for state persistence and resumable workflows
+- **Cross-Language Parity**: Identical behavior and APIs in Python and TypeScript
+- **Composable**: Fundamental building blocks that can be combined as needed
 
 ## Packages
 
@@ -13,78 +24,132 @@ Welcome to the Timestep documentation! Timestep provides multi-model provider im
 - [Installation and Quick Start](getting-started.md) - Get up and running with Timestep in minutes
 
 ### Core Concepts
-- [Architecture](architecture.md) - Understand how Timestep works under the hood
-- [Use Cases](use-cases.md) - Common patterns and real-world examples
+- [Architecture](architecture.md) - Understand how Timestep works under the hood, including RISC design principles
+- [Use Cases](use-cases.md) - Common patterns and real-world examples, including durable execution
 
 ### API Reference
+- [Utilities](api-reference/utilities.md) - Core utilities: `run_agent`, `RunStateStore`, `consume_result`
 - [MultiModelProvider](api-reference/multi-model-provider.md) - Automatic model routing
 - [OllamaModelProvider](api-reference/ollama-model-provider.md) - Ollama integration
 - [MultiModelProviderMap](api-reference/multi-model-provider-map.md) - Custom provider mappings
 - [Tools](api-reference/tools.md) - Built-in tools like web search
-- [Utilities](api-reference/utilities.md) - Helper functions and classes
 
-## Features
+## Core Features
 
-- **Multi-Model Support**: Seamlessly switch between OpenAI and Ollama models
+### 🔄 Durable Execution
+
+Timestep enables durable, resumable agent workflows with built-in state persistence:
+
+- **Interrupt and Resume**: Pause agent execution at any point and resume later
+- **Cross-Language State Transfer**: Start in Python, interrupt for tool approval, and resume in TypeScript (or vice versa)
+- **Persistent Sessions**: Agent state is stored in a database (DBOS/PGLite) for durability
+- **Human-in-the-Loop**: Seamlessly handle interruptions for approvals, tool calls, or user input
+
+### 🌐 Cross-Language State Persistence
+
+Timestep provides identical implementations in Python and TypeScript with full state compatibility:
+
+=== "Python"
+
+    ```python
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("state.json", agent)
+
+    # Run agent and handle interruption
+    result = await run_agent(agent, input_items, session, stream=False)
+    if result.interruptions:
+        # Save state for cross-language resume
+        await state_store.save(result.state)
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('state.json', agent);
+
+    // Load state saved from Python
+    const savedState = await stateStore.load();
+
+    // Approve interruptions and continue
+    for (const interruption of savedState.getInterruptions()) {
+      savedState.approve(interruption);
+    }
+
+    // Resume execution
+    const result = await runAgent(agent, savedState, session, false);
+    ```
+
+### 🔌 Multi-Model Provider Support
+
+Timestep also supports multiple AI model providers through a unified interface:
+
+- **OpenAI**: Full support for all OpenAI models
+- **Ollama**: Support for both local Ollama instances and Ollama Cloud
 - **Automatic Routing**: Model names with prefixes (e.g., `ollama/llama3`) automatically route to the correct provider
-- **Customizable**: Add your own providers using `MultiModelProviderMap`
-- **OpenAI Compatible**: Works with the OpenAI Agents SDK
-- **Ollama Integration**: Full support for both **local Ollama instances** and **Ollama Cloud** - switch seamlessly between local and cloud models
-- **Cross-Language**: Equivalent implementations in Python and TypeScript
+- **Extensible**: Add custom providers using `MultiModelProviderMap`
 
 ## Quick Example
 
 === "Python"
 
     ```python
-    from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-    from agents import Agent, Runner, RunConfig
-    import os
+    from timestep import run_agent, RunStateStore, consume_result
+    from agents import Agent, Session
 
-    # Setup provider with Ollama Cloud support
-    model_provider_map = MultiModelProviderMap()
-    if os.environ.get("OLLAMA_API_KEY"):
-        model_provider_map.add_provider(
-            "ollama",
-            OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
-        )
+    # Create agent
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("agent_state.json", agent)
 
-    model_provider = MultiModelProvider(
-        provider_map=model_provider_map,
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-    )
+    # Run with durable state
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
 
-    # Create agent and run
-    agent = Agent(model="ollama/llama3")
-    run_config = RunConfig(model_provider=model_provider)
-    result = Runner.run_streamed(agent, agent_input, run_config=run_config)
+    # Handle interruptions
+    if result.interruptions:
+        # Save state for later resume (even in TypeScript!)
+        await state_store.save(result.state)
     ```
 
 === "TypeScript"
 
     ```typescript
-    import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
-    import { Agent, Runner } from '@openai/agents';
+    import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
 
-    // Setup provider with Ollama Cloud support
-    const modelProviderMap = new MultiModelProviderMap();
-    if (Deno.env.get('OLLAMA_API_KEY')) {
-      modelProviderMap.addProvider(
-        'ollama',
-        new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
-      );
+    // Create agent
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('agent_state.json', agent);
+
+    // Run with durable state
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
+
+    // Handle interruptions
+    if (result.interruptions?.length) {
+      // Save state for later resume (even in Python!)
+      await stateStore.save(result.state);
     }
-
-    const modelProvider = new MultiModelProvider({
-      provider_map: modelProviderMap,
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
-    });
-
-    // Create agent and run
-    const agent = new Agent({ model: 'ollama/llama3' });
-    const runner = new Runner({ modelProvider });
-    const result = await runner.run(agent, agentInput, { stream: true });
     ```
+
+## Durable Execution with DBOS/PGLite
+
+Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) to provide durable execution:
+
+- **State Persistence**: Agent run states are stored in PostgreSQL
+- **Cross-Language Compatibility**: State format is identical between Python and TypeScript
+- **Resumable Workflows**: Load any saved state and continue execution
+- **Database Schema**: See [database/README.md](../../database/README.md) for the complete schema
 
 ## Requirements
 
@@ -102,4 +167,3 @@ Welcome to the Timestep documentation! Timestep provides multi-model provider im
 ## License
 
 MIT License - see [LICENSE](https://github.com/Timestep-AI/timestep/blob/main/LICENSE) file for details.
-

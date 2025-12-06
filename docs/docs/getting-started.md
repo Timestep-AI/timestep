@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide will help you get up and running with Timestep in both Python and TypeScript.
+This guide will help you get up and running with Timestep in both Python and TypeScript, focusing on durable execution and cross-language state persistence.
 
 ## Installation
 
@@ -48,7 +48,7 @@ You'll need an OpenAI API key to use OpenAI models. Set it as an environment var
 export OPENAI_API_KEY="your-api-key-here"
 ```
 
-### Ollama Setup
+### Ollama Setup (Optional)
 
 Timestep supports both **local Ollama instances** and **Ollama Cloud**. You can use either or both!
 
@@ -75,11 +75,167 @@ For local development or when you want to run models on your own infrastructure:
 
 Timestep will automatically detect and use your local Ollama instance if no API key is provided.
 
-## Quick Start
+## Quick Start: Durable Execution
 
-### Using MultiModelProvider (Recommended)
+The core feature of Timestep is durable execution with cross-language state persistence. Let's start with a simple example:
 
-The `MultiModelProvider` automatically routes requests to the appropriate provider based on model name prefixes. This is the recommended approach for most use cases.
+=== "Python"
+
+    ```python
+    from timestep import run_agent, RunStateStore, consume_result
+    from agents import Agent, Session
+
+    # Create agent
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("agent_state.json", agent)
+
+    # Run agent
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
+
+    # Handle interruptions
+    if result.interruptions:
+        # Save state for later resume (even in TypeScript!)
+        state = result.to_state()
+        await state_store.save(state)
+        
+        # Load state and approve interruptions
+        loaded_state = await state_store.load()
+        for interruption in loaded_state.get_interruptions():
+            loaded_state.approve(interruption)
+        
+        # Resume execution
+        result = await run_agent(agent, loaded_state, session, stream=False)
+        result = await consume_result(result)
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    // Create agent
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('agent_state.json', agent);
+
+    // Run agent
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
+
+    // Handle interruptions
+    if (result.interruptions?.length) {
+      // Save state for later resume (even in Python!)
+      await stateStore.save(result.state);
+      
+      // Load state and approve interruptions
+      const loadedState = await stateStore.load();
+      for (const interruption of loadedState.getInterruptions()) {
+        loadedState.approve(interruption);
+      }
+      
+      // Resume execution
+      result = await runAgent(agent, loadedState, session, false);
+      result = await consumeResult(result);
+    }
+    ```
+
+## Cross-Language State Transfer
+
+One of Timestep's unique features is the ability to start execution in one language and resume in another:
+
+=== "Python → TypeScript"
+
+    ```python
+    # Python: Start agent and save state at interruption
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("cross_lang_state.json", agent)
+
+    # Run until interruption
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
+
+    if result.interruptions:
+        # Save state - can be loaded in TypeScript!
+        state = result.to_state()
+        await state_store.save(state)
+        session_id = await session._get_session_id()
+        print(f"State saved. Resume in TypeScript with session_id: {session_id}")
+    ```
+
+    ```typescript
+    // TypeScript: Load Python state and resume
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+
+    // Load state saved from Python
+    const savedState = await stateStore.load();
+
+    // Approve interruptions
+    for (const interruption of savedState.getInterruptions()) {
+      savedState.approve(interruption);
+    }
+
+    // Resume execution
+    const result = await runAgent(agent, savedState, session, false);
+    ```
+
+=== "TypeScript → Python"
+
+    ```typescript
+    // TypeScript: Start agent and save state at interruption
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+
+    // Run until interruption
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
+
+    if (result.interruptions?.length) {
+      // Save state - can be loaded in Python!
+      await stateStore.save(result.state);
+      const sessionId = await session.getSessionId();
+      console.log(`State saved. Resume in Python with session_id: ${sessionId}`);
+    }
+    ```
+
+    ```python
+    # Python: Load TypeScript state and resume
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("cross_lang_state.json", agent)
+
+    # Load state saved from TypeScript
+    saved_state = await state_store.load()
+
+    # Approve interruptions
+    for interruption in saved_state.get_interruptions():
+        saved_state.approve(interruption)
+
+    # Resume execution
+    result = await run_agent(agent, saved_state, session, False)
+    ```
+
+## Multi-Model Provider Support
+
+Timestep also provides multi-model provider support for OpenAI and Ollama:
 
 === "Python"
 
@@ -241,9 +397,24 @@ Here's a summary of the environment variables you might need:
     - **Ollama Cloud**: Set `OLLAMA_API_KEY` - no installation or local setup required, perfect for production
     - **Local Ollama**: Omit `OLLAMA_API_KEY` - requires local Ollama installation, great for development and offline use
 
+## Durable Execution with DBOS/PGLite
+
+Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) to provide durable execution:
+
+- **State Persistence**: Agent run states are stored in PostgreSQL
+- **Cross-Language Compatibility**: State format is identical between Python and TypeScript
+- **Resumable Workflows**: Load any saved state and continue execution
+- **Database Schema**: See [database/README.md](../../database/README.md) for the complete schema
+
+The database schema supports:
+- Agent definitions and configurations
+- Run state snapshots for resumability
+- Session history and conversation items
+- Tool calls and interruptions
+- Usage metrics and cost tracking
+
 ## Next Steps
 
-- Learn about the [Architecture](architecture.md) to understand how Timestep works
-- Explore [Use Cases](use-cases.md) for common patterns and examples
-- Check out the [API Reference](api-reference/multi-model-provider.md) for detailed documentation
-
+- Learn about the [Architecture](architecture.md) to understand how Timestep works, including RISC design principles
+- Explore [Use Cases](use-cases.md) for common patterns and examples, including durable execution workflows
+- Check out the [API Reference](api-reference/utilities.md) for detailed documentation on `run_agent`, `RunStateStore`, and other utilities

@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.5",
+  "version": "2026.0.6",
   "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsup timestep/index.ts --format esm --dts --sourcemap --bundle --no-splitting --noExternal @openai/agents --noExternal @openai/agents-core --noExternal @openai/agents-openai",
+    "build": "tsup timestep/index.ts --format esm --dts --sourcemap --no-splitting --noExternal @openai/agents --noExternal @openai/agents-core --noExternal @openai/agents-openai",
     "test": "tsx tests/test_run_agent.ts"
   },
   "keywords": [],

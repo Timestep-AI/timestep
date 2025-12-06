@@ -1,6 +1,170 @@
 # Use Cases
 
-This document covers common patterns and use cases for Timestep, with practical examples in both Python and TypeScript.
+This document covers common patterns and use cases for Timestep, with practical examples in both Python and TypeScript, focusing on durable execution and cross-language state persistence.
+
+## Durable Execution with Interruptions
+
+One of Timestep's core features is durable execution with built-in state persistence. This enables resumable workflows and human-in-the-loop patterns.
+
+=== "Python"
+
+    ```python
+    from timestep import run_agent, RunStateStore, consume_result
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("agent_state.json", agent)
+
+    # Run agent
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
+
+    # Handle interruptions (e.g., tool calls requiring approval)
+    if result.interruptions:
+        # Save state for later resume
+        state = result.to_state()
+        await state_store.save(state)
+        
+        # Load state and approve interruptions
+        loaded_state = await state_store.load()
+        for interruption in loaded_state.get_interruptions():
+            loaded_state.approve(interruption)
+        
+        # Resume execution
+        result = await run_agent(agent, loaded_state, session, stream=False)
+        result = await consume_result(result)
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('agent_state.json', agent);
+
+    // Run agent
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
+
+    // Handle interruptions (e.g., tool calls requiring approval)
+    if (result.interruptions?.length) {
+      // Save state for later resume
+      await stateStore.save(result.state);
+      
+      // Load state and approve interruptions
+      const loadedState = await stateStore.load();
+      for (const interruption of loadedState.getInterruptions()) {
+        loadedState.approve(interruption);
+      }
+      
+      // Resume execution
+      result = await runAgent(agent, loadedState, session, false);
+      result = await consumeResult(result);
+    }
+    ```
+
+## Cross-Language State Transfer
+
+Timestep's unique feature is the ability to start execution in one language and resume in another, enabling flexible deployment architectures.
+
+### Python → TypeScript
+
+Start execution in Python, interrupt for tool approval, and resume in TypeScript:
+
+=== "Python: Start and Save"
+
+    ```python
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("cross_lang_state.json", agent)
+
+    # Run until interruption
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
+
+    if result.interruptions:
+        # Save state - can be loaded in TypeScript!
+        state = result.to_state()
+        await state_store.save(state)
+        session_id = await session._get_session_id()
+        print(f"State saved. Resume in TypeScript with session_id: {session_id}")
+    ```
+
+=== "TypeScript: Resume"
+
+    ```typescript
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+
+    // Load state saved from Python
+    const savedState = await stateStore.load();
+
+    // Approve interruptions
+    for (const interruption of savedState.getInterruptions()) {
+      savedState.approve(interruption);
+    }
+
+    // Resume execution
+    const result = await runAgent(agent, savedState, session, false);
+    ```
+
+### TypeScript → Python
+
+Start execution in TypeScript, interrupt for tool approval, and resume in Python:
+
+=== "TypeScript: Start and Save"
+
+    ```typescript
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    const agent = new Agent({ model: 'gpt-4' });
+    const session = new Session();
+    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+
+    // Run until interruption
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
+
+    if (result.interruptions?.length) {
+      // Save state - can be loaded in Python!
+      await stateStore.save(result.state);
+      const sessionId = await session.getSessionId();
+      console.log(`State saved. Resume in Python with session_id: ${sessionId}`);
+    }
+    ```
+
+=== "Python: Resume"
+
+    ```python
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
+
+    agent = Agent(model="gpt-4")
+    session = Session()
+    state_store = RunStateStore("cross_lang_state.json", agent)
+
+    # Load state saved from TypeScript
+    saved_state = await state_store.load()
+
+    # Approve interruptions
+    for interruption in saved_state.get_interruptions():
+        saved_state.approve(interruption)
+
+    # Resume execution
+    result = await run_agent(agent, saved_state, session, False)
+    ```
 
 ## Switching Between OpenAI and Ollama
 
@@ -145,92 +309,78 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
 === "Python - Streaming"
 
     ```python
-    from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-    from agents import Agent, Runner, RunConfig
-    import os
-
-    model_provider = MultiModelProvider(
-        provider_map=MultiModelProviderMap(),
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-    )
+    from timestep import run_agent, consume_result
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4")
-    run_config = RunConfig(model_provider=model_provider)
+    session = Session()
 
     # Streaming response
-    result = Runner.run_streamed(agent, agent_input, run_config=run_config)
+    result = await run_agent(agent, input_items, session, stream=True)
     
     # Process stream events
     async for event in result.stream_events():
         # Handle streaming events
         print(event)
+    
+    # Ensure all events are consumed
+    result = await consume_result(result)
     ```
 
 === "Python - Non-Streaming"
 
     ```python
-    from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-    from agents import Agent, Runner, RunConfig
-    import os
-
-    model_provider = MultiModelProvider(
-        provider_map=MultiModelProviderMap(),
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-    )
+    from timestep import run_agent, consume_result
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4")
-    run_config = RunConfig(model_provider=model_provider)
+    session = Session()
 
     # Non-streaming response
-    result = await Runner.run(agent, agent_input, run_config=run_config)
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
     
     # Access final result
-    print(result.output)
+    print(result.final_output)
     ```
 
 === "TypeScript - Streaming"
 
     ```typescript
-    import { MultiModelProvider, MultiModelProviderMap } from '@timestep-ai/timestep';
-    import { Agent, Runner } from '@openai/agents';
-
-    const modelProvider = new MultiModelProvider({
-      provider_map: new MultiModelProviderMap(),
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
-    });
+    import { runAgent, consumeResult } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4' });
-    const runner = new Runner({ modelProvider });
+    const session = new Session();
 
     // Streaming response
-    const result = await runner.run(agent, agentInput, { stream: true });
+    const result = await runAgent(agent, inputItems, session, true);
     
     // Process stream
     for await (const event of result.toTextStream()) {
       // Handle streaming events
       console.log(event);
     }
+    
+    // Ensure all events are consumed
+    await consumeResult(result);
     ```
 
 === "TypeScript - Non-Streaming"
 
     ```typescript
-    import { MultiModelProvider, MultiModelProviderMap } from '@timestep-ai/timestep';
-    import { Agent, Runner } from '@openai/agents';
-
-    const modelProvider = new MultiModelProvider({
-      provider_map: new MultiModelProviderMap(),
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
-    });
+    import { runAgent, consumeResult } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4' });
-    const runner = new Runner({ modelProvider });
+    const session = new Session();
 
     // Non-streaming response
-    const result = await runner.run(agent, agentInput);
+    let result = await runAgent(agent, inputItems, session, false);
+    result = await consumeResult(result);
     
     // Access final result
-    console.log(result.output);
+    console.log(result.finalOutput);
     ```
 
 ## Error Handling Patterns
@@ -240,26 +390,21 @@ Handle errors gracefully when providers are unavailable or models fail.
 === "Python"
 
     ```python
-    from timestep import MultiModelProvider, OllamaModelProvider
-    from agents import Agent, Runner, RunConfig
+    from timestep import run_agent
+    from agents import Agent, Session
     from agents.exceptions import AgentsException, ModelBehaviorError
 
-    model_provider = MultiModelProvider(
-        provider_map=MultiModelProviderMap(),
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-    )
-
     agent = Agent(model="gpt-4")
-    run_config = RunConfig(model_provider=model_provider)
+    session = Session()
 
     try:
-        result = await Runner.run(agent, agent_input, run_config=run_config)
+        result = await run_agent(agent, input_items, session, stream=False)
     except ModelBehaviorError as e:
         # Handle model-specific errors
         print(f"Model error: {e}")
         # Fallback to different model
         fallback_agent = Agent(model="ollama/llama3")
-        result = await Runner.run(fallback_agent, agent_input, run_config=run_config)
+        result = await run_agent(fallback_agent, input_items, session, stream=False)
     except AgentsException as e:
         # Handle general agent errors
         print(f"Agent error: {e}")
@@ -268,26 +413,21 @@ Handle errors gracefully when providers are unavailable or models fail.
 === "TypeScript"
 
     ```typescript
-    import { MultiModelProvider, MultiModelProviderMap } from '@timestep-ai/timestep';
-    import { Agent, Runner, ModelBehaviorError, AgentsError } from '@openai/agents';
-
-    const modelProvider = new MultiModelProvider({
-      provider_map: new MultiModelProviderMap(),
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
-    });
+    import { runAgent } from '@timestep-ai/timestep';
+    import { Agent, Session, ModelBehaviorError, AgentsError } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4' });
-    const runner = new Runner({ modelProvider });
+    const session = new Session();
 
     try {
-      const result = await runner.run(agent, agentInput);
+      const result = await runAgent(agent, inputItems, session, false);
     } catch (e) {
       if (e instanceof ModelBehaviorError) {
         // Handle model-specific errors
         console.error('Model error:', e.message);
         // Fallback to different model
         const fallbackAgent = new Agent({ model: 'ollama/llama3' });
-        const result = await runner.run(fallbackAgent, agentInput);
+        const result = await runAgent(fallbackAgent, inputItems, session, false);
       } else if (e instanceof AgentsError) {
         // Handle general agent errors
         console.error('Agent error:', e.message);
@@ -304,7 +444,6 @@ Use sessions to maintain conversation context across multiple agent runs.
     ```python
     from timestep import run_agent, consume_result
     from agents import Agent, Session
-    import os
 
     # Create agent with model provider
     agent = Agent(model="gpt-4")
@@ -373,39 +512,31 @@ Timestep includes built-in tools like web search. Here's how to use them:
 === "Python"
 
     ```python
-    from timestep import web_search
-    from agents import Agent, Runner, RunConfig, Tool
-    from timestep import MultiModelProvider
+    from timestep import web_search, run_agent
+    from agents import Agent, Session
 
     # Create agent with tools
     tools = [web_search]
     agent = Agent(model="gpt-4", tools=tools)
+    session = Session()
 
-    model_provider = MultiModelProvider(
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-    )
-
-    run_config = RunConfig(model_provider=model_provider)
-    result = await Runner.run(agent, agent_input, run_config=run_config)
+    result = await run_agent(agent, input_items, session, stream=False)
+    result = await consume_result(result)
     ```
 
 === "TypeScript"
 
     ```typescript
-    import { webSearch } from '@timestep-ai/timestep';
-    import { Agent, Runner } from '@openai/agents';
-    import { MultiModelProvider } from '@timestep-ai/timestep';
+    import { webSearch, runAgent } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
 
     // Create agent with tools
     const tools = [webSearch];
     const agent = new Agent({ model: 'gpt-4', tools });
+    const session = new Session();
 
-    const modelProvider = new MultiModelProvider({
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
-    });
-
-    const runner = new Runner({ modelProvider });
-    const result = await runner.run(agent, agentInput);
+    const result = await runAgent(agent, inputItems, session, false);
+    const finalResult = await consumeResult(result);
     ```
 
 ## Cross-Language Compatibility
@@ -419,25 +550,27 @@ Both implementations support:
 - Same provider mapping approach
 - Same error handling patterns
 - Same session management
+- **Same state format for cross-language persistence**
 
 ### Language-Specific Notes
 
 **Python:**
-- Uses `RunConfig` for configuration
-- Uses `Runner.run_streamed()` for streaming
-- Uses `await Runner.run()` for non-streaming
+- Uses `run_agent()` for execution
+- Uses `RunStateStore` for state persistence
+- Uses `consume_result()` for result handling
 
 **TypeScript:**
-- Uses `Runner` constructor options
-- Uses `runner.run()` with `{ stream: true }` for streaming
-- Uses `await runner.run()` for non-streaming
+- Uses `runAgent()` for execution
+- Uses `RunStateStore` for state persistence
+- Uses `consumeResult()` for result handling
 
 ## Best Practices
 
 1. **Environment Variables**: Always use environment variables for API keys
 2. **Error Handling**: Implement fallback strategies for production
 3. **Session Management**: Use sessions for multi-turn conversations
-4. **Provider Selection**: Choose providers based on task requirements (cost, latency, privacy)
-5. **Streaming**: Use streaming for better UX in interactive applications
-6. **Testing**: Test with both OpenAI and Ollama to ensure compatibility
-
+4. **State Persistence**: Save state at interruption points for resumability
+5. **Cross-Language**: Leverage cross-language state transfer for flexible deployments
+6. **Provider Selection**: Choose providers based on task requirements (cost, latency, privacy)
+7. **Streaming**: Use streaming for better UX in interactive applications
+8. **Testing**: Test with both OpenAI and Ollama to ensure compatibility
