@@ -88,7 +88,8 @@ The core feature of Timestep is durable execution with cross-language state pers
     # Create agent
     agent = Agent(model="gpt-4")
     session = Session()
-    state_store = RunStateStore("agent_state.json", agent)
+    # RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
+    state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run agent
     result = await run_agent(agent, input_items, session, stream=False)
@@ -119,7 +120,11 @@ The core feature of Timestep is durable execution with cross-language state pers
     // Create agent
     const agent = new Agent({ model: 'gpt-4' });
     const session = new Session();
-    const stateStore = new RunStateStore('agent_state.json', agent);
+    // RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
+    const stateStore = new RunStateStore({ 
+      agent, 
+      sessionId: await session.getSessionId() 
+    });
 
     // Run agent
     let result = await runAgent(agent, inputItems, session, false);
@@ -155,7 +160,8 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     agent = Agent(model="gpt-4")
     session = Session()
-    state_store = RunStateStore("cross_lang_state.json", agent)
+    # Uses PGLite in shared app directory (~/.config/timestep)
+    state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run until interruption
     result = await run_agent(agent, input_items, session, stream=False)
@@ -176,7 +182,11 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     const agent = new Agent({ model: 'gpt-4' });
     const session = new Session();
-    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+    // Uses PGLite in shared app directory (~/.config/timestep)
+    const stateStore = new RunStateStore({ 
+      agent, 
+      sessionId: await session.getSessionId() 
+    });
 
     // Load state saved from Python
     const savedState = await stateStore.load();
@@ -199,7 +209,11 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     const agent = new Agent({ model: 'gpt-4' });
     const session = new Session();
-    const stateStore = new RunStateStore('cross_lang_state.json', agent);
+    // Uses PGLite in shared app directory (~/.config/timestep)
+    const stateStore = new RunStateStore({ 
+      agent, 
+      sessionId: await session.getSessionId() 
+    });
 
     // Run until interruption
     let result = await runAgent(agent, inputItems, session, false);
@@ -220,7 +234,8 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     agent = Agent(model="gpt-4")
     session = Session()
-    state_store = RunStateStore("cross_lang_state.json", agent)
+    # Uses PGLite in shared app directory (~/.config/timestep)
+    state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Load state saved from TypeScript
     saved_state = await state_store.load()
@@ -397,14 +412,34 @@ Here's a summary of the environment variables you might need:
     - **Ollama Cloud**: Set `OLLAMA_API_KEY` - no installation or local setup required, perfect for production
     - **Local Ollama**: Omit `OLLAMA_API_KEY` - requires local Ollama installation, great for development and offline use
 
-## Durable Execution with DBOS/PGLite
+## Durable Execution with PGLite
 
-Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) to provide durable execution:
+Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage backend for durable execution:
 
-- **State Persistence**: Agent run states are stored in PostgreSQL
+- **PGLite by Default**: No setup required - works out of the box
+- **Cross-Platform App Directory**: State stored in platform-appropriate directories (shared between Python and TypeScript):
+  - Linux: `~/.config/timestep/pglite/`
+  - macOS: `~/Library/Application Support/timestep/pglite/`
+  - Windows: `%APPDATA%/timestep/pglite/`
+- **PostgreSQL Option**: Use full PostgreSQL by setting `TIMESTEP_DB_URL` environment variable
+- **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution
 - **Database Schema**: See [database/README.md](../../database/README.md) for the complete schema
+
+### Python PGLite Setup
+
+For Python, PGLite runs via Node.js subprocess. You need:
+
+1. **Install Node.js**: Download from [nodejs.org](https://nodejs.org/)
+2. **Install PGLite**:
+   ```bash
+   npm install -g @electric-sql/pglite
+   ```
+   Or install locally in your project:
+   ```bash
+   npm install @electric-sql/pglite
+   ```
 
 The database schema supports:
 - Agent definitions and configurations

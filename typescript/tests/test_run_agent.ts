@@ -196,8 +196,7 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
     throw new Error('Failed to get session ID');
   }
 
-  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${currentSessionId}.json`);
-  const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
+  const stateStore = new RunStateStore({ agent: personalAssistantAgent, sessionId: currentSessionId });
 
   for (let i = 0; i < RUN_INPUTS.length; i++) {
     let runInput: AgentInputItem[] | any = RUN_INPUTS[i];
@@ -329,8 +328,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
     throw new Error('Failed to get session ID');
   }
 
-  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${currentSessionId}.json`);
-  const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
+  const stateStore = new RunStateStore({ agent: personalAssistantAgent, sessionId: currentSessionId });
 
   for (let i = startIndex; i < endIndex!; i++) {
     let runInput: AgentInputItem[] | any = RUN_INPUTS[i];
@@ -427,8 +425,7 @@ export async function runAgentTestFromPython(runInParallel: boolean = true, stre
   // Use the same session ID
   const session = new OpenAIConversationsSession({ conversationId: sessionId });
 
-  const stateFilePath = path.join(__dirname, '../../data', `agent_state_${sessionId}.json`);
-  const stateStore = new RunStateStore(stateFilePath, personalAssistantAgent);
+  const stateStore = new RunStateStore({ agent: personalAssistantAgent, sessionId: sessionId });
 
   // Load state saved by Python
   const loadedState = await stateStore.load();

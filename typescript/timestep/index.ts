@@ -2,11 +2,10 @@ export { OllamaModel } from './ollama_model.ts';
 export { OllamaModelProvider, type OllamaModelProviderOptions } from './ollama_model_provider.ts';
 export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provider.ts';
 export { webSearch } from './tools.ts';
-export { DatabaseRunStateStore } from './database_run_state_store.ts';
+export { RunStateStore } from './run_state_store.ts';
 
 import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
-import * as fs from 'fs/promises';
 
 export class InterruptionException extends Error {
   constructor(message: string = 'Agent execution interrupted for approval') {
@@ -15,93 +14,11 @@ export class InterruptionException extends Error {
   }
 }
 
-export class RunStateStore {
-  private filePath: string;
-  private agent: Agent;
+// File-based RunStateStore removed - use database-backed RunStateStore (PGLite by default)
+// Import from run_state_store.ts
 
-  constructor(filePath: string, agent: Agent) {
-    this.filePath = filePath;
-    this.agent = agent;
-  }
-
-  async save(state: any): Promise<void> {
-    await fs.writeFile(this.filePath, state.toString(), 'utf-8');
-  }
-
-  async load(): Promise<any> {
-    const content = await fs.readFile(this.filePath, 'utf-8');
-    const { RunState } = await import('@openai/agents');
-    return await RunState.fromString(this.agent, content);
-  }
-
-  async clear(): Promise<void> {
-    try {
-      await fs.unlink(this.filePath);
-    } catch {
-      // Ignore if file doesn't exist
-    }
-  }
-}
-
-export async function createRunStateStore(
-  agent: Agent,
-  options: {
-    filePath?: string;
-    runId?: string;
-    sessionId?: string;
-    connectionString?: string;
-    useDatabase?: boolean;
-  }
-): Promise<RunStateStore | DatabaseRunStateStore> {
-  /**
-   * Factory function to create a RunStateStore (file-based or database-backed).
-   *
-   * Auto-selects the appropriate storage backend:
-   * 1. Database if TIMESTEP_DB_URL is set or connectionString is provided
-   * 2. File-based storage as fallback
-   *
-   * @param agent - Agent instance
-   * @param options - Configuration options
-   * @returns RunStateStore or DatabaseRunStateStore instance
-   */
-  const { filePath, runId, sessionId, connectionString, useDatabase } = options;
-
-  // Auto-detect: try database first if connection string is available
-  const shouldUseDatabase =
-    useDatabase !== undefined
-      ? useDatabase
-      : Boolean(connectionString || Deno.env.get('TIMESTEP_DB_URL'));
-
-  if (shouldUseDatabase) {
-    try {
-      const store = new DatabaseRunStateStore({
-        runId,
-        agent,
-        connectionString,
-        sessionId,
-      });
-      // Test connection by trying to ensure connected
-      // This will throw if connection fails
-      await (store as any).ensureConnected();
-      return store;
-    } catch (e) {
-      // Fallback to file-based if database connection fails
-      if (!filePath) {
-        throw new Error(
-          'Database connection failed and no filePath provided. ' +
-          'Either provide a valid database connection or a filePath for file-based storage.'
-        );
-      }
-      return new RunStateStore(filePath, agent);
-    }
-  } else {
-    // Use file-based storage
-    if (!filePath) {
-      throw new Error('filePath is required for file-based storage');
-    }
-    return new RunStateStore(filePath, agent);
-  }
-}
+// Factory function removed - use RunStateStore constructor directly
+// RunStateStore defaults to PGLite, or use connectionString for PostgreSQL
 
 export async function consumeResult(result: any): Promise<any> {
   /**

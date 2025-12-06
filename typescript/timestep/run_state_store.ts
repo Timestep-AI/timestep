@@ -1,18 +1,19 @@
-/** Database-backed RunStateStore implementation. */
+/** RunStateStore implementation using PGLite by default. */
 
 import { DatabaseConnection } from './db_connection.ts';
 import { Agent, RunState } from '@openai/agents';
+import { getPgliteDir } from './app_dir.ts';
 
-export interface DatabaseRunStateStoreOptions {
-  runId?: string;
+export interface RunStateStoreOptions {
   agent: Agent;
+  runId?: string;
+  sessionId?: string;
   connectionString?: string;
   usePglite?: boolean;
   pglitePath?: string;
-  sessionId?: string;
 }
 
-export class DatabaseRunStateStore {
+export class RunStateStore {
   private static readonly SCHEMA_VERSION = '1.0';
 
   private agent: Agent;
@@ -20,17 +21,28 @@ export class DatabaseRunStateStore {
   private db: DatabaseConnection;
   private connected: boolean = false;
 
-  constructor(options: DatabaseRunStateStoreOptions) {
+  constructor(options: RunStateStoreOptions) {
     if (!options.agent) {
       throw new Error('agent is required');
     }
 
     this.agent = options.agent;
     this.runId = options.runId || options.sessionId;
+    
+    // Use session ID in PGLite path to avoid concurrent access issues
+    // Each session gets its own database file
+    // This must match Python's get_pglite_dir() implementation exactly
+    let pglitePath = options.pglitePath;
+    if (!pglitePath && !options.connectionString && (options.usePglite !== false)) {
+      const sessionId = options.sessionId || options.runId || 'default';
+      pglitePath = getPgliteDir({ sessionId });
+    }
+    
+    // Default to PGLite if no connection string provided
     this.db = new DatabaseConnection({
       connectionString: options.connectionString,
-      usePglite: options.usePglite,
-      pglitePath: options.pglitePath,
+      usePglite: options.usePglite,  // undefined means auto-detect (defaults to PGLite)
+      pglitePath: pglitePath,
     });
   }
 
@@ -40,7 +52,7 @@ export class DatabaseRunStateStore {
       if (!connected) {
         throw new Error(
           'Failed to connect to database. ' +
-          'Check TIMESTEP_DB_URL environment variable or use file-based storage.'
+          'Check TIMESTEP_DB_URL environment variable or ensure PGLite dependencies are installed.'
         );
       }
       this.connected = true;
@@ -96,7 +108,7 @@ export class DatabaseRunStateStore {
     await this.db.query(
       `INSERT INTO run_states (run_id, state_type, schema_version, state_data, is_active)
        VALUES ($1, $2, $3, $4, true)`,
-      [runId, stateType, DatabaseRunStateStore.SCHEMA_VERSION, JSON.stringify(stateJson)]
+      [runId, stateType, RunStateStore.SCHEMA_VERSION, JSON.stringify(stateJson)]
     );
   }
 

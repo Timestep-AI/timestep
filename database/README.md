@@ -131,30 +131,28 @@ WHERE r.started_at >= NOW() - INTERVAL '7 days'
 GROUP BY a.id, a.name;
 ```
 
-## DBOS/PGLite Integration
+## PGLite Integration (Default Storage)
 
-Timestep supports database-backed state persistence using PostgreSQL or PGLite for durable execution:
+Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage backend for durable execution. Both Python and TypeScript use the same app directory for seamless cross-language state sharing.
 
-### Using Database-Backed State Storage
+### Using RunStateStore (PGLite by Default)
 
 **Python:**
 ```python
-from timestep import create_run_state_store, run_agent
+from timestep import run_agent, RunStateStore
 from agents import Agent, Session
 
 agent = Agent(model="gpt-4")
 session = Session()
 
-# Auto-select database if TIMESTEP_DB_URL is set, otherwise use file-based
-state_store = await create_run_state_store(
+# Default: Uses PGLite (stored in ~/.config/timestep/pglite/ on Linux)
+state_store = RunStateStore(
     agent=agent,
-    session_id=await session._get_session_id(),
-    connection_string="postgresql://user:pass@localhost/timestep"
+    session_id=await session._get_session_id()
 )
 
-# Or use DatabaseRunStateStore directly
-from timestep import DatabaseRunStateStore
-state_store = DatabaseRunStateStore(
+# Or use PostgreSQL explicitly
+state_store = RunStateStore(
     agent=agent,
     session_id=await session._get_session_id(),
     connection_string="postgresql://user:pass@localhost/timestep"
@@ -163,56 +161,65 @@ state_store = DatabaseRunStateStore(
 
 **TypeScript:**
 ```typescript
-import { createRunStateStore, runAgent } from '@timestep-ai/timestep';
+import { runAgent, RunStateStore } from '@timestep-ai/timestep';
 import { Agent, Session } from '@openai/agents';
 
 const agent = new Agent({ model: 'gpt-4' });
 const session = new Session();
 
-// Auto-select database if TIMESTEP_DB_URL is set, otherwise use file-based
-const stateStore = await createRunStateStore(agent, {
-  sessionId: await session.getSessionId(),
-  connectionString: 'postgresql://user:pass@localhost/timestep'
+// Default: Uses PGLite (stored in ~/.config/timestep/pglite/ on Linux)
+const stateStore = new RunStateStore({
+  agent,
+  sessionId: await session.getSessionId()
 });
 
-// Or use DatabaseRunStateStore directly
-import { DatabaseRunStateStore } from '@timestep-ai/timestep';
-const stateStore = new DatabaseRunStateStore({
+// Or use PostgreSQL explicitly
+const stateStore = new RunStateStore({
   agent,
   sessionId: await session.getSessionId(),
   connectionString: 'postgresql://user:pass@localhost/timestep'
 });
 ```
+
+### App Directory Locations
+
+Both Python and TypeScript use the same app directory (matching Click/Typer conventions):
+
+- **Linux**: `~/.config/timestep/pglite/`
+- **macOS**: `~/Library/Application Support/timestep/pglite/`
+- **Windows**: `%APPDATA%/timestep/pglite/`
+
+Each session gets its own database file (e.g., `db_conv_123...`) to avoid concurrent access issues.
 
 ### Environment Variables
 
-- `TIMESTEP_DB_URL`: PostgreSQL connection string (e.g., `postgresql://user:pass@host/db`)
-- `TIMESTEP_USE_PGLITE`: Set to `true` to use PGLite for local development (default: `false`)
-- `TIMESTEP_PGLITE_PATH`: Path for PGLite data directory (default: `./pglite_data`)
+- `TIMESTEP_DB_URL`: PostgreSQL connection string (overrides PGLite default)
+- `TIMESTEP_PGLITE_PATH`: Custom PGLite data directory (overrides app directory)
+
+### Python PGLite Setup
+
+For Python, PGLite runs via Node.js subprocess. You need:
+
+1. **Node.js** installed and available in PATH ([download](https://nodejs.org/))
+2. **@electric-sql/pglite** installed:
+   ```bash
+   npm install -g @electric-sql/pglite
+   ```
+   Or install locally in your project:
+   ```bash
+   npm install @electric-sql/pglite
+   ```
 
 ### Cross-Language State Persistence
 
-The database-backed storage enables seamless state transfer between Python and TypeScript:
+The shared app directory enables seamless state transfer between Python and TypeScript:
 
-1. **Python** saves state to database using `DatabaseRunStateStore.save()`
+1. **Python** saves state to PGLite database using `RunStateStore.save()`
 2. State is stored in `run_states` table with JSONB format
-3. **TypeScript** loads the same state using `DatabaseRunStateStore.load()`
+3. **TypeScript** loads the same state from the same database using `RunStateStore.load()`
 4. Execution continues with full context preserved
 
-### PGLite for Local Development
-
-PGLite is a WASM build of PostgreSQL that runs in browser, Node.js, Bun, or Deno. For local development without a PostgreSQL server:
-
-```typescript
-// TypeScript: Use PGLite
-const stateStore = new DatabaseRunStateStore({
-  agent,
-  usePglite: true,
-  pglitePath: './pglite_data'
-});
-```
-
-Note: PGLite Python bindings are not yet available. Use PostgreSQL for Python, or file-based storage as fallback.
+Both languages use the same database file when using the same `session_id`, enabling true cross-language state sharing.
 
 ### Database Schema
 
@@ -233,8 +240,8 @@ The `run_states` table stores serialized RunState snapshots:
 - Data retention/archiving policies
 - Multi-user support (created_by, updated_by columns)
 - Full agent versioning history
-- PGLite Python bindings support
-- DBOS workflow integration for advanced durable execution
+- Enhanced DBOS workflow integration for advanced durable execution
+- Improved PGLite Python integration (native bindings when available)
 
 ## See Also
 

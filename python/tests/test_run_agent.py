@@ -205,8 +205,7 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     # Get session ID for state file naming
     existing_items = await session.get_items()
 
-    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{current_session_id}.json"
-    state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
+    state_store = RunStateStore(agent=personal_assistant_agent, session_id=current_session_id)
 
     for idx, run_input in enumerate(RUN_INPUTS):
         try:
@@ -341,8 +340,7 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
     if not current_session_id:
         raise ValueError("Failed to get session ID")
 
-    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{current_session_id}.json"
-    state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
+    state_store = RunStateStore(agent=personal_assistant_agent, session_id=current_session_id)
 
     for i in range(start_index, end_index):
         run_input = RUN_INPUTS[i]
@@ -429,8 +427,7 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
     # Use the same session ID
     session = OpenAIConversationsSession(conversation_id=session_id)
 
-    state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{session_id}.json"
-    state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
+    state_store = RunStateStore(agent=personal_assistant_agent, session_id=session_id)
 
     # Load state saved by TypeScript
     loaded_state = await state_store.load()

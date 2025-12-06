@@ -1,4 +1,4 @@
-"""Database-backed RunStateStore implementation."""
+"""RunStateStore implementation using PGLite by default."""
 
 import json
 import uuid
@@ -9,39 +9,48 @@ from .db_connection import DatabaseConnection, DatabaseType
 from ._vendored_imports import Agent, RunState
 
 
-class DatabaseRunStateStore:
-    """Database-backed store for persisting run state."""
+class RunStateStore:
+    """Store for persisting run state using PGLite (default) or PostgreSQL."""
     
     SCHEMA_VERSION = "1.0"
     
     def __init__(
         self,
+        agent: Agent,
         run_id: Optional[str] = None,
-        agent: Agent = None,
+        session_id: Optional[str] = None,
         connection_string: Optional[str] = None,
-        use_pglite: bool = False,
-        pglite_path: Optional[str] = None,
-        session_id: Optional[str] = None
+        use_pglite: Optional[bool] = None,
+        pglite_path: Optional[str] = None
     ):
         """
-        Initialize database-backed RunStateStore.
+        Initialize RunStateStore with PGLite by default.
         
         Args:
-            run_id: UUID of the run (optional, will be generated if not provided)
             agent: Agent instance (required)
-            connection_string: PostgreSQL connection string
-            use_pglite: Whether to use PGLite (not yet supported)
-            pglite_path: Path for PGLite data directory
+            run_id: UUID of the run (optional, will be generated if not provided)
             session_id: Session ID to use as identifier (alternative to run_id)
+            connection_string: PostgreSQL connection string (optional, uses PGLite if not provided)
+            use_pglite: Whether to use PGLite (defaults to True if no connection_string)
+            pglite_path: Path for PGLite data directory (defaults to ./.timestep/pglite)
         """
         if agent is None:
             raise ValueError("agent is required")
         
         self.agent = agent
         self.run_id = run_id or session_id  # Use session_id as fallback
+        
+        # Use session ID in PGLite path to avoid concurrent access issues
+        # Each session gets its own database file
+        if not pglite_path and not connection_string and (use_pglite is not False):
+            from .app_dir import get_pglite_dir
+            session_id_for_path = session_id or run_id or 'default'
+            pglite_path = str(get_pglite_dir(session_id_for_path))
+        
+        # Default to PGLite if no connection string provided
         self.db = DatabaseConnection(
             connection_string=connection_string,
-            use_pglite=use_pglite,
+            use_pglite=use_pglite,  # None means auto-detect (defaults to PGLite)
             pglite_path=pglite_path
         )
         self._connected = False
@@ -53,7 +62,7 @@ class DatabaseRunStateStore:
             if not connected:
                 raise RuntimeError(
                     "Failed to connect to database. "
-                    "Check TIMESTEP_DB_URL environment variable or use file-based storage."
+                    "Check TIMESTEP_DB_URL environment variable or ensure PGLite dependencies are installed."
                 )
             self._connected = True
     

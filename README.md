@@ -31,26 +31,35 @@ Timestep provides identical implementations in Python and TypeScript with full s
 ```python
 # Python: Start agent execution
 from timestep import run_agent, RunStateStore
-from agents import Agent
+from agents import Agent, Session
 
 agent = Agent(model="gpt-4")
-state_store = RunStateStore("state.json", agent)
+session = Session()
+# RunStateStore uses PGLite by default (stored in ~/.config/timestep)
+state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
 # Run agent and handle interruption
 result = await run_agent(agent, input_items, session, stream=False)
 if result.interruptions:
     # Save state for cross-language resume
-    await state_store.save(result.state)
+    state = result.to_state()
+    await state_store.save(state)
     # State can now be loaded in TypeScript!
 ```
 
 ```typescript
 // TypeScript: Resume from Python state
 import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-import { Agent } from '@openai/agents';
+import { Agent, Session } from '@openai/agents';
 
 const agent = new Agent({ model: 'gpt-4' });
-const stateStore = new RunStateStore('state.json', agent);
+const session = new Session();
+// RunStateStore uses PGLite by default (stored in ~/.config/timestep)
+// Uses the same session_id to access the same database
+const stateStore = new RunStateStore({ 
+  agent, 
+  sessionId: await session.getSessionId() 
+});
 
 // Load state saved from Python
 const savedState = await stateStore.load();
@@ -99,16 +108,18 @@ model_provider = MultiModelProvider(
 # Create agent
 agent = Agent(model="gpt-4")
 
-# Run with durable state
+# Run with durable state (PGLite by default)
 session = Session()
-state_store = RunStateStore("agent_state.json", agent)
+state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
 result = await run_agent(agent, input_items, session, stream=False)
+result = await consume_result(result)
 
 # Handle interruptions
 if result.interruptions:
     # Save state for later resume (even in TypeScript!)
-    await state_store.save(result.state)
+    state = result.to_state()
+    await state_store.save(state)
 ```
 
 ### TypeScript
@@ -129,27 +140,53 @@ const modelProvider = new MultiModelProvider({
 // Create agent
 const agent = new Agent({ model: 'gpt-4' });
 
-// Run with durable state
+// Run with durable state (PGLite by default)
 const session = new Session();
-const stateStore = new RunStateStore('agent_state.json', agent);
+const stateStore = new RunStateStore({ 
+  agent, 
+  sessionId: await session.getSessionId() 
+});
 
-const result = await runAgent(agent, inputItems, session, false);
+let result = await runAgent(agent, inputItems, session, false);
+result = await consumeResult(result);
 
 // Handle interruptions
-if (result.interruptions) {
+if (result.interruptions?.length) {
   // Save state for later resume (even in Python!)
   await stateStore.save(result.state);
 }
 ```
 
-## Durable Execution with DBOS/PGLite
+## Durable Execution with PGLite
 
-Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) to provide durable execution:
+Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage backend for durable execution:
 
-- **State Persistence**: Agent run states are stored in PostgreSQL
+- **PGLite by Default**: No setup required - works out of the box
+- **Cross-Platform App Directory**: State stored in platform-appropriate directories:
+  - Linux: `~/.config/timestep/pglite/`
+  - macOS: `~/Library/Application Support/timestep/pglite/`
+  - Windows: `%APPDATA%/timestep/pglite/`
+- **Shared Storage**: Both Python and TypeScript use the same app directory, enabling seamless cross-language state sharing
+- **PostgreSQL Option**: Use full PostgreSQL by setting `TIMESTEP_DB_URL` environment variable
+- **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution
 - **Database Schema**: See [database/README.md](./database/README.md) for the complete schema
+
+### Python PGLite Requirements
+
+For Python, PGLite runs via Node.js subprocess. You need:
+- **Node.js** installed and available in PATH
+- **@electric-sql/pglite** installed (globally or locally):
+  ```bash
+  npm install -g @electric-sql/pglite
+  # or locally in your project
+  npm install @electric-sql/pglite
+  ```
+
+### TypeScript PGLite
+
+TypeScript uses PGLite directly via the `@electric-sql/pglite` package (already included in dependencies).
 
 The database schema supports:
 - Agent definitions and configurations
@@ -163,7 +200,7 @@ The database schema supports:
 ### Core Abstractions
 
 - **`run_agent()`**: Simplified agent execution with built-in state management
-- **`RunStateStore`**: Persistent storage for agent state (file-based or database-backed)
+- **`RunStateStore`**: Persistent storage for agent state (PGLite by default, PostgreSQL optional)
 - **`consume_result()`**: Utility for handling streaming and non-streaming results
 
 ### Model Providers
@@ -179,7 +216,9 @@ The database schema supports:
 - ✅ **Multi-Model Support**: OpenAI and Ollama (local or cloud) through unified interface
 - ✅ **RISC-Style API**: Clean, simple abstractions over the OpenAI Agents SDK
 - ✅ **Identical Behavior**: Python and TypeScript implementations work identically
-- ✅ **Database-Backed**: DBOS/PGLite integration for production-ready durability
+- ✅ **PGLite Default**: Zero-configuration durable storage using PGLite
+- ✅ **PostgreSQL Option**: Full PostgreSQL support for production deployments
+- ✅ **Shared App Directory**: Both languages use the same storage location for seamless cross-language state sharing
 
 ## Development
 

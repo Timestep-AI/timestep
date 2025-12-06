@@ -35,8 +35,12 @@ import { Agent, Session } from '@openai/agents';
 const agent = new Agent({ model: 'gpt-4' });
 
 // Create session and state store
+// RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
 const session = new Session();
-const stateStore = new RunStateStore('agent_state.json', agent);
+const stateStore = new RunStateStore({ 
+  agent, 
+  sessionId: await session.getSessionId() 
+});
 
 // Run agent
 let result = await runAgent(agent, inputItems, session, false);
@@ -70,7 +74,11 @@ import { Agent, Session } from '@openai/agents';
 
 const agent = new Agent({ model: 'gpt-4' });
 const session = new Session();
-const stateStore = new RunStateStore('cross_lang_state.json', agent);
+// Uses PGLite in shared app directory (~/.config/timestep)
+const stateStore = new RunStateStore({ 
+  agent, 
+  sessionId: await session.getSessionId() 
+});
 
 // Run until interruption
 let result = await runAgent(agent, inputItems, session, false);
@@ -163,14 +171,27 @@ const result = await runAgent(agent, inputItems, session, false);
 
 ### `RunStateStore`
 
-Persistent storage for agent state. Supports file-based storage (with database-backed storage coming via DBOS/PGLite):
+Persistent storage for agent state using PGLite by default (stored in platform-appropriate app directory):
 
 ```typescript
 import { RunStateStore } from '@timestep-ai/timestep';
-import { Agent } from '@openai/agents';
+import { Agent, Session } from '@openai/agents';
 
 const agent = new Agent({ model: 'gpt-4' });
-const stateStore = new RunStateStore('state.json', agent);
+const session = new Session();
+
+// Default: Uses PGLite (stored in ~/.config/timestep/pglite/ on Linux)
+const stateStore = new RunStateStore({ 
+  agent, 
+  sessionId: await session.getSessionId() 
+});
+
+// Or use PostgreSQL explicitly
+const stateStore = new RunStateStore({
+  agent,
+  sessionId: await session.getSessionId(),
+  connectionString: 'postgresql://user:pass@host/db'
+});
 
 // Save state
 await stateStore.save(state);
@@ -181,6 +202,11 @@ const loadedState = await stateStore.load();
 // Clear state
 await stateStore.clear();
 ```
+
+**Storage Locations:**
+- **Linux**: `~/.config/timestep/pglite/`
+- **macOS**: `~/Library/Application Support/timestep/pglite/`
+- **Windows**: `%APPDATA%/timestep/pglite/`
 
 ### `consumeResult()`
 
@@ -304,11 +330,17 @@ Manages custom mappings of model name prefixes to providers:
 - `getMapping()`: Get all mappings
 - `setMapping(mapping)`: Replace all mappings
 
-## Durable Execution with DBOS/PGLite
+## Durable Execution with PGLite
 
-Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) to provide durable execution:
+Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage backend for durable execution:
 
-- **State Persistence**: Agent run states are stored in PostgreSQL
+- **PGLite by Default**: No setup required - works out of the box
+- **Cross-Platform App Directory**: State stored in platform-appropriate directories (shared with Python):
+  - Linux: `~/.config/timestep/pglite/`
+  - macOS: `~/Library/Application Support/timestep/pglite/`
+  - Windows: `%APPDATA%/timestep/pglite/`
+- **PostgreSQL Option**: Use full PostgreSQL by setting `TIMESTEP_DB_URL` environment variable
+- **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution
 - **Database Schema**: See [database/README.md](../database/README.md) for the complete schema

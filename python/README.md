@@ -37,8 +37,9 @@ from agents import Agent, Session
 agent = Agent(model="gpt-4")
 
 # Create session and state store
+# RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
 session = Session()
-state_store = RunStateStore("agent_state.json", agent)
+state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
 # Run agent
 result = await run_agent(agent, input_items, session, stream=False)
@@ -71,7 +72,8 @@ from agents import Agent, Session
 
 agent = Agent(model="gpt-4")
 session = Session()
-state_store = RunStateStore("cross_lang_state.json", agent)
+# Uses PGLite in shared app directory (~/.config/timestep)
+state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
 # Run until interruption
 result = await run_agent(agent, input_items, session, stream=False)
@@ -162,14 +164,24 @@ result = await run_agent(agent, input_items, session, stream=False)
 
 ### `RunStateStore`
 
-Persistent storage for agent state. Supports file-based storage (with database-backed storage coming via DBOS/PGLite):
+Persistent storage for agent state using PGLite by default (stored in platform-appropriate app directory):
 
 ```python
 from timestep import RunStateStore
-from agents import Agent
+from agents import Agent, Session
 
 agent = Agent(model="gpt-4")
-state_store = RunStateStore("state.json", agent)
+session = Session()
+
+# Default: Uses PGLite (stored in ~/.config/timestep/pglite/ on Linux)
+state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
+
+# Or use PostgreSQL explicitly
+state_store = RunStateStore(
+    agent=agent,
+    session_id=await session._get_session_id(),
+    connection_string="postgresql://user:pass@host/db"
+)
 
 # Save state
 await state_store.save(state)
@@ -180,6 +192,18 @@ loaded_state = await state_store.load()
 # Clear state
 await state_store.clear()
 ```
+
+**Storage Locations:**
+- **Linux**: `~/.config/timestep/pglite/`
+- **macOS**: `~/Library/Application Support/timestep/pglite/`
+- **Windows**: `%APPDATA%/timestep/pglite/`
+
+**Python PGLite Requirements:**
+- Node.js installed and available in PATH
+- `@electric-sql/pglite` installed (globally or locally):
+  ```bash
+  npm install -g @electric-sql/pglite
+  ```
 
 ### `consume_result()`
 
@@ -287,14 +311,34 @@ Manages custom mappings of model name prefixes to providers:
 - `get_mapping()`: Get all mappings
 - `set_mapping(mapping)`: Replace all mappings
 
-## Durable Execution with DBOS/PGLite
+## Durable Execution with PGLite
 
-Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) to provide durable execution:
+Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage backend for durable execution:
 
-- **State Persistence**: Agent run states are stored in PostgreSQL
+- **PGLite by Default**: No setup required - works out of the box
+- **Cross-Platform App Directory**: State stored in platform-appropriate directories (shared with TypeScript):
+  - Linux: `~/.config/timestep/pglite/`
+  - macOS: `~/Library/Application Support/timestep/pglite/`
+  - Windows: `%APPDATA%/timestep/pglite/`
+- **PostgreSQL Option**: Use full PostgreSQL by setting `TIMESTEP_DB_URL` environment variable
+- **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution
 - **Database Schema**: See [database/README.md](../database/README.md) for the complete schema
+
+### Python PGLite Setup
+
+For Python, PGLite runs via Node.js subprocess. You need:
+
+1. **Install Node.js**: Download from [nodejs.org](https://nodejs.org/)
+2. **Install PGLite**:
+   ```bash
+   npm install -g @electric-sql/pglite
+   ```
+   Or install locally in your project:
+   ```bash
+   npm install @electric-sql/pglite
+   ```
 
 The database schema supports:
 - Agent definitions and configurations
