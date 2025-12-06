@@ -5,14 +5,15 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 ## What Timestep gives you
 - Durable runs: save and resume `RunState` without changing your agent code.
 - Cross-language parity: same surface in Python and TypeScript; state stays compatible.
-- Single storage story: default PGLite in an app directory; point `TIMESTEP_DB_URL` at Postgres for production.
-- Model routing without new APIs: prefix models (`ollama/llama3`) and let `MultiModelProvider` pick the backend.
+- Single storage story: auto-detects local Postgres, falls back to PGLite, or use `TIMESTEP_DB_URL` for remote Postgres.
+- Model routing without new APIs: prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
 - Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`, `consume_result`.
 
 ## Prerequisites
 - `OPENAI_API_KEY`
-- Python default storage: Node.js + `@electric-sql/pglite` on PATH (Python shells out to Node today).
-- Better performance: set `TIMESTEP_DB_URL` to Postgres. If you must stay on PGLite from Python, run a small, long-lived Node/Deno sidecar that holds a `PGlite` connection and exposes a thin HTTP/IPC shim so Python isn’t spawning Node per query.
+- **Python storage options** (in order of preference):
+  1. **PostgreSQL** (recommended): Set `TIMESTEP_DB_URL=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
+  2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
 
 ## Quick start
 
@@ -22,7 +23,7 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 from timestep import run_agent, RunStateStore, consume_result
 from agents import Agent, Session
 
-agent = Agent(model="gpt-4o")
+agent = Agent(model="gpt-4.1")
 session = Session()
 state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
@@ -40,7 +41,7 @@ if result.interruptions:
 import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
 import { Agent, Session } from '@openai/agents';
 
-const agent = new Agent({ model: 'gpt-4o' });
+const agent = new Agent({ model: 'gpt-4.1' });
 const session = new Session();
 const stateStore = new RunStateStore({ agent, sessionId: await session.getSessionId() });
 
@@ -67,8 +68,8 @@ await runAgent(agent, saved, session, false);
 ```
 
 ## Routing models
-- `gpt-4o` or `openai/gpt-4o` → OpenAI
-- `ollama/llama3` → Ollama (local or cloud)
+- `gpt-4.1` or `openai/gpt-4.1` → OpenAI
+- `ollama/gpt-oss:20b-cloud` → Ollama (local or cloud)
 - Add your own prefixes via `MultiModelProviderMap`.
 
 ## Docs

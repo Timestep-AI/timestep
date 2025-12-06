@@ -61,9 +61,9 @@ jobs:
           cd typescript
           pnpm install --frozen-lockfile
       
-      - name: Install PGLite for Python subprocess
+      - name: Install PGLite for Python sidecar
         run: |
-          # Install globally for Python subprocess to find it
+          # Install globally for Python sidecar to find it
           npm install -g @electric-sql/pglite
           # Also install in project root as fallback
           npm install @electric-sql/pglite

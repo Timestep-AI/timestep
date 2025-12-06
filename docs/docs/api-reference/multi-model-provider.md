@@ -8,7 +8,7 @@ The `MultiModelProvider` class automatically routes model requests to the approp
 
 - Models without a prefix (e.g., `gpt-4`) default to OpenAI
 - Models with `openai/` prefix (e.g., `openai/gpt-4`) use OpenAI
-- Models with `ollama/` prefix (e.g., `ollama/llama3`) use Ollama
+- Models with `ollama/` prefix (e.g., `ollama/gpt-oss:20b-cloud`) use Ollama
 - Custom prefixes can be mapped using `MultiModelProviderMap`
 
 ## Constructor
@@ -75,7 +75,7 @@ Returns a `Model` instance based on the model name. The model name can have a pr
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `model_name` | `string \| None` | The name of the model to get. Can include a prefix (e.g., `ollama/llama3`). |
+| `model_name` | `string \| None` | The name of the model to get. Can include a prefix (e.g., `ollama/gpt-oss:20b-cloud`). |
 
 #### Returns
 
@@ -104,10 +104,10 @@ Returns a `Model` instance based on the model name. The model name can have a pr
     )
 
     # Get OpenAI model
-    openai_model = model_provider.get_model("gpt-4")
+    openai_model = model_provider.get_model("gpt-4.1")
 
     # Get Ollama model
-    ollama_model = model_provider.get_model("ollama/llama3")
+    ollama_model = model_provider.get_model("ollama/gpt-oss:20b-cloud")
     ```
 
 === "TypeScript"
@@ -128,10 +128,10 @@ Returns a `Model` instance based on the model name. The model name can have a pr
     });
 
     // Get OpenAI model
-    const openaiModel = await modelProvider.getModel('gpt-4');
+    const openaiModel = await modelProvider.getModel('gpt-4.1');
 
     // Get Ollama model
-    const ollamaModel = await modelProvider.getModel('ollama/llama3');
+    const ollamaModel = await modelProvider.getModel('ollama/gpt-oss:20b-cloud');
     ```
 
 ## Routing Logic
@@ -161,7 +161,7 @@ The routing logic works as follows:
     )
 
     # Use OpenAI model
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     run_config = RunConfig(model_provider=model_provider)
     result = Runner.run_streamed(agent, agent_input, run_config=run_config)
     ```
@@ -178,7 +178,7 @@ The routing logic works as follows:
     });
 
     // Use OpenAI model
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const runner = new Runner({ modelProvider });
     const result = await runner.run(agent, agentInput, { stream: true });
     ```
@@ -204,8 +204,8 @@ The routing logic works as follows:
     )
 
     # Now you can use both providers
-    openai_agent = Agent(model="gpt-4")
-    ollama_agent = Agent(model="ollama/llama3")
+    openai_agent = Agent(model="gpt-4.1")
+    ollama_agent = Agent(model="ollama/gpt-oss:20b-cloud")
     ```
 
 === "TypeScript"
@@ -226,8 +226,8 @@ The routing logic works as follows:
     });
 
     // Now you can use both providers
-    const openaiAgent = new Agent({ model: 'gpt-4' });
-    const ollamaAgent = new Agent({ model: 'ollama/llama3' });
+    const openaiAgent = new Agent({ model: 'gpt-4.1' });
+    const ollamaAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
     ```
 
 ### With Custom OpenAI Configuration

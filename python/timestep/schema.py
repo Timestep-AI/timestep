@@ -16,7 +16,7 @@ async def initialize_schema(db) -> None:
             )
         """)
     elif hasattr(db, 'fetchrow'):
-        # PGLite subprocess - use fetchrow method
+        # PGLite - use fetchrow method
         row = await db.fetchrow("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 

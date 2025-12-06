@@ -60,7 +60,7 @@ A convenience function for running agents with session management and error hand
     from timestep import run_agent
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
 
     # Non-streaming
@@ -86,7 +86,7 @@ A convenience function for running agents with session management and error hand
     import { runAgent } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
 
     // Non-streaming
@@ -154,7 +154,7 @@ This is particularly important for streaming results, where background operation
     from timestep import run_agent, consume_result
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
 
     result = await run_agent(
@@ -177,7 +177,7 @@ This is particularly important for streaming results, where background operation
     import { runAgent, consumeResult } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
 
     const result = await runAgent(
@@ -274,7 +274,7 @@ Saves the run state to a file.
     from timestep import RunStateStore
     from agents import Agent, RunState
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     store = RunStateStore("state.json", agent)
 
     # Save state
@@ -287,7 +287,7 @@ Saves the run state to a file.
     import { RunStateStore } from '@timestep-ai/timestep';
     import { Agent, RunState } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const store = new RunStateStore('state.json', agent);
 
     // Save state
@@ -324,7 +324,7 @@ Loads run state from a file.
     from timestep import RunStateStore
     from agents import Agent
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     store = RunStateStore("state.json", agent)
 
     # Load state
@@ -337,7 +337,7 @@ Loads run state from a file.
     import { RunStateStore } from '@timestep-ai/timestep';
     import { Agent } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const store = new RunStateStore('state.json', agent);
 
     // Load state
@@ -368,7 +368,7 @@ Deletes the state file.
     from timestep import RunStateStore
     from agents import Agent
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     store = RunStateStore("state.json", agent)
 
     # Clear saved state
@@ -381,7 +381,7 @@ Deletes the state file.
     import { RunStateStore } from '@timestep-ai/timestep';
     import { Agent } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const store = new RunStateStore('state.json', agent);
 
     // Clear saved state
@@ -396,7 +396,7 @@ Deletes the state file.
     from timestep import run_agent, consume_result, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     store = RunStateStore("conversation.json", agent)
 
@@ -437,7 +437,7 @@ Deletes the state file.
     import { runAgent, consumeResult, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     const store = new RunStateStore('conversation.json', agent);
 
@@ -486,7 +486,7 @@ Deletes the state file.
     from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     store = RunStateStore("cross_lang_state.json", agent)
 
@@ -504,7 +504,7 @@ Deletes the state file.
     import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     const store = new RunStateStore('cross_lang_state.json', agent);
 
@@ -527,7 +527,7 @@ Deletes the state file.
     import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     const store = new RunStateStore('cross_lang_state.json', agent);
 
@@ -545,7 +545,7 @@ Deletes the state file.
     from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     store = RunStateStore("cross_lang_state.json", agent)
 

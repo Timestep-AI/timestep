@@ -58,9 +58,8 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 
 ### Storage
 
-- **Default (dev-friendly):** PGLite in a shared app directory (`~/.config/timestep/pglite/` on Linux; platform equivalents elsewhere).
-- **Production/fast path:** Postgres via `TIMESTEP_DB_URL`.
-- **Python PGLite caveat:** The current Python path shells out to Node per query. Use Postgres for performance, or keep a long-lived Node/Deno sidecar that holds a `PGlite` connection if you must stay on PGLite.
+- **Default (dev-friendly):** PGLite in a shared app directory (`~/.config/timestep/pglite/` on Linux; platform equivalents elsewhere) via a high-performance sidecar process.
+- **Production/fast path:** Postgres via `TIMESTEP_DB_URL` or auto-detected local Postgres on `localhost:5432`.
 
 ## System Architecture
 
@@ -84,7 +83,7 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 │  │              MultiModelProvider                        │ │
 │  │  ┌─────────────────────────────────────────────────┐   │ │
 │  │  │         Model Name Parser                       │   │ │
-│  │  │  - Parses model name (e.g., "ollama/llama3")   │   │ │
+│  │  │  - Parses model name (e.g., "ollama/gpt-oss:20b-cloud")   │   │ │
 │  │  │  - Extracts prefix and actual model name        │   │ │
 │  │  └──────────────────┬──────────────────────────────┘   │ │
 │  │                      │                                   │ │
@@ -116,8 +115,8 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 Timestep uses a simple but powerful prefix-based routing system:
 
 1. **Model Name Parsing**: When a model is requested, the name is parsed to extract:
-   - **Prefix**: The part before the first `/` (e.g., `ollama` from `ollama/llama3`)
-   - **Model Name**: The part after the `/` (e.g., `llama3` from `ollama/llama3`)
+   - **Prefix**: The part before the first `/` (e.g., `ollama` from `ollama/gpt-oss:20b-cloud`)
+   - **Model Name**: The part after the `/` (e.g., `llama3` from `ollama/gpt-oss:20b-cloud`)
 
 2. **Provider Lookup**: The system looks up the provider in this order:
    - First checks `MultiModelProviderMap` for custom mappings
@@ -133,7 +132,7 @@ Timestep uses a simple but powerful prefix-based routing system:
 |-------------------|----------|---------|
 | `gpt-4` | OpenAI | `gpt-4`, `gpt-3.5-turbo` |
 | `openai/gpt-4` | OpenAI | `openai/gpt-4` |
-| `ollama/llama3` | Ollama | `ollama/llama3`, `ollama/mistral` |
+| `ollama/gpt-oss:20b-cloud` | Ollama | `ollama/gpt-oss:20b-cloud`, `ollama/gpt-oss:120b-cloud` |
 
 ## Provider Mapping
 
@@ -164,7 +163,7 @@ The `MultiModelProviderMap` class allows you to customize the routing behavior b
     # Use in MultiModelProvider
     model_provider = MultiModelProvider(provider_map=provider_map)
     
-    # Now "custom-ollama/llama3" will route to the custom instance
+    # Now "custom-ollama/gpt-oss:20b-cloud" will route to the custom instance
     ```
 
 === "TypeScript"
@@ -184,7 +183,7 @@ The `MultiModelProviderMap` class allows you to customize the routing behavior b
     // Use in MultiModelProvider
     const modelProvider = new MultiModelProvider({ provider_map: providerMap });
     
-    // Now "custom-ollama/llama3" will route to the custom instance
+    // Now "custom-ollama/gpt-oss:20b-cloud" will route to the custom instance
     ```
 
 ## Ollama Integration

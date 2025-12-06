@@ -12,7 +12,7 @@ One of Timestep's core features is durable execution with built-in state persist
     from timestep import run_agent, RunStateStore, consume_result
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     state_store = RunStateStore("agent_state.json", agent)
 
@@ -42,7 +42,7 @@ One of Timestep's core features is durable execution with built-in state persist
     import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     const stateStore = new RunStateStore('agent_state.json', agent);
 
@@ -81,7 +81,7 @@ Start execution in Python, interrupt for tool approval, and resume in TypeScript
     from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     state_store = RunStateStore("cross_lang_state.json", agent)
 
@@ -103,7 +103,7 @@ Start execution in Python, interrupt for tool approval, and resume in TypeScript
     import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     const stateStore = new RunStateStore('cross_lang_state.json', agent);
 
@@ -129,7 +129,7 @@ Start execution in TypeScript, interrupt for tool approval, and resume in Python
     import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     const stateStore = new RunStateStore('cross_lang_state.json', agent);
 
@@ -151,7 +151,7 @@ Start execution in TypeScript, interrupt for tool approval, and resume in Python
     from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     state_store = RunStateStore("cross_lang_state.json", agent)
 
@@ -191,10 +191,10 @@ One of the most common use cases is switching between different model providers 
     )
 
     # Use OpenAI for complex tasks
-    openai_agent = Agent(model="gpt-4")
+    openai_agent = Agent(model="gpt-4.1")
     
     # Use Ollama for simpler tasks or when privacy is important
-    ollama_agent = Agent(model="ollama/llama3")
+    ollama_agent = Agent(model="ollama/gpt-oss:20b-cloud")
     
     # Both use the same provider
     run_config = RunConfig(model_provider=model_provider)
@@ -221,10 +221,10 @@ One of the most common use cases is switching between different model providers 
     });
 
     // Use OpenAI for complex tasks
-    const openaiAgent = new Agent({ model: 'gpt-4' });
+    const openaiAgent = new Agent({ model: 'gpt-4.1' });
     
     // Use Ollama for simpler tasks or when privacy is important
-    const ollamaAgent = new Agent({ model: 'ollama/llama3' });
+    const ollamaAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
     
     // Both use the same provider
     const runner = new Runner({ modelProvider });
@@ -312,7 +312,7 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
     from timestep import run_agent, consume_result
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
 
     # Streaming response
@@ -333,7 +333,7 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
     from timestep import run_agent, consume_result
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
 
     # Non-streaming response
@@ -350,7 +350,7 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
     import { runAgent, consumeResult } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
 
     // Streaming response
@@ -372,7 +372,7 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
     import { runAgent, consumeResult } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
 
     // Non-streaming response
@@ -394,7 +394,7 @@ Handle errors gracefully when providers are unavailable or models fail.
     from agents import Agent, Session
     from agents.exceptions import AgentsException, ModelBehaviorError
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
 
     try:
@@ -403,7 +403,7 @@ Handle errors gracefully when providers are unavailable or models fail.
         # Handle model-specific errors
         print(f"Model error: {e}")
         # Fallback to different model
-        fallback_agent = Agent(model="ollama/llama3")
+        fallback_agent = Agent(model="ollama/gpt-oss:20b-cloud")
         result = await run_agent(fallback_agent, input_items, session, stream=False)
     except AgentsException as e:
         # Handle general agent errors
@@ -416,7 +416,7 @@ Handle errors gracefully when providers are unavailable or models fail.
     import { runAgent } from '@timestep-ai/timestep';
     import { Agent, Session, ModelBehaviorError, AgentsError } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
 
     try {
@@ -426,7 +426,7 @@ Handle errors gracefully when providers are unavailable or models fail.
         // Handle model-specific errors
         console.error('Model error:', e.message);
         // Fallback to different model
-        const fallbackAgent = new Agent({ model: 'ollama/llama3' });
+        const fallbackAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
         const result = await runAgent(fallbackAgent, inputItems, session, false);
       } else if (e instanceof AgentsError) {
         // Handle general agent errors
@@ -446,7 +446,7 @@ Use sessions to maintain conversation context across multiple agent runs.
     from agents import Agent, Session
 
     # Create agent with model provider
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     
     # Create session for conversation context
     session = Session()
@@ -479,7 +479,7 @@ Use sessions to maintain conversation context across multiple agent runs.
     import { Agent, Session } from '@openai/agents';
 
     // Create agent with model provider
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     
     // Create session for conversation context
     const session = new Session();
@@ -517,7 +517,7 @@ Timestep includes built-in tools like web search. Here's how to use them:
 
     # Create agent with tools
     tools = [web_search]
-    agent = Agent(model="gpt-4", tools=tools)
+    agent = Agent(model="gpt-4.1", tools=tools)
     session = Session()
 
     result = await run_agent(agent, input_items, session, stream=False)
@@ -532,7 +532,7 @@ Timestep includes built-in tools like web search. Here's how to use them:
 
     // Create agent with tools
     const tools = [webSearch];
-    const agent = new Agent({ model: 'gpt-4', tools });
+    const agent = new Agent({ model: 'gpt-4.1', tools });
     const session = new Session();
 
     const result = await runAgent(agent, inputItems, session, false);

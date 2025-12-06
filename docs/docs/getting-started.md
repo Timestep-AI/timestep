@@ -5,8 +5,9 @@ This guide will help you get up and running with Timestep in both Python and Typ
 ## Prerequisites
 
 - `OPENAI_API_KEY`
-- Python default storage: Node.js + `@electric-sql/pglite` on PATH (Python shells out to Node today).
-- Better performance: set `TIMESTEP_DB_URL` to Postgres. If you must stay on PGLite with Python, keep a long-lived Node/Deno sidecar that holds a `PGlite` connection instead of spawning Node per query.
+- **Python storage options** (in order of preference):
+  1. **PostgreSQL** (recommended): Set `TIMESTEP_DB_URL=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
+  2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
 
 ## Installation
 
@@ -92,9 +93,9 @@ The core feature of Timestep is durable execution with cross-language state pers
     from agents import Agent, Session
 
     # Create agent
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
-    # RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
+    # RunStateStore auto-detects local Postgres or falls back to PGLite (stored in ~/.config/timestep/pglite/)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run agent
@@ -124,7 +125,7 @@ The core feature of Timestep is durable execution with cross-language state pers
     import { Agent, Session } from '@openai/agents';
 
     // Create agent
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     // RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
     const stateStore = new RunStateStore({ 
@@ -164,7 +165,7 @@ One of Timestep's unique features is the ability to start execution in one langu
     from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     # Uses PGLite in shared app directory (~/.config/timestep)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
@@ -186,7 +187,7 @@ One of Timestep's unique features is the ability to start execution in one langu
     import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     // Uses PGLite in shared app directory (~/.config/timestep)
     const stateStore = new RunStateStore({ 
@@ -213,7 +214,7 @@ One of Timestep's unique features is the ability to start execution in one langu
     import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
-    const agent = new Agent({ model: 'gpt-4' });
+    const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
     // Uses PGLite in shared app directory (~/.config/timestep)
     const stateStore = new RunStateStore({ 
@@ -238,7 +239,7 @@ One of Timestep's unique features is the ability to start execution in one langu
     from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
-    agent = Agent(model="gpt-4")
+    agent = Agent(model="gpt-4.1")
     session = Session()
     # Uses PGLite in shared app directory (~/.config/timestep)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
@@ -284,8 +285,8 @@ Timestep also provides multi-model provider support for OpenAI and Ollama:
     )
 
     # Create agent with model name
-    agent = Agent(model="gpt-4")  # Uses OpenAI by default
-    # Or: agent = Agent(model="ollama/llama3")  # Uses Ollama
+    agent = Agent(model="gpt-4.1")  # Uses OpenAI by default
+    # Or: agent = Agent(model="ollama/gpt-oss:20b-cloud")  # Uses Ollama
 
     # Run agent with RunConfig
     run_config = RunConfig(model_provider=model_provider)
@@ -320,8 +321,8 @@ Timestep also provides multi-model provider support for OpenAI and Ollama:
     });
 
     // Create agent with model name
-    const agent = new Agent({ model: 'gpt-4' }); // Uses OpenAI by default
-    // Or: new Agent({ model: 'ollama/llama3' }) // Uses Ollama
+    const agent = new Agent({ model: 'gpt-4.1' }); // Uses OpenAI by default
+    // Or: new Agent({ model: 'ollama/gpt-oss:20b-cloud' }) // Uses Ollama
 
     // Run agent with Runner
     const runner = new Runner({ modelProvider });
@@ -376,7 +377,7 @@ Timestep uses model name prefixes to determine which provider to use:
 
 - **No prefix** (e.g., `gpt-4`): Defaults to OpenAI
 - **`openai/` prefix** (e.g., `openai/gpt-4`): Explicitly uses OpenAI
-- **`ollama/` prefix** (e.g., `ollama/llama3`): Uses Ollama
+- **`ollama/` prefix** (e.g., `ollama/gpt-oss:20b-cloud`): Uses Ollama
 
 ### Examples
 
@@ -384,24 +385,24 @@ Timestep uses model name prefixes to determine which provider to use:
 
     ```python
     # OpenAI models
-    agent1 = Agent(model="gpt-4")           # Uses OpenAI
-    agent2 = Agent(model="openai/gpt-4")    # Also uses OpenAI
+    agent1 = Agent(model="gpt-4.1")           # Uses OpenAI
+    agent2 = Agent(model="openai/gpt-4.1")    # Also uses OpenAI
 
     # Ollama models
-    agent3 = Agent(model="ollama/llama3")    # Uses Ollama (local or cloud)
-    agent4 = Agent(model="ollama/llama3-cloud")  # Uses Ollama Cloud
+    agent3 = Agent(model="ollama/gpt-oss:20b-cloud")    # Uses Ollama (local or cloud)
+    agent4 = Agent(model="ollama/gpt-oss:20b-cloud-cloud")  # Uses Ollama Cloud
     ```
 
 === "TypeScript"
 
     ```typescript
     // OpenAI models
-    const agent1 = new Agent({ model: 'gpt-4' });        // Uses OpenAI
-    const agent2 = new Agent({ model: 'openai/gpt-4' }); // Also uses OpenAI
+    const agent1 = new Agent({ model: 'gpt-4.1' });        // Uses OpenAI
+    const agent2 = new Agent({ model: 'openai/gpt-4.1' }); // Also uses OpenAI
 
     // Ollama models
-    const agent3 = new Agent({ model: 'ollama/llama3' });      // Uses Ollama (local or cloud)
-    const agent4 = new Agent({ model: 'ollama/llama3-cloud' }); // Uses Ollama Cloud
+    const agent3 = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });      // Uses Ollama (local or cloud)
+    const agent4 = new Agent({ model: 'ollama/gpt-oss:20b-cloud-cloud' }); // Uses Ollama Cloud
     ```
 
 ## Environment Variables
@@ -434,7 +435,7 @@ Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage back
 
 ### Python PGLite Setup
 
-For Python, PGLite runs via Node.js subprocess. You need:
+For Python, PGLite uses a high-performance sidecar process. You need:
 
 1. **Install Node.js**: Download from [nodejs.org](https://nodejs.org/)
 2. **Install PGLite**:

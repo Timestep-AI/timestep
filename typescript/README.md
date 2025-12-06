@@ -19,7 +19,7 @@ npm install @timestep-ai/timestep
 import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
 import { Agent, Session } from '@openai/agents';
 
-const agent = new Agent({ model: 'gpt-4o' });
+const agent = new Agent({ model: 'gpt-4.1' });
 const session = new Session();
 const stateStore = new RunStateStore({ agent, sessionId: await session.getSessionId() });
 
@@ -35,7 +35,7 @@ if (result.interruptions?.length) {
 Load state saved in Python with the same `sessionId` and continue the run; state format is compatible.
 
 ## Model routing
-Prefix model names (`ollama/llama3`) or provide a custom `MultiModelProviderMap` to route to your providers.
+Prefix model names (`ollama/gpt-oss:20b-cloud`) or provide a custom `MultiModelProviderMap` to route to your providers.
 
 ## Documentation
 Full docs: https://timestep-ai.github.io/timestep/

@@ -14,6 +14,7 @@ test-python:
 	cd python && \
 	uv pip install --force-reinstall ../3rdparty/openai-agents-python && \
 	uv run python vendor_openai_agents.py && \
+	npm install -g @electric-sql/pglite || true && \
 	uv run pytest tests/test_run_agent.py -v -x && \
 	uv run pytest tests/test_same_language_py_to_py.py -v -x
 

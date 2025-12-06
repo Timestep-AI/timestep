@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Optional, Any
 from enum import Enum
 from .app_dir import get_pglite_dir
+from .postgres_helper import try_local_postgres
+from .pglite_sidecar.client import PGliteSidecarClient
 
 
 class DatabaseType(Enum):
@@ -18,158 +20,65 @@ class DatabaseType(Enum):
 
 
 class PGLiteConnection:
-    """PGLite connection wrapper using subprocess."""
+    """PGLite connection wrapper using sidecar process."""
     
     def __init__(self, pglite_path: str):
         self.pglite_path = Path(pglite_path)
         self.pglite_path.mkdir(parents=True, exist_ok=True)
-        self._node_modules_path = None
-        
-    def _find_pglite_module(self) -> str | None:
-        """Find the @electric-sql/pglite module path."""
-        import shutil
-        
-        # Try to find node_modules in common locations
-        possible_paths = [
-            # Current directory and parent directories
-            Path.cwd() / "node_modules" / "@electric-sql" / "pglite",
-            Path(__file__).parent.parent.parent / "node_modules" / "@electric-sql" / "pglite",
-            # Global npm installation
-            Path.home() / ".npm" / "global" / "node_modules" / "@electric-sql" / "pglite",
-        ]
-        
-        # Also check if pglite is installed globally via npm
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["npm", "root", "-g"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                global_node_modules = Path(result.stdout.strip())
-                possible_paths.append(global_node_modules / "@electric-sql" / "pglite")
-        except Exception:
-            pass
-        
-        for path in possible_paths:
-            if path.exists() and (path / "package.json").exists():
-                return str(path)
-        
-        # If not found, return None to use require() directly
-        return None
-        
+        self._sidecar: Optional[PGliteSidecarClient] = None
+        self._started = False
+    
+    async def _ensure_started(self) -> None:
+        """Ensure the sidecar is started."""
+        if not self._started:
+            self._sidecar = PGliteSidecarClient(str(self.pglite_path))
+            await self._sidecar.start()
+            self._started = True
+    
     async def query(self, sql: str, params: Optional[list] = None) -> dict:
-        """Execute a query via PGLite Node.js subprocess."""
-        import shutil
-        
-        # Check if node is available
-        node_path = shutil.which('node')
-        if not node_path:
-            raise RuntimeError(
-                "Node.js is required for PGLite support. "
-                "Install Node.js from https://nodejs.org/ or use PostgreSQL via TIMESTEP_DB_URL"
-            )
-        
-        # Find PGLite module
-        pglite_module_path = self._find_pglite_module()
-        
-        # Convert path to absolute
-        abs_path = str(self.pglite_path.resolve())
-        
-        # Create a script that tries to load PGLite from various locations
-        if pglite_module_path:
-            # Use explicit path
-            require_path = f"require('{pglite_module_path}')"
-        else:
-            # Try to require from node_modules or global
-            require_path = "require('@electric-sql/pglite')"
-        
-        script = f"""
-        const {{ PGlite }} = {require_path};
-        const path = require('path');
-        const fs = require('fs');
-        
-        async function runQuery() {{
-            const dbPath = {json.dumps(abs_path)};
-            const db = new PGlite(dbPath);
-            await db.waitReady;
-            
-            const sql = {json.dumps(sql)};
-            const params = {json.dumps(params or [])};
-            
-            try {{
-                const result = await db.query(sql, params);
-                console.log(JSON.stringify({{ success: true, rows: result.rows, rowCount: result.rowCount }}));
-            }} catch (error) {{
-                console.error(JSON.stringify({{ success: false, error: error.message }}));
-                process.exit(1);
-            }} finally {{
-                await db.close();
-            }}
-        }}
-        
-        runQuery().catch(err => {{
-            console.error(JSON.stringify({{ success: false, error: err.message }}));
-            process.exit(1);
-        }});
-        """
-        
-        # Run via node
-        process = await asyncio.create_subprocess_exec(
-            node_path,
-            '-e', script,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent.parent.parent)
-        )
-        
-        stdout, stderr = await process.communicate()
-        
-        if process.returncode != 0:
-            error_msg = stderr.decode() if stderr else "Unknown error"
-            if "Cannot find module" in error_msg:
-                raise RuntimeError(
-                    "@electric-sql/pglite is not installed. "
-                    "Install it with: npm install -g @electric-sql/pglite "
-                    "or: npm install @electric-sql/pglite (in the project directory)"
-                )
-            raise RuntimeError(f"PGLite query failed: {error_msg}")
-        
-        result = json.loads(stdout.decode())
-        if not result.get('success'):
-            raise RuntimeError(f"PGLite query error: {result.get('error')}")
-        
-        return result
+        """Execute a query via PGLite sidecar."""
+        await self._ensure_started()
+        if not self._sidecar:
+            raise RuntimeError("Sidecar not initialized")
+        return await self._sidecar.query(sql, params)
     
     async def execute(self, sql: str, *args) -> None:
         """Execute a query (for DDL statements or DML with parameters)."""
+        await self._ensure_started()
+        if not self._sidecar:
+            raise RuntimeError("Sidecar not initialized")
         if args:
-            await self.query(sql, list(args))
+            await self._sidecar.execute(sql, list(args))
         else:
-            await self.query(sql, None)
+            await self._sidecar.execute(sql, None)
     
     async def fetch(self, sql: str, *args) -> list:
         """Fetch rows from a query."""
-        result = await self.query(sql, list(args) if args else None)
-        return result.get('rows', [])
+        await self._ensure_started()
+        if not self._sidecar:
+            raise RuntimeError("Sidecar not initialized")
+        return await self._sidecar.fetch(sql, list(args) if args else None)
     
     async def fetchrow(self, sql: str, *args) -> Optional[dict]:
         """Fetch a single row from a query."""
-        rows = await self.fetch(sql, *args)
-        return rows[0] if rows else None
+        await self._ensure_started()
+        if not self._sidecar:
+            raise RuntimeError("Sidecar not initialized")
+        return await self._sidecar.fetchrow(sql, list(args) if args else None)
     
     async def fetchval(self, sql: str, *args) -> Any:
         """Fetch a single value from a query."""
-        row = await self.fetchrow(sql, *args)
-        if row:
-            return list(row.values())[0] if row else None
-        return None
+        await self._ensure_started()
+        if not self._sidecar:
+            raise RuntimeError("Sidecar not initialized")
+        return await self._sidecar.fetchval(sql, list(args) if args else None)
     
     async def close(self) -> None:
-        """Close connection (no-op for subprocess approach)."""
-        pass
+        """Close connection and stop sidecar."""
+        if self._sidecar:
+            await self._sidecar.stop()
+            self._sidecar = None
+            self._started = False
 
 
 class DatabaseConnection:
@@ -211,17 +120,34 @@ class DatabaseConnection:
         """
         Connect to database. Returns True if successful, False otherwise.
         
+        Connection priority:
+        1. Explicit connection string (TIMESTEP_DB_URL or connection_string parameter)
+        2. Local Postgres on localhost:5432 (auto-detect)
+        3. PGLite with sidecar (fallback)
+        
         Returns:
             True if connection successful, False otherwise
         """
-        # Try PostgreSQL first if connection string is explicitly provided
+        # 1. Try explicit connection string first (remote or local)
         if self.connection_string and not self.use_pglite:
             try:
                 return await self._connect_postgresql()
+            except Exception as e:
+                # If explicit connection fails, don't fall back - raise the error
+                raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
+        
+        # 2. Try local Postgres (auto-detect)
+        if not self.use_pglite:
+            try:
+                local_conn = await try_local_postgres()
+                if local_conn:
+                    self.connection_string = local_conn
+                    return await self._connect_postgresql()
             except Exception:
+                # Local Postgres not available, continue to fallback
                 pass
         
-        # Default to PGLite (or if explicitly enabled)
+        # 3. Fall back to PGLite (with sidecar for performance)
         if self.use_pglite or not self.connection_string:
             try:
                 return await self._connect_pglite()
@@ -256,12 +182,12 @@ class DatabaseConnection:
             raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
     
     async def _connect_pglite(self) -> bool:
-        """Connect to PGLite database via subprocess."""
+        """Connect to PGLite database via sidecar."""
         try:
             self._connection = PGLiteConnection(self.pglite_path)
             self._db_type = DatabaseType.PGLITE
             
-            # Test connection
+            # Test connection (this will start the sidecar)
             await self._connection.query("SELECT 1")
             
             # Initialize schema

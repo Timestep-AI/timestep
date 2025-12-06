@@ -9,15 +9,16 @@ pip install timestep
 
 ## Prerequisites (Python)
 - `OPENAI_API_KEY`
-- Default storage uses PGLite via Node: install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite` or local install).
-- For better performance use Postgres: set `TIMESTEP_DB_URL=postgresql://user:pass@host/db`. If you must stay on PGLite, keep a long-lived Node/Deno sidecar that holds a `PGlite` connection instead of spawning Node per query.
+- **Database storage** (connection priority):
+  1. **PostgreSQL** (recommended): Set `TIMESTEP_DB_URL=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
+  2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process for optimal performance.
 
 ## Quick start
 ```python
 from timestep import run_agent, RunStateStore, consume_result
 from agents import Agent, Session
 
-agent = Agent(model="gpt-4o")
+agent = Agent(model="gpt-4.1")
 session = Session()
 state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 

@@ -76,7 +76,7 @@ To use the web search tool, you need:
 
     # Create agent with web search tool
     agent = Agent(
-        model="gpt-4",
+        model="gpt-4.1",
         tools=[web_search]
     )
 
@@ -101,7 +101,7 @@ To use the web search tool, you need:
 
     // Create agent with web search tool
     const agent = new Agent({
-      model: 'gpt-4',
+      model: 'gpt-4.1',
       tools: [webSearch],
     });
 
