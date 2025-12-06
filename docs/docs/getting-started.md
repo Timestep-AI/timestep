@@ -89,7 +89,7 @@ The core feature of Timestep is durable execution with cross-language state pers
 === "Python"
 
     ```python
-    from timestep import run_agent, RunStateStore, consume_result
+    from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
     # Create agent
@@ -100,7 +100,6 @@ The core feature of Timestep is durable execution with cross-language state pers
 
     # Run agent
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await consume_result(result)
 
     # Handle interruptions
     if result.interruptions:
@@ -115,13 +114,12 @@ The core feature of Timestep is durable execution with cross-language state pers
         
         # Resume execution
         result = await run_agent(agent, loaded_state, session, stream=False)
-        result = await consume_result(result)
     ```
 
 === "TypeScript"
 
     ```typescript
-    import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
     // Create agent
@@ -135,7 +133,6 @@ The core feature of Timestep is durable execution with cross-language state pers
 
     // Run agent
     let result = await runAgent(agent, inputItems, session, false);
-    result = await consumeResult(result);
 
     // Handle interruptions
     if (result.interruptions?.length) {
@@ -150,7 +147,6 @@ The core feature of Timestep is durable execution with cross-language state pers
       
       // Resume execution
       result = await runAgent(agent, loadedState, session, false);
-      result = await consumeResult(result);
     }
     ```
 
@@ -172,7 +168,6 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     # Run until interruption
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await consume_result(result)
 
     if result.interruptions:
         # Save state - can be loaded in TypeScript!
@@ -224,7 +219,6 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     // Run until interruption
     let result = await runAgent(agent, inputItems, session, false);
-    result = await consumeResult(result);
 
     if (result.interruptions?.length) {
       // Save state - can be loaded in Python!

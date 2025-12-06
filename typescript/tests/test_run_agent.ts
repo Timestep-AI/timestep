@@ -13,7 +13,7 @@ import {
 } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 import OpenAI from 'openai';
-import { runAgent, consumeResult, RunStateStore } from '../timestep/index';
+import { runAgent, RunStateStore } from '../timestep/index';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -203,7 +203,6 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
 
     try {
       let result = await runAgent(personalAssistantAgent, runInput, session, stream);
-      result = await consumeResult(result);
 
       // Handle interruptions
       if (result.interruptions?.length) {
@@ -220,7 +219,6 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
 
         // Resume with state
         result = await runAgent(personalAssistantAgent, loadedState, session, stream);
-        result = await consumeResult(result);
       }
     } catch (e) {
       if (e instanceof InputGuardrailTripwireTriggered || e instanceof OutputGuardrailTripwireTriggered) {
@@ -335,7 +333,6 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
 
     try {
       let result = await runAgent(personalAssistantAgent, runInput, session, stream);
-      result = await consumeResult(result);
 
       // Handle interruptions - save state but don't approve
       if (result.interruptions?.length) {
@@ -436,7 +433,6 @@ export async function runAgentTestFromPython(runInParallel: boolean = true, stre
 
   // Resume with state
   let result = await runAgent(personalAssistantAgent, loadedState, session, stream);
-  result = await consumeResult(result);
 
   // Continue with remaining inputs (indices 4-7)
   for (let i = 4; i < RUN_INPUTS.length; i++) {
@@ -444,7 +440,6 @@ export async function runAgentTestFromPython(runInParallel: boolean = true, stre
 
     try {
       result = await runAgent(personalAssistantAgent, runInput, session, stream);
-      result = await consumeResult(result);
 
       // Handle any new interruptions
       if (result.interruptions?.length) {
@@ -456,7 +451,6 @@ export async function runAgentTestFromPython(runInParallel: boolean = true, stre
           loadedState.approve(interruption);
         }
         result = await runAgent(personalAssistantAgent, loadedState, session, stream);
-        result = await consumeResult(result);
       }
     } catch (e) {
       if (e instanceof InputGuardrailTripwireTriggered || e instanceof OutputGuardrailTripwireTriggered) {

@@ -76,7 +76,7 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │  run_agent() - Simplified execution                 │  │
 │  │  RunStateStore - State persistence                   │  │
-│  │  consume_result() - Result handling                  │  │
+│  │  result_processor parameter - Result processing      │  │
 │  └──────────────────┬───────────────────────────────────┘  │
 │                      │                                       │
 │  ┌───────────────────▼───────────────────────────────────┐ │

@@ -7,9 +7,9 @@ export { RunStateStore } from './run_state_store.ts';
 import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 
-export async function consumeResult(result: any): Promise<any> {
+export async function defaultResultProcessor(result: any): Promise<any> {
   /**
-   * Consume all events from a result (streaming or non-streaming).
+   * Default result processor that consumes all events from a result (streaming or non-streaming).
    *
    * @param result - RunResult or StreamedRunResult from runAgent
    * @returns The same result object after consuming stream (if applicable)
@@ -28,8 +28,21 @@ export async function runAgent(
   agent: Agent,
   runInput: AgentInputItem[] | RunState<any, any>,
   session: Session,
-  stream: boolean
+  stream: boolean,
+  resultProcessor?: (result: any) => Promise<any>
 ): Promise<any> {
+  /**
+   * Run an agent with the given session and stream setting.
+   * 
+   * @param agent - The agent to run
+   * @param runInput - Input items or RunState for the agent
+   * @param session - Session for managing conversation state
+   * @param stream - Whether to stream the results
+   * @param resultProcessor - Optional function to process the result. Defaults to defaultResultProcessor
+   *   which consumes all streaming events and waits for completion. Pass undefined to skip processing.
+   * @returns The processed result from the agent run
+   */
+  const processor = resultProcessor ?? defaultResultProcessor;
   const runner = new Runner();
 
   const sessionInputCallback = async (existingItems: AgentInputItem[], newInput: AgentInputItem[]): Promise<AgentInputItem[]> => {
@@ -37,20 +50,23 @@ export async function runAgent(
   };
 
   try {
+    let result;
     if (stream) {
-      const result = await runner.run(agent, runInput, {
+      result = await runner.run(agent, runInput, {
         session,
         sessionInputCallback,
         stream: true
       });
-      return result;
     } else {
-      const result = await runner.run(agent, runInput, {
+      result = await runner.run(agent, runInput, {
         session,
         sessionInputCallback
       });
-      return result;
     }
+
+    // Apply result processor
+    result = await processor(result);
+    return result;
   } catch (e) {
     if (e instanceof MaxTurnsExceededError) {
       console.error('MaxTurnsExceededError:', e.message);

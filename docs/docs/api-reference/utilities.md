@@ -15,7 +15,8 @@ A convenience function for running agents with session management and error hand
         agent: Agent,
         run_input: list[TResponseInputItem] | RunState,
         session: SessionABC,
-        stream: bool
+        stream: bool,
+        result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor
     ) -> Any
     ```
 
@@ -26,7 +27,8 @@ A convenience function for running agents with session management and error hand
       agent: Agent,
       runInput: AgentInputItem[] | RunState<any, any>,
       session: Session,
-      stream: boolean
+      stream: boolean,
+      resultProcessor?: (result: any) => Promise<any>
     ): Promise<any>
     ```
 
@@ -38,6 +40,7 @@ A convenience function for running agents with session management and error hand
 | `run_input` / `runInput` | `list[TResponseInputItem] \| RunState` / `AgentInputItem[] \| RunState` | The input for the agent run. Can be a list of input items or a RunState. |
 | `session` | `SessionABC` / `Session` | The session to use for maintaining conversation context. |
 | `stream` | `bool` / `boolean` | Whether to use streaming mode. |
+| `result_processor` / `resultProcessor` | `Optional[Callable[[Any], Awaitable[Any]]]` / `(result: any) => Promise<any> \| undefined` | Optional function to process the result. Defaults to `default_result_processor`/`defaultResultProcessor` which consumes all streaming events and waits for completion. Pass `None`/`undefined` to skip processing. |
 
 ### Returns
 
@@ -51,6 +54,7 @@ A convenience function for running agents with session management and error hand
 - **Error Handling**: Catches and logs common agent errors (MaxTurnsExceeded, ModelBehaviorError, UserError, AgentsException)
 - **Streaming Support**: Supports both streaming and non-streaming modes
 - **Configuration**: Uses default RunConfig settings (nest_handoff_history=False)
+- **Result Processing**: Automatically processes results by default (consumes streaming events, waits for completion). Can be customized via `result_processor`/`resultProcessor` parameter.
 
 ### Example
 
@@ -78,6 +82,9 @@ A convenience function for running agents with session management and error hand
         session,
         stream=True
     )
+    
+    # Result is automatically processed (streaming events consumed, completion awaited)
+    print(result.output)
     ```
 
 === "TypeScript"
@@ -104,24 +111,27 @@ A convenience function for running agents with session management and error hand
       session,
       true
     );
+    
+    // Result is automatically processed (streaming events consumed, completion awaited)
+    console.log(result.output);
     ```
 
-## consume_result / consumeResult
+## default_result_processor / defaultResultProcessor
 
-Consumes all events from a result (streaming or non-streaming), ensuring all background operations complete.
+The default result processor function that consumes all events from a result (streaming or non-streaming), ensuring all background operations complete. This is used automatically by `run_agent`/`runAgent` unless a custom processor is provided.
 
 ### Function Signature
 
 === "Python"
 
     ```python
-    async def consume_result(result: Any) -> Any
+    async def default_result_processor(result: Any) -> Any
     ```
 
 === "TypeScript"
 
     ```typescript
-    export async function consumeResult(result: any): Promise<any>
+    export async function defaultResultProcessor(result: any): Promise<any>
     ```
 
 ### Parameters
@@ -146,52 +156,85 @@ This function ensures that:
 
 This is particularly important for streaming results, where background operations may continue after the stream completes.
 
-### Example
+### Custom Result Processors
+
+You can provide a custom result processor to `run_agent`/`runAgent` to handle results differently:
 
 === "Python"
 
     ```python
-    from timestep import run_agent, consume_result
+    from timestep import run_agent, default_result_processor
     from agents import Agent, Session
+
+    async def custom_processor(result):
+        # Process events incrementally
+        if hasattr(result, 'stream_events'):
+            async for event in result.stream_events():
+                # Handle each event
+                print(f"Event: {event}")
+        return result
 
     agent = Agent(model="gpt-4.1")
     session = Session()
 
+    # Use custom processor
     result = await run_agent(
         agent,
         [{"role": "user", "content": "Hello"}],
         session,
-        stream=True
+        stream=True,
+        result_processor=custom_processor
     )
 
-    # Consume all events and wait for completion
-    result = await consume_result(result)
-
-    # Now safe to access final result
-    print(result.output)
+    # Or skip processing entirely
+    result = await run_agent(
+        agent,
+        [{"role": "user", "content": "Hello"}],
+        session,
+        stream=True,
+        result_processor=None
+    )
     ```
 
 === "TypeScript"
 
     ```typescript
-    import { runAgent, consumeResult } from '@timestep-ai/timestep';
+    import { runAgent, defaultResultProcessor } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
+
+    async function customProcessor(result: any) {
+      // Process events incrementally
+      if ('toTextStream' in result) {
+        const stream = result.toTextStream({ compatibleWithNodeStreams: true });
+        for await (const chunk of stream) {
+          // Handle each chunk
+          console.log(`Chunk: ${chunk}`);
+        }
+        await result.completed;
+      }
+      return result;
+    }
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
 
+    // Use custom processor
     const result = await runAgent(
       agent,
       [{ role: 'user', content: 'Hello' }],
       session,
-      true
+      true,
+      customProcessor
     );
 
-    // Consume all events and wait for completion
-    const finalResult = await consumeResult(result);
-
-    // Now safe to access final result
-    console.log(finalResult.output);
+    // Or skip processing entirely
+    const result2 = await runAgent(
+      agent,
+      [{ role: 'user', content: 'Hello' }],
+      session,
+      true,
+      undefined
+    );
     ```
 
 ## RunStateStore
@@ -480,7 +523,7 @@ Closes the database connection.
 === "Python"
 
     ```python
-    from timestep import run_agent, consume_result, RunStateStore
+    from timestep import run_agent, RunStateStore
     from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
@@ -500,7 +543,6 @@ Closes the database connection.
 
     # Run agent
     result = await run_agent(agent, run_state, session, stream=False)
-    result = await consume_result(result)
 
     # Handle interruptions
     if result.interruptions:
@@ -515,7 +557,6 @@ Closes the database connection.
         
         # Resume execution
         result = await run_agent(agent, loaded_state, session, stream=False)
-        result = await consume_result(result)
 
     # Save state for next time
     await state_store.save(result.to_state())
@@ -527,7 +568,7 @@ Closes the database connection.
 === "TypeScript"
 
     ```typescript
-    import { runAgent, consumeResult, RunStateStore } from '@timestep-ai/timestep';
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4.1' });
@@ -549,7 +590,6 @@ Closes the database connection.
 
     // Run agent
     let result = await runAgent(agent, runInput, session, false);
-    result = await consumeResult(result);
 
     // Handle interruptions
     if (result.interruptions?.length) {
@@ -564,7 +604,6 @@ Closes the database connection.
       
       // Resume execution
       result = await runAgent(agent, loadedState, session, false);
-      result = await consumeResult(result);
     }
 
     // Save state for next time
@@ -591,7 +630,6 @@ Closes the database connection.
     state_store = RunStateStore(agent=agent, session_id=session_id)
 
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await consume_result(result)
 
     if result.interruptions:
         # Save state - can be loaded in TypeScript!
@@ -635,7 +673,6 @@ Closes the database connection.
     const stateStore = new RunStateStore({ agent, sessionId });
 
     let result = await runAgent(agent, inputItems, session, false);
-    result = await consumeResult(result);
 
     if (result.interruptions?.length) {
       // Save state - can be loaded in Python!

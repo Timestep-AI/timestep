@@ -1,6 +1,6 @@
 # Timestep Documentation
 
-Welcome! Timestep makes OpenAI Agents durable and resumable across Python and TypeScript with a tiny surface area: `run_agent` / `runAgent`, `RunStateStore`, and `consume_result`.
+Welcome! Timestep makes OpenAI Agents durable and resumable across Python and TypeScript with a tiny surface area: `run_agent` / `runAgent` and `RunStateStore`.
 
 ## Prerequisites
 - `OPENAI_API_KEY`

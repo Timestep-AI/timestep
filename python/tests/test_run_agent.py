@@ -22,7 +22,7 @@ from timestep._vendored_imports import (
     function_tool,
 )
 from openai import OpenAI
-from timestep import run_agent, consume_result, RunStateStore
+from timestep import run_agent, RunStateStore
 
 def file_to_base64(file_path: str) -> str:
     """Convert a file to base64 string."""
@@ -210,7 +210,6 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     for idx, run_input in enumerate(RUN_INPUTS):
         try:
             result = await run_agent(personal_assistant_agent, run_input, session, stream)
-            result = await consume_result(result)
 
             # Handle interruptions
             if result.interruptions and len(result.interruptions) > 0:
@@ -225,7 +224,6 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
 
                 # Resume with state
                 result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
-                result = await consume_result(result)
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
             # Guardrail was triggered - pop items until we've removed the user message
             # First, peek at the last few items to see what needs to be removed
@@ -250,8 +248,8 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     # Wait for all background operations to complete before fetching from API.
     # This is necessary because Python's streaming doesn't have a completion Promise
     # like TypeScript's result.completed, so background operations may still be in progress.
-    # We wait here (after all consume_result calls) rather than in consume_result itself
-    # to avoid excessive delays when consume_result is called many times.
+    # We wait here (after all run_agent calls) rather than in the result processor itself
+    # to avoid excessive delays when run_agent is called many times.
     # Parallel mode may need longer due to concurrent operations.
     if stream:
         import asyncio
@@ -346,7 +344,6 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
         run_input = RUN_INPUTS[i]
         try:
             result = await run_agent(personal_assistant_agent, run_input, session, stream)
-            result = await consume_result(result)
 
             # Handle interruptions - save state but don't approve
             if result.interruptions and len(result.interruptions) > 0:
@@ -438,14 +435,12 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
 
     # Resume with state
     result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
-    result = await consume_result(result)
 
     # Continue with remaining inputs (indices 4-7)
     for i in range(4, len(RUN_INPUTS)):
         run_input = RUN_INPUTS[i]
         try:
             result = await run_agent(personal_assistant_agent, run_input, session, stream)
-            result = await consume_result(result)
 
             # Handle any new interruptions
             if result.interruptions and len(result.interruptions) > 0:
@@ -455,7 +450,6 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
                 for interruption in loaded_state.get_interruptions():
                     loaded_state.approve(interruption)
                 result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
-                result = await consume_result(result)
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
             recent_items = await session.get_items(2)
             items_to_pop = 0

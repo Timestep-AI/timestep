@@ -7,7 +7,7 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 - Cross-language parity: same surface in Python and TypeScript; state stays compatible.
 - Single storage story: use `PG_CONNECTION_URI` for PostgreSQL, or default to PGLite.
 - Model routing without new APIs: prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
-- Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`, `consume_result`.
+- Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`.
 
 ## Prerequisites
 - `OPENAI_API_KEY`
@@ -20,36 +20,219 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 ### Python (async)
 
 ```python
-from timestep import run_agent, RunStateStore, consume_result
-from agents import Agent, Session
+from timestep import run_agent, RunStateStore
+from agents import (
+    Agent,
+    OpenAIConversationsSession,
+    ModelSettings,
+    function_tool,
+    input_guardrail,
+    output_guardrail,
+    GuardrailFunctionOutput,
+    RunContextWrapper,
+    TResponseInputItem,
+)
 
-agent = Agent(model="gpt-4.1")
-session = Session()
-state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
+# Define a tool with approval requirement
+async def needs_approval_for_weather(ctx, args, call_id):
+    """Require approval for sensitive cities."""
+    return args.get("city", "").lower() in ["berkeley", "san francisco"]
 
-result = await run_agent(agent, input_items, session, stream=False)
-result = await consume_result(result)
+@function_tool
+def get_weather(city: str) -> str:
+    """Get weather information for a city."""
+    return f"The weather in {city} is sunny and 72°F"
 
-if result.interruptions:
-    state = result.to_state()
-    await state_store.save(state)  # resume in Python or TypeScript
+get_weather.needs_approval = needs_approval_for_weather
+
+# Define guardrails
+@input_guardrail(run_in_parallel=True)
+async def content_filter(
+    ctx: RunContextWrapper[None],
+    agent: Agent,
+    input: str | list[TResponseInputItem]
+) -> GuardrailFunctionOutput:
+    """Block inappropriate content."""
+    input_text = input if isinstance(input, str) else str(input)
+    blocked = any(word in input_text.lower() for word in ["spam", "scam"])
+    return GuardrailFunctionOutput(
+        output_info={"blocked": blocked},
+        tripwire_triggered=blocked,
+    )
+
+@output_guardrail
+async def output_safety(
+    ctx: RunContextWrapper,
+    agent: Agent,
+    output: str
+) -> GuardrailFunctionOutput:
+    """Ensure safe output."""
+    unsafe = "password" in output.lower() or "api key" in output.lower()
+    return GuardrailFunctionOutput(
+        output_info={"unsafe": unsafe},
+        tripwire_triggered=unsafe,
+    )
+
+# Create specialized weather agent
+weather_agent = Agent(
+    instructions="You are a weather assistant. Use get_weather for all weather queries.",
+    model="gpt-4.1",
+    model_settings=ModelSettings(temperature=0),
+    name="Weather Assistant",
+    tools=[get_weather],
+)
+
+# Create main assistant with handoffs and guardrails
+assistant = Agent(
+    handoffs=[weather_agent],
+    instructions="You are a helpful personal assistant.",
+    model="gpt-4.1",
+    model_settings=ModelSettings(temperature=0),
+    name="Personal Assistant",
+    input_guardrails=[content_filter],
+    output_guardrails=[output_safety],
+)
+
+# Initialize session and state store
+session = OpenAIConversationsSession()
+session_id = await session._get_session_id()
+state_store = RunStateStore(agent=assistant, session_id=session_id)
+
+# Run multiple conversation turns
+conversations = [
+    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's 2+2?"}]}],
+    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Oakland?"}]}],
+    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Berkeley?"}]}],
+]
+
+for input_items in conversations:
+    result = await run_agent(assistant, input_items, session, stream=False)
+    
+    # Handle interruptions (e.g., tool approval needed)
+    if result.interruptions:
+        state = result.to_state()
+        await state_store.save(state)
+        
+        # Load, approve, and resume
+        loaded_state = await state_store.load()
+        for interruption in loaded_state.get_interruptions():
+            loaded_state.approve(interruption)
+        
+        result = await run_agent(assistant, loaded_state, session, stream=False)
 ```
 
 ### TypeScript
 
 ```typescript
-import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
-import { Agent, Session } from '@openai/agents';
+import { runAgent, RunStateStore } from '@timestep-ai/timestep';
+import {
+  Agent,
+  OpenAIConversationsSession,
+  tool,
+  InputGuardrail,
+  OutputGuardrail,
+} from '@openai/agents';
+import type { AgentInputItem } from '@openai/agents-core';
 
-const agent = new Agent({ model: 'gpt-4.1' });
-const session = new Session();
-const stateStore = new RunStateStore({ agent, sessionId: await session.getSessionId() });
+// Define a tool with approval requirement
+const getWeather = tool({
+  name: 'get_weather',
+  description: 'Get weather information for a city.',
+  parameters: {
+    type: 'object',
+    properties: {
+      city: { type: 'string' }
+    },
+    required: ['city'],
+    additionalProperties: false
+  } as any,
+  needsApproval: async (_ctx: any, args: any) => {
+    // Require approval for sensitive cities
+    return ['berkeley', 'san francisco'].includes(args.city?.toLowerCase() || '');
+  },
+  execute: async (args: any): Promise<string> => {
+    return `The weather in ${args.city} is sunny and 72°F`;
+  }
+});
 
-let result = await runAgent(agent, inputItems, session, false);
-result = await consumeResult(result);
+// Define guardrails
+const contentFilter: InputGuardrail = {
+  name: 'Content Filter',
+  runInParallel: true,
+  execute: async ({ input }) => {
+    const inputText = typeof input === 'string' ? input : JSON.stringify(input);
+    const blocked = ['spam', 'scam'].some(word => 
+      inputText.toLowerCase().includes(word)
+    );
+    return {
+      outputInfo: { blocked },
+      tripwireTriggered: blocked,
+    };
+  },
+};
 
-if (result.interruptions?.length) {
-  await stateStore.save(result.state); // resume in TS or Python
+const outputSafety: OutputGuardrail<any> = {
+  name: 'Output Safety',
+  execute: async ({ agentOutput }) => {
+    const outputText = typeof agentOutput === 'string' 
+      ? agentOutput 
+      : JSON.stringify(agentOutput);
+    const unsafe = outputText.toLowerCase().includes('password') || 
+                   outputText.toLowerCase().includes('api key');
+    return {
+      outputInfo: { unsafe },
+      tripwireTriggered: unsafe,
+    };
+  },
+};
+
+// Create specialized weather agent
+const weatherAgent = new Agent({
+  instructions: 'You are a weather assistant. Use get_weather for all weather queries.',
+  model: 'gpt-4.1',
+  modelSettings: { temperature: 0 },
+  name: 'Weather Assistant',
+  tools: [getWeather],
+});
+
+// Create main assistant with handoffs and guardrails
+const assistant = new Agent({
+  handoffs: [weatherAgent],
+  instructions: 'You are a helpful personal assistant.',
+  model: 'gpt-4.1',
+  modelSettings: { temperature: 0 },
+  name: 'Personal Assistant',
+  inputGuardrails: [contentFilter],
+  outputGuardrails: [outputSafety],
+});
+
+// Initialize session and state store
+const session = new OpenAIConversationsSession();
+const sessionId = await session.getSessionId();
+const stateStore = new RunStateStore({ agent: assistant, sessionId });
+
+// Run multiple conversation turns
+const conversations: AgentInputItem[][] = [
+  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's 2+2?" }] }],
+  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Oakland?" }] }],
+  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Berkeley?" }] }],
+];
+
+for (const inputItems of conversations) {
+  let result = await runAgent(assistant, inputItems, session, false);
+  
+  // Handle interruptions (e.g., tool approval needed)
+  if (result.interruptions?.length) {
+    await stateStore.save(result.state);
+    
+    // Load, approve, and resume
+    const loadedState = await stateStore.load();
+    for (const interruption of loadedState.getInterruptions()) {
+      loadedState.approve(interruption);
+    }
+    
+    result = await runAgent(assistant, loadedState, session, false);
+  }
 }
 ```
 

@@ -15,7 +15,7 @@ pip install timestep
 
 ## Quick start
 ```python
-from timestep import run_agent, RunStateStore, consume_result
+from timestep import run_agent, RunStateStore
 from agents import Agent, Session
 
 agent = Agent(model="gpt-4.1")
@@ -23,7 +23,6 @@ session = Session()
 state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
 result = await run_agent(agent, input_items, session, stream=False)
-result = await consume_result(result)
 
 if result.interruptions:
     await state_store.save(result.to_state())

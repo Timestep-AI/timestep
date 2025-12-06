@@ -11,12 +11,12 @@ __all__ = [
     "MultiModelProvider",
     "MultiModelProviderMap",
     "run_agent",
-    "consume_result",
+    "default_result_processor",
     "RunStateStore",
     "web_search",
 ]
 
-from typing import Any, Optional
+from typing import Any, Optional, Callable, Awaitable
 from ._vendored_imports import (
     Agent, Runner, RunConfig, RunState, TResponseInputItem,
     AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
@@ -25,9 +25,9 @@ from ._vendored_imports import (
 
 from .run_state_store import RunStateStore
 
-async def consume_result(result: Any) -> Any:
+async def default_result_processor(result: Any) -> Any:
     """
-    Consume all events from a result (streaming or non-streaming).
+    Default result processor that consumes all events from a result (streaming or non-streaming).
 
     Args:
         result: RunResult or RunResultStreaming from run_agent
@@ -62,9 +62,23 @@ async def run_agent(
     agent: Agent,
     run_input: list[TResponseInputItem] | RunState,
     session: SessionABC,
-    stream: bool
+    stream: bool,
+    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor
 ):
-    """Run an agent with the given session and stream setting."""
+    """
+    Run an agent with the given session and stream setting.
+    
+    Args:
+        agent: The agent to run
+        run_input: Input items or RunState for the agent
+        session: Session for managing conversation state
+        stream: Whether to stream the results
+        result_processor: Optional function to process the result. Defaults to default_result_processor
+            which consumes all streaming events and waits for completion. Pass None to skip processing.
+    
+    Returns:
+        The processed result from the agent run
+    """
     async def session_input_callback(existing_items: list, new_input: list) -> list:
         """Callback to merge new input with existing session items."""
         return existing_items + new_input
@@ -79,6 +93,10 @@ async def run_agent(
             result = Runner.run_streamed(agent, run_input, run_config=run_config, session=session)
         else:
             result = await Runner.run(agent, run_input, run_config=run_config, session=session)
+
+        # Apply result processor if provided
+        if result_processor is not None:
+            result = await result_processor(result)
 
         return result
     except MaxTurnsExceeded as e:

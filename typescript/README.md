@@ -16,15 +16,14 @@ npm install @timestep-ai/timestep
 
 ## Quick start
 ```typescript
-import { runAgent, RunStateStore, consumeResult } from '@timestep-ai/timestep';
+import { runAgent, RunStateStore } from '@timestep-ai/timestep';
 import { Agent, Session } from '@openai/agents';
 
 const agent = new Agent({ model: 'gpt-4.1' });
 const session = new Session();
 const stateStore = new RunStateStore({ agent, sessionId: await session.getSessionId() });
 
-let result = await runAgent(agent, inputItems, session, false);
-result = await consumeResult(result);
+const result = await runAgent(agent, inputItems, session, false);
 
 if (result.interruptions?.length) {
   await stateStore.save(result.state);
