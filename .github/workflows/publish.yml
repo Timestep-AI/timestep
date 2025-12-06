@@ -47,6 +47,8 @@ jobs:
           uv pip install --force-reinstall ../3rdparty/openai-agents-python
           uv run python vendor_openai_agents.py
           uv sync
+          # Reinstall agents package after sync (needed for vendored imports to work)
+          uv pip install --force-reinstall ../3rdparty/openai-agents-python
       
       - name: Build submodule dependencies
         run: |
