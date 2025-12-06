@@ -60,6 +60,7 @@ nav:
   - Getting Started: getting-started.md
   - Architecture: architecture.md
   - Use Cases: use-cases.md
+  - DBOS Workflows: dbos-workflows.md
   - API Reference:
     - api-reference/multi-model-provider.md
     - api-reference/ollama-model-provider.md

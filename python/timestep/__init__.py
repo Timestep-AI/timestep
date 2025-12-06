@@ -14,6 +14,11 @@ __all__ = [
     "default_result_processor",
     "RunStateStore",
     "web_search",
+    "run_agent_workflow",
+    "queue_agent_workflow",
+    "create_scheduled_agent_workflow",
+    "configure_dbos",
+    "ensure_dbos_launched",
 ]
 
 from typing import Any, Optional, Callable, Awaitable
@@ -24,6 +29,12 @@ from ._vendored_imports import (
 )
 
 from .run_state_store import RunStateStore
+from .workflows import (
+    run_agent_workflow,
+    queue_agent_workflow,
+    create_scheduled_agent_workflow,
+)
+from .dbos_config import configure_dbos, ensure_dbos_launched
 
 async def default_result_processor(result: Any) -> Any:
     """

@@ -3,6 +3,8 @@ export { OllamaModelProvider, type OllamaModelProviderOptions } from './ollama_m
 export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provider.ts';
 export { webSearch } from './tools.ts';
 export { RunStateStore } from './run_state_store.ts';
+export { runAgentWorkflow, queueAgentWorkflow, createScheduledAgentWorkflow } from './workflows.ts';
+export { configureDBOS, ensureDBOSLaunched } from './dbos_config.ts';
 
 import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';

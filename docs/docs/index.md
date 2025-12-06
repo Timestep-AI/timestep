@@ -11,10 +11,12 @@ Welcome! Timestep makes OpenAI Agents durable and resumable across Python and Ty
 ## Quick navigation
 - Getting started: [Installation and Quick Start](getting-started.md)
 - Core concepts: [Architecture](architecture.md), [Use Cases](use-cases.md)
+- **DBOS Workflows**: [Durable Execution, Queuing, and Scheduling](dbos-workflows.md) (New!)
 - API reference: [Utilities](api-reference/utilities.md), [MultiModelProvider](api-reference/multi-model-provider.md), [OllamaModelProvider](api-reference/ollama-model-provider.md), [MultiModelProviderMap](api-reference/multi-model-provider-map.md), [Tools](api-reference/tools.md)
 
 ## Core features
-- Durable execution: save/load `RunState` from Postgres or PGLite.
+- **Durable execution**: save/load `RunState` from Postgres or PGLite.
+- **DBOS workflows**: Run agents in durable workflows that automatically recover from crashes, with queuing and scheduling support.
 - Cross-language state: same format in Python and TypeScript.
 - Model routing: prefix (`ollama/gpt-oss:20b-cloud`) to select providers; defaults to OpenAI.
 - Smart storage: auto-detects local Postgres, falls back to PGLite, or use `PG_CONNECTION_URI` for remote Postgres.

@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.14",
+  "version": "2026.0.15",
   "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -27,7 +27,8 @@
     "ollama": "^0.6.3",
     "openai": "^6.0.0",
     "@electric-sql/pglite": "^0.3.14",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "@dbos-inc/dbos-sdk": "^4.4.9"
   },
   "devDependencies": {
     "@openai/agents": "link:../3rdparty/openai-agents-js/packages/agents",

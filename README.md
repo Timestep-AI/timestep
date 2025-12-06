@@ -4,10 +4,11 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 
 ## What Timestep gives you
 - Durable runs: save and resume `RunState` without changing your agent code.
+- **DBOS workflows**: Run agents in durable workflows that automatically recover from crashes, with queuing and scheduling support.
 - Cross-language parity: same surface in Python and TypeScript; state stays compatible.
 - Single storage story: use `PG_CONNECTION_URI` for PostgreSQL, or default to PGLite.
 - Model routing without new APIs: prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
-- Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`.
+- Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`, `run_agent_workflow` / `runAgentWorkflow`.
 
 ## Prerequisites
 - `OPENAI_API_KEY`
@@ -249,6 +250,65 @@ const saved = await stateStore.load();
 for (const interruption of saved.getInterruptions()) saved.approve(interruption);
 await runAgent(agent, saved, session, false);
 ```
+
+## DBOS Workflows (New!)
+
+Timestep now supports durable agent execution via DBOS workflows. Run agents in workflows that automatically recover from crashes, with built-in queuing and scheduling.
+
+### Durable Execution
+
+```python
+from timestep import run_agent_workflow, configure_dbos, ensure_dbos_launched
+from agents import Agent, OpenAIConversationsSession
+
+configure_dbos()
+ensure_dbos_launched()
+
+agent = Agent(model="gpt-4.1")
+session = OpenAIConversationsSession()
+
+# Run in a durable workflow - automatically saves state and recovers from crashes
+result = await run_agent_workflow(
+    agent=agent,
+    input_items=input_items,
+    session=session,
+    stream=False,
+    workflow_id="unique-id"  # Idempotency key
+)
+```
+
+### Queued Execution with Rate Limiting
+
+```python
+from timestep import queue_agent_workflow
+
+# Enqueue agent runs with automatic rate limiting (50 requests per 60 seconds)
+handle = queue_agent_workflow(
+    agent=agent,
+    input_items=input_items,
+    session=session,
+    priority=1,  # Higher priority
+    deduplication_id="unique-queue-id"
+)
+
+result = await handle.get_result()
+```
+
+### Scheduled Execution
+
+```python
+from timestep import create_scheduled_agent_workflow
+
+# Schedule agent to run every 6 hours
+create_scheduled_agent_workflow(
+    crontab="0 */6 * * *",  # Every 6 hours
+    agent=agent,
+    input_items=input_items,
+    session=session
+)
+```
+
+See the [DBOS Workflows documentation](docs/docs/dbos-workflows.md) for more details.
 
 ## Routing models
 - `gpt-4.1` or `openai/gpt-4.1` → OpenAI

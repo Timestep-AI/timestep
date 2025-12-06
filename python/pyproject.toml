@@ -7,7 +7,7 @@ allow-direct-references = true
 
 [project]
 name = "timestep"
-version = "2026.0.14"
+version = "2026.0.15"
 description = "Multi-model provider implementations for OpenAI Agents, supporting both OpenAI and Ollama models"
 readme = "README.md"
 license = { text = "MIT" }
@@ -20,6 +20,7 @@ dependencies = [
     "pytest-asyncio>=0.21.0",
     "firecrawl-py>=1.0.0",
     "asyncpg>=0.29.0",  # PostgreSQL async driver for database-backed state storage
+    "dbos>=2.0.0",  # DBOS for durable workflows
 ]
 [tool.hatch.build.targets.wheel]
 packages = ["timestep"]

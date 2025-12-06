@@ -448,8 +448,39 @@ The database schema supports:
 - Tool calls and interruptions
 - Usage metrics and cost tracking
 
+## DBOS Workflows (Advanced)
+
+For production deployments requiring automatic crash recovery, rate limiting, and scheduled execution, Timestep integrates with [DBOS](https://www.dbos.dev/) to provide durable workflows.
+
+### Key Benefits
+
+- **Automatic crash recovery**: Workflows resume from the last completed step after process restarts
+- **Rate limiting**: Built-in queuing with configurable rate limits for LLM APIs
+- **Scheduled execution**: Run agents on a schedule using cron syntax
+- **Idempotency**: Prevent duplicate executions with workflow IDs
+
+### Quick Example
+
+```python
+from timestep import run_agent_workflow, configure_dbos, ensure_dbos_launched
+
+configure_dbos()
+ensure_dbos_launched()
+
+# Run in a durable workflow that survives crashes
+result = await run_agent_workflow(
+    agent=agent,
+    input_items=input_items,
+    session=session,
+    workflow_id="unique-id"  # Idempotency key
+)
+```
+
+See the [DBOS Workflows](dbos-workflows.md) documentation for complete details.
+
 ## Next Steps
 
 - Learn about the [Architecture](architecture.md) to understand how Timestep works, including simplified design principles
 - Explore [Use Cases](use-cases.md) for common patterns and examples, including durable execution workflows
+- Check out [DBOS Workflows](dbos-workflows.md) for production-ready durable execution with crash recovery
 - Check out the [API Reference](api-reference/utilities.md) for detailed documentation on `run_agent`, `RunStateStore`, and other utilities

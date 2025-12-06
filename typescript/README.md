@@ -36,5 +36,70 @@ Load state saved in Python with the same `sessionId` and continue the run; state
 ## Model routing
 Prefix model names (`ollama/gpt-oss:20b-cloud`) or provide a custom `MultiModelProviderMap` to route to your providers.
 
+## DBOS Workflows
+
+Timestep supports durable agent execution via DBOS workflows. Run agents in workflows that automatically recover from crashes.
+
+### Durable Execution
+
+```typescript
+import { runAgentWorkflow, configureDBOS, ensureDBOSLaunched } from '@timestep-ai/timestep';
+import { Agent, OpenAIConversationsSession } from '@openai/agents';
+
+configureDBOS();
+await ensureDBOSLaunched();
+
+const agent = new Agent({ model: 'gpt-4.1' });
+const session = new OpenAIConversationsSession();
+
+// Run in a durable workflow
+const result = await runAgentWorkflow(
+  agent,
+  inputItems,
+  session,
+  false,
+  undefined,
+  undefined,
+  undefined,
+  'unique-id'  // workflow ID
+);
+```
+
+### Queued Execution
+
+```typescript
+import { queueAgentWorkflow } from '@timestep-ai/timestep';
+
+const handle = await queueAgentWorkflow(
+  agent,
+  inputItems,
+  session,
+  false,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  1,  // priority
+  'unique-id'  // deduplication ID
+);
+
+const result = await handle.getResult();
+```
+
+### Scheduled Execution
+
+```typescript
+import { createScheduledAgentWorkflow } from '@timestep-ai/timestep';
+
+createScheduledAgentWorkflow(
+  '0 0,6,12,18 * * *',  // Every 6 hours
+  agent,
+  inputItems,
+  session
+);
+```
+
 ## Documentation
 Full docs: https://timestep-ai.github.io/timestep/
