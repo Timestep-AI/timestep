@@ -110,7 +110,7 @@ export const webSearch = tool({
       // Filter by allowed domains if specified
       let filteredResults = webResults;
       if (args.filters?.allowedDomains && Array.isArray(args.filters.allowedDomains)) {
-        const allowedDomains = args.filters.allowedDomains.filter(d => d);
+        const allowedDomains = args.filters.allowedDomains.filter((d: string) => d);
         if (allowedDomains.length > 0) {
           filteredResults = webResults.filter((result: any) => {
             const url = result.url || '';
