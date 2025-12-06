@@ -131,6 +131,101 @@ WHERE r.started_at >= NOW() - INTERVAL '7 days'
 GROUP BY a.id, a.name;
 ```
 
+## DBOS/PGLite Integration
+
+Timestep supports database-backed state persistence using PostgreSQL or PGLite for durable execution:
+
+### Using Database-Backed State Storage
+
+**Python:**
+```python
+from timestep import create_run_state_store, run_agent
+from agents import Agent, Session
+
+agent = Agent(model="gpt-4")
+session = Session()
+
+# Auto-select database if TIMESTEP_DB_URL is set, otherwise use file-based
+state_store = await create_run_state_store(
+    agent=agent,
+    session_id=await session._get_session_id(),
+    connection_string="postgresql://user:pass@localhost/timestep"
+)
+
+# Or use DatabaseRunStateStore directly
+from timestep import DatabaseRunStateStore
+state_store = DatabaseRunStateStore(
+    agent=agent,
+    session_id=await session._get_session_id(),
+    connection_string="postgresql://user:pass@localhost/timestep"
+)
+```
+
+**TypeScript:**
+```typescript
+import { createRunStateStore, runAgent } from '@timestep-ai/timestep';
+import { Agent, Session } from '@openai/agents';
+
+const agent = new Agent({ model: 'gpt-4' });
+const session = new Session();
+
+// Auto-select database if TIMESTEP_DB_URL is set, otherwise use file-based
+const stateStore = await createRunStateStore(agent, {
+  sessionId: await session.getSessionId(),
+  connectionString: 'postgresql://user:pass@localhost/timestep'
+});
+
+// Or use DatabaseRunStateStore directly
+import { DatabaseRunStateStore } from '@timestep-ai/timestep';
+const stateStore = new DatabaseRunStateStore({
+  agent,
+  sessionId: await session.getSessionId(),
+  connectionString: 'postgresql://user:pass@localhost/timestep'
+});
+```
+
+### Environment Variables
+
+- `TIMESTEP_DB_URL`: PostgreSQL connection string (e.g., `postgresql://user:pass@host/db`)
+- `TIMESTEP_USE_PGLITE`: Set to `true` to use PGLite for local development (default: `false`)
+- `TIMESTEP_PGLITE_PATH`: Path for PGLite data directory (default: `./pglite_data`)
+
+### Cross-Language State Persistence
+
+The database-backed storage enables seamless state transfer between Python and TypeScript:
+
+1. **Python** saves state to database using `DatabaseRunStateStore.save()`
+2. State is stored in `run_states` table with JSONB format
+3. **TypeScript** loads the same state using `DatabaseRunStateStore.load()`
+4. Execution continues with full context preserved
+
+### PGLite for Local Development
+
+PGLite is a WASM build of PostgreSQL that runs in browser, Node.js, Bun, or Deno. For local development without a PostgreSQL server:
+
+```typescript
+// TypeScript: Use PGLite
+const stateStore = new DatabaseRunStateStore({
+  agent,
+  usePglite: true,
+  pglitePath: './pglite_data'
+});
+```
+
+Note: PGLite Python bindings are not yet available. Use PostgreSQL for Python, or file-based storage as fallback.
+
+### Database Schema
+
+The `run_states` table stores serialized RunState snapshots:
+
+- `run_id`: UUID reference to the run
+- `state_type`: Type of state (`interrupted`, `checkpoint`, `final`)
+- `schema_version`: Version of the state schema (e.g., `1.0`)
+- `state_data`: JSONB containing the serialized RunState
+- `is_active`: Boolean flag for active state (only one active state per run)
+- `created_at`: Timestamp when state was created
+- `resumed_at`: Timestamp when state was last resumed
+
 ## Future Enhancements
 
 - Partitioning strategies for large-scale deployments
@@ -138,10 +233,14 @@ GROUP BY a.id, a.name;
 - Data retention/archiving policies
 - Multi-user support (created_by, updated_by columns)
 - Full agent versioning history
+- PGLite Python bindings support
+- DBOS workflow integration for advanced durable execution
 
 ## See Also
 
 - [ERD Plan](../ERD_PLAN.md) - Detailed ERD documentation
 - [OpenAI Agents Python](https://github.com/openai/openai-agents-python)
 - [OpenAI Agents JS](https://github.com/openai/openai-agents-js)
+- [DBOS Documentation](https://docs.dbos.dev/)
+- [PGLite GitHub](https://github.com/electric-sql/pglite)
 

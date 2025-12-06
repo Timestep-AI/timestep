@@ -1,3 +1,6 @@
+# Export environment variables to subcommands
+export
+
 default: test
 
 patch:
