@@ -1,5 +1,6 @@
 /** Tests for runAgent functionality with conversation items assertions. */
 
+import { test } from 'vitest';
 import {
   Agent,
   OpenAIConversationsSession,
@@ -758,47 +759,27 @@ export function assertConversationItems(cleaned: any[], expected: any[]): void {
   }
 }
 
-async function runTest(name: string, testFn: () => Promise<void>): Promise<void> {
-  try {
-    console.log(`Running test: ${name}`);
-    await testFn();
-    console.log(`✓ ${name} passed`);
-  } catch (error: any) {
-    console.error(`✗ ${name} failed:`, error.message);
-    console.error('\nTests failed!');
-    process.exit(1); // Fail fast - exit immediately on first failure
-  }
-}
-
-async function testRunAgentBlockingNonStreaming(): Promise<void> {
+test('test_run_agent_blocking_non_streaming', async () => {
   const items = await runAgentTest(false, false);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
-}
+});
 
-async function testRunAgentBlockingStreaming(): Promise<void> {
+test('test_run_agent_blocking_streaming', async () => {
   const items = await runAgentTest(false, true);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
-}
+});
 
-async function testRunAgentParallelNonStreaming(): Promise<void> {
+test('test_run_agent_parallel_non_streaming', async () => {
   const items = await runAgentTest(true, false);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
-}
+});
 
-async function testRunAgentParallelStreaming(): Promise<void> {
+test('test_run_agent_parallel_streaming', async () => {
   const items = await runAgentTest(true, true);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
-}
-
-(async () => {
-  await runTest('test_run_agent_blocking_non_streaming', testRunAgentBlockingNonStreaming);
-  await runTest('test_run_agent_blocking_streaming', testRunAgentBlockingStreaming);
-  await runTest('test_run_agent_parallel_non_streaming', testRunAgentParallelNonStreaming);
-  await runTest('test_run_agent_parallel_streaming', testRunAgentParallelStreaming);
-  console.log('\nAll tests passed!');
-})();
+});
 

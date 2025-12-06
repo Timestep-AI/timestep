@@ -71,30 +71,28 @@ jobs:
       - name: Run Python tests
         run: |
           cd python
-          uv run pytest tests/test_run_agent.py -v -x
-          uv run pytest tests/test_same_language_py_to_py.py -v -x
+          uv run pytest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       
       - name: Run TypeScript tests
         run: |
           cd typescript
-          npx tsx tests/test_run_agent.ts
-          npx tsx tests/test_same_language_ts_to_ts.ts
+          pnpm test
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       
       - name: Run cross-language tests (TypeScript to Python)
         run: |
           cd typescript
-          npx tsx tests/test_cross_language_ts_to_py.ts
+          pnpm test -- tests/test_cross_language_ts_to_py.ts
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       
       - name: Run cross-language tests (Python to TypeScript)
         run: |
           cd python
-          uv run pytest tests/test_cross_language_py_to_ts.py -v -x
+          uv run pytest tests/test_cross_language_py_to_ts.py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 

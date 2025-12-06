@@ -15,8 +15,7 @@ test-python:
 	uv pip install --force-reinstall ../3rdparty/openai-agents-python && \
 	uv run python vendor_openai_agents.py && \
 	npm install -g @electric-sql/pglite || true && \
-	uv run pytest tests/test_run_agent.py -v -x && \
-	uv run pytest tests/test_same_language_py_to_py.py -v -x
+	uv run pytest
 
 test-typescript:
 	cd 3rdparty/openai-agents-js && \
@@ -24,13 +23,12 @@ test-typescript:
 	pnpm build && cd - && \
 	cd typescript && \
 	pnpm install && \
-	npx tsx tests/test_run_agent.ts && \
-	npx tsx tests/test_same_language_ts_to_ts.ts
+	pnpm test
 
 test-cross-language: test-cross-language-ts-to-py test-cross-language-py-to-ts
 
 test-cross-language-ts-to-py:
-	cd typescript && npx tsx tests/test_cross_language_ts_to_py.ts
+	cd typescript && pnpm test -- tests/test_cross_language_ts_to_py.ts
 
 test-cross-language-py-to-ts:
-	cd python && uv run pytest tests/test_cross_language_py_to_ts.py -v -x
+	cd python && uv run pytest tests/test_cross_language_py_to_ts.py
