@@ -14,7 +14,7 @@ license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "ollama>=0.6.1",
-    "openai-agents @ file:///home/mjschock/Projects/personal/openai-agents-python",
+    # openai-agents is vendored - see vendor_openai_agents.py
     "openai>=1.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

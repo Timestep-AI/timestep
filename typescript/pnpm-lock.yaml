@@ -11,15 +11,6 @@ importers:
       '@mendable/firecrawl-js':
         specifier: ^1.0.0
         version: 1.29.3
-      '@openai/agents':
-        specifier: link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents
-        version: link:../../../openai-agents-js/packages/agents
-      '@openai/agents-core':
-        specifier: link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-core
-        version: link:../../../openai-agents-js/packages/agents-core
-      '@openai/agents-openai':
-        specifier: link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-openai
-        version: link:../../../openai-agents-js/packages/agents-openai
       ollama:
         specifier: ^0.6.3
         version: 0.6.3
@@ -27,6 +18,15 @@ importers:
         specifier: ^6.0.0
         version: 6.8.0(ws@8.18.3)(zod@4.1.13)
     devDependencies:
+      '@openai/agents':
+        specifier: link:../3rdparty/openai-agents-js/packages/agents
+        version: link:../3rdparty/openai-agents-js/packages/agents
+      '@openai/agents-core':
+        specifier: link:../3rdparty/openai-agents-js/packages/agents-core
+        version: link:../3rdparty/openai-agents-js/packages/agents-core
+      '@openai/agents-openai':
+        specifier: link:../3rdparty/openai-agents-js/packages/agents-openai
+        version: link:../3rdparty/openai-agents-js/packages/agents-openai
       '@types/node':
         specifier: ^20.10.0
         version: 20.19.17

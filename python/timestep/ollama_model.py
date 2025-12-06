@@ -3,7 +3,7 @@ import string
 import json
 import time
 from typing import Any, AsyncIterator, Optional
-from agents import Model, ModelResponse, Usage, ModelSettings, ModelTracing, TResponseInputItem, Handoff, Tool, RawResponsesStreamEvent
+from ._vendored_imports import Model, ModelResponse, Usage, ModelSettings, ModelTracing, TResponseInputItem, Handoff, Tool, RawResponsesStreamEvent
 from openai.types.responses import ResponseCompletedEvent, ResponseOutputItemDoneEvent, ResponseOutputItemAddedEvent, Response, ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_usage import ResponseUsage, InputTokensDetails, OutputTokensDetails
 from openai.types.responses.response_output_message import ResponseOutputMessage

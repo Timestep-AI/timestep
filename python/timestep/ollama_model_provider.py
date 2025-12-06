@@ -1,5 +1,5 @@
 from typing import Optional, Any
-from agents import Model, ModelProvider
+from ._vendored_imports import Model, ModelProvider
 from .ollama_model import OllamaModel
 
 

@@ -18,9 +18,11 @@ __all__ = [
 ]
 
 from typing import Any
-from agents import Agent, Runner, RunConfig, RunState, TResponseInputItem
-from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError
-from agents.memory.session import SessionABC
+from ._vendored_imports import (
+    Agent, Runner, RunConfig, RunState, TResponseInputItem,
+    AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
+    SessionABC
+)
 from pathlib import Path
 import json
 

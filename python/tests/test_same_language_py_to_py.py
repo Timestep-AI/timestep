@@ -83,14 +83,6 @@ async def test_same_language_py_to_py_blocking_streaming():
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=True)
     cleaned = clean_items(items)
     
-    # Debug: Print item count and types
-    print(f"\n[TEST-DEBUG] test_same_language_py_to_py_blocking_streaming: Got {len(cleaned)} items")
-    print(f"[TEST-DEBUG] Expected {len(EXPECTED_ITEMS)} items")
-    if len(cleaned) != len(EXPECTED_ITEMS):
-        print(f"[TEST-DEBUG] Item count mismatch! This suggests test isolation issue.")
-        print(f"[TEST-DEBUG] First few item types: {[item.get('type', 'unknown') for item in cleaned[:5]]}")
-        print(f"[TEST-DEBUG] Last few item types: {[item.get('type', 'unknown') for item in cleaned[-5:]]}")
-    
     try:
         assert_conversation_items(cleaned, EXPECTED_ITEMS)
     except AssertionError:

@@ -42,13 +42,17 @@ async function runTest(runInParallel: boolean, stream: boolean, sessionId: strin
     const items = await runAgentTestFromPython(runInParallel, stream, sessionId);
     const cleaned = cleanItems(items);
     
-    // Items should match exactly - if they don't, log and fail
-    if (cleaned.length !== EXPECTED_ITEMS.length || cleaned !== EXPECTED_ITEMS) {
+    if (cleaned.length !== EXPECTED_ITEMS.length) {
       logItemDifferences(cleaned, EXPECTED_ITEMS);
       throw new Error(`Cross-language test failed: items don't match. Got ${cleaned.length} items, expected ${EXPECTED_ITEMS.length} items.`);
     }
-    
-    assertConversationItems(cleaned, EXPECTED_ITEMS);
+
+    try {
+      assertConversationItems(cleaned, EXPECTED_ITEMS);
+    } catch (error: any) {
+      logItemDifferences(cleaned, EXPECTED_ITEMS);
+      throw error;
+    }
     console.log(`✓ ${testName} passed`);
   } catch (error: any) {
     console.error(`✗ ${testName} failed:`, error.message);
@@ -73,4 +77,3 @@ if (args.length >= 3) {
   console.error('Usage: npx tsx test_cross_language_py_to_ts.ts <runInParallel> <stream> <sessionId>');
   process.exit(1);
 }
-

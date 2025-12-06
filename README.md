@@ -134,8 +134,9 @@ Both implementations provide:
 
 ## Documentation
 
-- [Python Documentation](./python/README.md)
-- [TypeScript Documentation](./typescript/README.md)
+- **[Full Documentation](https://timestep-ai.github.io/timestep/)** - Comprehensive documentation with API reference, guides, and examples
+- [Python Package Documentation](./python/README.md)
+- [TypeScript Package Documentation](./typescript/README.md)
 
 ## Future Plans
 

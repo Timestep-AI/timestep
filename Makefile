@@ -9,14 +9,17 @@ test-all: test
 
 test-python:
 	cd python && \
-	uv pip install --force-reinstall /home/mjschock/Projects/personal/openai-agents-python && \
+	uv pip install --force-reinstall ../3rdparty/openai-agents-python && \
+	uv run python vendor_openai_agents.py && \
 	uv run pytest tests/test_run_agent.py -v -x && \
 	uv run pytest tests/test_same_language_py_to_py.py -v -x
 
 test-typescript:
-	cd /home/mjschock/Projects/personal/openai-agents-js && \
+	cd 3rdparty/openai-agents-js && \
+	pnpm install && \
 	pnpm build && cd - && \
 	cd typescript && \
+	pnpm install && \
 	npx tsx tests/test_run_agent.ts && \
 	npx tsx tests/test_same_language_ts_to_ts.ts
 

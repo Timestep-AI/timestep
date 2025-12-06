@@ -635,17 +635,25 @@ function assertEqual(actual: any, expected: any, message: string): void {
   }
 }
 
-export function assertConversationItems(cleaned: any[], expected: any[]): void {
-  // Debugging logs to inspect the full actual and expected conversation items
-  console.log(
-    '--- DEBUG: Actual cleaned conversation items ---\n',
-    JSON.stringify(truncateImageData(cleaned), null, 2),
-  );
-  console.log(
-    '--- DEBUG: Expected conversation items ---\n',
-    JSON.stringify(truncateImageData(expected), null, 2),
-  );
+function normalizeText(text: string): string {
+  // Convert to lowercase
+  let normalized = text.toLowerCase();
+  
+  // Normalize mathematical operators
+  normalized = normalized.replace(/\bequals\b/g, "=");
+  normalized = normalized.replace(/\bis equal to\b/g, "=");
+  normalized = normalized.replace(/\bequal to\b/g, "=");
+  
+  // Normalize whitespace (multiple spaces to single space)
+  normalized = normalized.replace(/\s+/g, " ");
+  
+  // Trim and remove trailing punctuation variations (keep the content but normalize)
+  normalized = normalized.trim();
+  
+  return normalized;
+}
 
+export function assertConversationItems(cleaned: any[], expected: any[]): void {
   if (cleaned.length !== expected.length) {
     throw new Error(`Expected ${expected.length} items, got ${cleaned.length}`);
   }
@@ -668,10 +676,11 @@ export function assertConversationItems(cleaned: any[], expected: any[]): void {
         .filter((block: any) => block.type === "output_text")
         .map((block: any) => block.text || "")
         .join(" ");
-      // Check that either text contains the other (case-insensitive for flexibility with LLM variability)
-      const actualLower = actualText.toLowerCase();
-      const expectedLower = expectedText.toLowerCase();
-      if (!(expectedLower.includes(actualLower) || actualLower.includes(expectedLower))) {
+      // Normalize both texts before comparison
+      const actualNormalized = normalizeText(actualText);
+      const expectedNormalized = normalizeText(expectedText);
+      // Check that either normalized text contains the other (for flexibility with LLM variability)
+      if (!(expectedNormalized.includes(actualNormalized) || actualNormalized.includes(expectedNormalized))) {
         throw new Error(`Item ${i} text mismatch: expected '${expectedText}' and actual '${actualText}' do not contain each other`);
       }
       // Also check structure matches

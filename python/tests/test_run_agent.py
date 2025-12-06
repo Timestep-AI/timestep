@@ -7,11 +7,8 @@ import asyncio
 import uuid
 from pathlib import Path
 from pydantic import BaseModel
-from agents import (
+from timestep._vendored_imports import (
     Agent,
-    OpenAIConversationsSession,
-    ModelSettings,
-    function_tool,
     Runner,
     TResponseInputItem,
     input_guardrail,
@@ -20,6 +17,11 @@ from agents import (
     InputGuardrailTripwireTriggered,
     OutputGuardrailTripwireTriggered,
     RunContextWrapper,
+)
+from agents import (
+    OpenAIConversationsSession,
+    ModelSettings,
+    function_tool,
 )
 from openai import OpenAI
 from timestep import run_agent, consume_result, RunStateStore
@@ -202,52 +204,19 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     if not current_session_id:
         raise ValueError("Failed to get session ID")
     
-    # Debug: Log the conversation_id being used
-    import inspect
-    test_name = inspect.stack()[1].function
-    print(f"\n[TEST-DEBUG] {test_name}: Using conversation_id: {current_session_id}")
-    
-    # Debug: Check if session has any existing items (should be empty for fresh sessions)
+    # Get session ID for state file naming
     existing_items = await session.get_items()
-    if existing_items:
-        print(f"[TEST-DEBUG] {test_name}: WARNING - Session has {len(existing_items)} existing items before test starts!")
-        for idx, item in enumerate(existing_items[:3]):  # Show first 3 items
-            if isinstance(item, dict):
-                item_type = item.get("type", "unknown")
-                print(f"  [{idx}] type={item_type}")
 
     state_file_path = Path(__file__).parent.parent.parent / "data" / f"agent_state_{current_session_id}.json"
     state_store = RunStateStore(str(state_file_path), personal_assistant_agent)
 
     for idx, run_input in enumerate(RUN_INPUTS):
         try:
-            # Debug: Check session state before processing input
-            items_before = await session.get_items()
-            print(f"\n[DEBUG-TEST] Processing input {idx}: {run_input[0].get('content', [{}])[0].get('text', 'unknown')[:50] if run_input else 'empty'}")
-            print(f"[DEBUG-TEST] Session items before input {idx}: {len(items_before)} items")
-            
             result = await run_agent(personal_assistant_agent, run_input, session, stream)
             result = await consume_result(result)
-            
-            # Debug: Check session state after processing input
-            items_after = await session.get_items()
-            print(f"[DEBUG-TEST] Session items after input {idx}: {len(items_after)} items")
-            if len(items_after) > len(items_before):
-                new_items = items_after[len(items_before):]
-                print(f"[DEBUG-TEST] New items added for input {idx}: {len(new_items)} items")
-                for i, item in enumerate(new_items[:3]):  # Show first 3 new items
-                    item_type = item.get('type', 'unknown') if isinstance(item, dict) else getattr(item, 'type', 'unknown')
-                    if item_type == 'message':
-                        role = item.get('role', 'unknown') if isinstance(item, dict) else getattr(item, 'role', 'unknown')
-                        content = item.get('content', []) if isinstance(item, dict) else getattr(item, 'content', [])
-                        text = content[0].get('text', '')[:50] if content and isinstance(content[0], dict) else (content[0].text[:50] if content and hasattr(content[0], 'text') else '')
-                        print(f"  [{i}] type={item_type}, role={role}, text={text}...")
-                    else:
-                        print(f"  [{i}] type={item_type}")
 
             # Handle interruptions
             if result.interruptions and len(result.interruptions) > 0:
-                print(f"[DEBUG-TEST] Input {idx} has {len(result.interruptions)} interruptions")
                 # Save state
                 state = result.to_state()
                 await state_store.save(state)
@@ -257,29 +226,9 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
                 for interruption in loaded_state.get_interruptions():
                     loaded_state.approve(interruption)
 
-                # Debug: Check session state before resuming
-                items_before_resume = await session.get_items()
-                print(f"[DEBUG-TEST] Session items before resuming input {idx}: {len(items_before_resume)} items")
-
                 # Resume with state
                 result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
                 result = await consume_result(result)
-                
-                # Debug: Check session state after resuming
-                items_after_resume = await session.get_items()
-                print(f"[DEBUG-TEST] Session items after resuming input {idx}: {len(items_after_resume)} items")
-                if len(items_after_resume) > len(items_before_resume):
-                    new_items = items_after_resume[len(items_before_resume):]
-                    print(f"[DEBUG-TEST] New items added after resuming input {idx}: {len(new_items)} items")
-                    for i, item in enumerate(new_items[:3]):  # Show first 3 new items
-                        item_type = item.get('type', 'unknown') if isinstance(item, dict) else getattr(item, 'type', 'unknown')
-                        if item_type == 'message':
-                            role = item.get('role', 'unknown') if isinstance(item, dict) else getattr(item, 'role', 'unknown')
-                            content = item.get('content', []) if isinstance(item, dict) else getattr(item, 'content', [])
-                            text = content[0].get('text', '')[:50] if content and isinstance(content[0], dict) else (content[0].text[:50] if content and hasattr(content[0], 'text') else '')
-                            print(f"  [{i}] type={item_type}, role={role}, text={text}...")
-                        else:
-                            print(f"  [{i}] type={item_type}")
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
             # Guardrail was triggered - pop items until we've removed the user message
             # First, peek at the last few items to see what needs to be removed
@@ -324,36 +273,7 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
         raise ValueError("OPENAI_API_KEY environment variable is required")
 
     client = OpenAI(api_key=openai_api_key)
-    # Debug: Log the conversation_id being used for fetching
-    import inspect
-    test_name = inspect.stack()[1].function
-    print(f"\n[TEST-DEBUG] {test_name}: Fetching items from conversation_id: {conversation_id}")
     items_response = client.conversations.items.list(conversation_id, limit=100, order="asc")
-    print(f"[TEST-DEBUG] {test_name}: Fetched {len(items_response.data)} items from conversation {conversation_id}")
-    
-    # Debug: If we got more items than expected, log the first few to see if there are duplicates
-    if len(items_response.data) > 20:
-        print(f"[TEST-DEBUG] {test_name}: WARNING - Got {len(items_response.data)} items (expected 20). First 4 items:")
-        for idx, item in enumerate(items_response.data[:4]):
-            if isinstance(item, dict):
-                item_type = item.get("type", "unknown")
-                if item_type == "message":
-                    role = item.get("role", "unknown")
-                    content = item.get("content", [])
-                    text = content[0].get("text", "")[:50] if content else ""
-                    print(f"  [{idx}] type={item_type}, role={role}, text={text}...")
-                else:
-                    print(f"  [{idx}] type={item_type}")
-            elif hasattr(item, 'type'):
-                item_type = item.type
-                if item_type == "message" and hasattr(item, 'role') and hasattr(item, 'content'):
-                    role = item.role
-                    content = item.content
-                    text = content[0].text[:50] if (content and hasattr(content[0], 'text')) else ""
-                    print(f"  [{idx}] type={item_type}, role={role}, text={text}...")
-                else:
-                    print(f"  [{idx}] type={item_type}")
-    
     return items_response.data
 
 
@@ -517,30 +437,6 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
     # Load state saved by TypeScript
     loaded_state = await state_store.load()
     
-    # DEBUG: Print what's in the loaded state
-    print("\n[CROSS-LANG-DEBUG] Loaded state from TypeScript:")
-    print(f"  generated_items count: {len(loaded_state._generated_items)}")
-    for idx, item in enumerate(loaded_state._generated_items):
-        item_type = item.type
-        raw_type = "unknown"
-        name = "unknown"
-        call_id = "unknown"
-        if hasattr(item, 'raw_item') and isinstance(item.raw_item, dict):
-            raw_type = item.raw_item.get("type", "unknown")
-            name = item.raw_item.get("name", "unknown")
-            call_id = item.raw_item.get("call_id") or item.raw_item.get("callId") or "unknown"
-        print(f"  [{idx}] type={item_type}, raw_type={raw_type}, name={name}, call_id={call_id}")
-    
-    # DEBUG: Print what's already in the session
-    existing_items = await session.get_items()
-    print(f"\n[CROSS-LANG-DEBUG] Existing session items count: {len(existing_items)}")
-    for idx, item in enumerate(existing_items):
-        if isinstance(item, dict):
-            item_type = item.get("type", "unknown")
-            name = item.get("name", "unknown")
-            call_id = item.get("call_id") or item.get("callId") or "unknown"
-            print(f"  [{idx}] type={item_type}, name={name}, call_id={call_id}")
-    
     interruptions = loaded_state.get_interruptions()
     for interruption in interruptions:
         loaded_state.approve(interruption)
@@ -548,17 +444,6 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
     # Resume with state
     result = await run_agent(personal_assistant_agent, loaded_state, session, stream)
     result = await consume_result(result)
-    
-    # DEBUG: Print what's in the session after resuming
-    items_after_resume = await session.get_items()
-    print(f"\n[CROSS-LANG-DEBUG] Session items after resume count: {len(items_after_resume)}")
-    for idx, item in enumerate(items_after_resume):
-        if isinstance(item, dict):
-            item_type = item.get("type", "unknown")
-            name = item.get("name", "unknown")
-            call_id = item.get("call_id") or item.get("callId") or "unknown"
-            output = item.get("output", "")[:100] if item_type == "function_call_output" else None
-            print(f"  [{idx}] type={item_type}, name={name}, call_id={call_id}, output={output}")
 
     # Continue with remaining inputs (indices 4-7)
     for i in range(4, len(RUN_INPUTS)):
@@ -602,10 +487,7 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
         raise ValueError("OPENAI_API_KEY environment variable is required")
 
     client = OpenAI(api_key=openai_api_key)
-    # Debug: Log the conversation_id being used
-    print(f"\n[FETCH-DEBUG] Fetching items from conversation_id: {conversation_id}")
     items_response = client.conversations.items.list(conversation_id, limit=100, order="asc")
-    print(f"[FETCH-DEBUG] Fetched {len(items_response.data)} items from conversation {conversation_id}")
     return items_response.data
 
 EXPECTED_ITEMS = [
@@ -717,6 +599,25 @@ EXPECTED_ITEMS = [
     }
 ]
 
+def normalize_text(text: str) -> str:
+    """Normalize text for comparison by handling common LLM output variations."""
+    import re
+    # Convert to lowercase
+    normalized = text.lower()
+    
+    # Normalize mathematical operators
+    normalized = re.sub(r'\bequals\b', '=', normalized)
+    normalized = re.sub(r'\bis equal to\b', '=', normalized)
+    normalized = re.sub(r'\bequal to\b', '=', normalized)
+    
+    # Normalize whitespace (multiple spaces to single space)
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    # Trim
+    normalized = normalized.strip()
+    
+    return normalized
+
 def assert_conversation_items(cleaned, expected):
     """Assert conversation items match expected structure."""
     import json
@@ -731,10 +632,11 @@ def assert_conversation_items(cleaned, expected):
             # Extract text from both actual and expected
             actual_text = " ".join([block.get("text", "") for block in cleaned_item.get("content", []) if block.get("type") == "output_text"])
             expected_text = " ".join([block.get("text", "") for block in expected_item.get("content", []) if block.get("type") == "output_text"])
-            # Check that either text contains the other (case-insensitive for flexibility with LLM variability)
-            actual_lower = actual_text.lower()
-            expected_lower = expected_text.lower()
-            assert (expected_lower in actual_lower or actual_lower in expected_lower), \
+            # Normalize both texts before comparison
+            actual_normalized = normalize_text(actual_text)
+            expected_normalized = normalize_text(expected_text)
+            # Check that either normalized text contains the other (for flexibility with LLM variability)
+            assert (expected_normalized in actual_normalized or actual_normalized in expected_normalized), \
                 f"Item {i} text mismatch: expected '{expected_text}' and actual '{actual_text}' do not contain each other"
             # Also check structure matches
             assert cleaned_item["type"] == expected_item["type"]

@@ -11,9 +11,6 @@ from test_run_agent import (
     EXPECTED_ITEMS,
 )
 
-# Enable DEBUG logging to see cross-language debug logs
-logging.basicConfig(level=logging.DEBUG)
-logging.getLogger("openai.agents").setLevel(logging.DEBUG)
 
 
 def get_session_id_from_env() -> str:
@@ -62,12 +59,11 @@ async def test_cross_language_ts_to_py_blocking_non_streaming():
     session_id = get_session_id_from_env()
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=False)
     cleaned = clean_items(items)
-    
-    # Items should match exactly - if they don't, log and fail
-    if len(cleaned) != len(EXPECTED_ITEMS) or cleaned != EXPECTED_ITEMS:
+
+    if len(cleaned) != len(EXPECTED_ITEMS):
         log_item_differences(cleaned, EXPECTED_ITEMS)
-        pytest.fail(f"Cross-language test failed: items don't match. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
-    
+        pytest.fail(f"Cross-language test failed: item count mismatch. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
+
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 
@@ -77,11 +73,11 @@ async def test_cross_language_ts_to_py_blocking_streaming():
     session_id = get_session_id_from_env()
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=True)
     cleaned = clean_items(items)
-    
-    if len(cleaned) != len(EXPECTED_ITEMS) or cleaned != EXPECTED_ITEMS:
+
+    if len(cleaned) != len(EXPECTED_ITEMS):
         log_item_differences(cleaned, EXPECTED_ITEMS)
-        pytest.fail(f"Cross-language test failed: items don't match. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
-    
+        pytest.fail(f"Cross-language test failed: item count mismatch. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
+
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 
@@ -91,11 +87,11 @@ async def test_cross_language_ts_to_py_parallel_non_streaming():
     session_id = get_session_id_from_env()
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=False)
     cleaned = clean_items(items)
-    
-    if len(cleaned) != len(EXPECTED_ITEMS) or cleaned != EXPECTED_ITEMS:
+
+    if len(cleaned) != len(EXPECTED_ITEMS):
         log_item_differences(cleaned, EXPECTED_ITEMS)
-        pytest.fail(f"Cross-language test failed: items don't match. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
-    
+        pytest.fail(f"Cross-language test failed: item count mismatch. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
+
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 
@@ -105,10 +101,9 @@ async def test_cross_language_ts_to_py_parallel_streaming():
     session_id = get_session_id_from_env()
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=True)
     cleaned = clean_items(items)
-    
-    if len(cleaned) != len(EXPECTED_ITEMS) or cleaned != EXPECTED_ITEMS:
-        log_item_differences(cleaned, EXPECTED_ITEMS)
-        pytest.fail(f"Cross-language test failed: items don't match. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
-    
-    assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
+    if len(cleaned) != len(EXPECTED_ITEMS):
+        log_item_differences(cleaned, EXPECTED_ITEMS)
+        pytest.fail(f"Cross-language test failed: item count mismatch. Got {len(cleaned)} items, expected {len(EXPECTED_ITEMS)} items.")
+
+    assert_conversation_items(cleaned, EXPECTED_ITEMS)

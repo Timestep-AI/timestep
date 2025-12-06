@@ -1,0 +1,6 @@
+[submodule "3rdparty/openai-agents-python"]
+	path = 3rdparty/openai-agents-python
+	url = https://github.com/mjschock/openai-agents-python.git
+[submodule "3rdparty/openai-agents-js"]
+	path = 3rdparty/openai-agents-js
+	url = https://github.com/mjschock/openai-agents-js.git

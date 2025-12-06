@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsup timestep/index.ts --format esm --dts --sourcemap",
+    "build": "tsup timestep/index.ts --format esm --dts --sourcemap --bundle --no-splitting --noExternal @openai/agents --noExternal @openai/agents-core --noExternal @openai/agents-openai",
     "test": "tsx tests/test_run_agent.ts"
   },
   "keywords": [],
@@ -23,14 +23,14 @@
   "license": "MIT",
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
-    "@openai/agents": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents",
-    "@openai/agents-core": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-core",
-    "@openai/agents-openai": "link:/home/mjschock/Projects/personal/openai-agents-js/packages/agents-openai",
     "@mendable/firecrawl-js": "^1.0.0",
     "ollama": "^0.6.3",
     "openai": "^6.0.0"
   },
   "devDependencies": {
+    "@openai/agents": "link:../3rdparty/openai-agents-js/packages/agents",
+    "@openai/agents-core": "link:../3rdparty/openai-agents-js/packages/agents-core",
+    "@openai/agents-openai": "link:../3rdparty/openai-agents-js/packages/agents-openai",
     "@types/node": "^20.10.0",
     "tsup": "^8.5.0",
     "tsx": "^4.6.0",
