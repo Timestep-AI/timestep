@@ -385,24 +385,24 @@ Timestep uses model name prefixes to determine which provider to use:
 
     ```python
     # OpenAI models
-    agent1 = Agent(model="gpt-4.1")           # Uses OpenAI
+    agent1 = Agent(model="gpt-4.1")           # Uses OpenAI (the default)
     agent2 = Agent(model="openai/gpt-4.1")    # Also uses OpenAI
 
     # Ollama models
-    agent3 = Agent(model="ollama/gpt-oss:20b-cloud")    # Uses Ollama (local or cloud)
-    agent4 = Agent(model="ollama/gpt-oss:20b-cloud-cloud")  # Uses Ollama Cloud
+    agent3 = Agent(model="ollama/gpt-oss:20b")    # Uses local Ollama
+    agent4 = Agent(model="ollama/gpt-oss:20b-cloud")  # Uses Ollama Cloud
     ```
 
 === "TypeScript"
 
     ```typescript
     // OpenAI models
-    const agent1 = new Agent({ model: 'gpt-4.1' });        // Uses OpenAI
+    const agent1 = new Agent({ model: 'gpt-4.1' });        // Uses OpenAI (the default)
     const agent2 = new Agent({ model: 'openai/gpt-4.1' }); // Also uses OpenAI
 
     // Ollama models
-    const agent3 = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });      // Uses Ollama (local or cloud)
-    const agent4 = new Agent({ model: 'ollama/gpt-oss:20b-cloud-cloud' }); // Uses Ollama Cloud
+    const agent3 = new Agent({ model: 'ollama/gpt-oss:20b' });      // Uses local Ollama
+    const agent4 = new Agent({ model: 'ollama/gpt-oss:20b-cloud' }); // Uses Ollama Cloud
     ```
 
 ## Environment Variables
@@ -456,6 +456,6 @@ The database schema supports:
 
 ## Next Steps
 
-- Learn about the [Architecture](architecture.md) to understand how Timestep works, including RISC design principles
+- Learn about the [Architecture](architecture.md) to understand how Timestep works, including simplified design principles
 - Explore [Use Cases](use-cases.md) for common patterns and examples, including durable execution workflows
 - Check out the [API Reference](api-reference/utilities.md) for detailed documentation on `run_agent`, `RunStateStore`, and other utilities

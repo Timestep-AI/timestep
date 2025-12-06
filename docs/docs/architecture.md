@@ -67,12 +67,12 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 ┌─────────────────────────────────────────────────────────────┐
 │                    OpenAI Agents SDK                        │
 │                  (Agent, Runner, etc.)                     │
-│                    (CISC Architecture)                      │
+│              (Complex API Surface)                          │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Timestep RISC Layer                            │
+│         Timestep Simplified API Layer                      │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │  run_agent() - Simplified execution                 │  │
 │  │  RunStateStore - State persistence                   │  │
