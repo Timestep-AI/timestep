@@ -65,20 +65,8 @@ export class RunStateStore {
     }
 
     // Generate a new run_id
-    // For MVP, we'll use a simple UUID generation
-    // In production, you'd want to use a proper UUID library
     this.runId = crypto.randomUUID();
-
-    // For MVP, we'll create a minimal run record if the runs table exists
-    // Otherwise, we'll use the run_id directly
-    try {
-      await this.ensureConnected();
-      // Check if runs table exists and create a minimal run if needed
-      // This is a simplified approach for MVP
-    } catch (e) {
-      // If we can't create a run record, we'll still use the run_id
-      // The database constraint will need to be handled at the application level
-    }
+    await this.ensureConnected();
 
     return this.runId;
   }
@@ -88,12 +76,10 @@ export class RunStateStore {
     const runId = await this.ensureRunId();
 
     // Convert state to JSON string
-    // RunState has a toString() method that returns JSON string
     const stateString = state.toString();
     const stateJson = JSON.parse(stateString);
 
     // Determine state type
-    // For MVP, we'll use 'interrupted' if there are interruptions, otherwise 'checkpoint'
     const stateType = stateJson.interruptions?.length > 0 ? 'interrupted' : 'checkpoint';
 
     // Mark previous states as inactive

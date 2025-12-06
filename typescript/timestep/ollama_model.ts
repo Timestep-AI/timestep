@@ -248,24 +248,11 @@ export class OllamaModel implements Model {
       ollamaMessages.push(ollamaMsg);
     }
 
-    console.log('[ollama_model] Processing tools, count:', request.tools?.length || 0);
-    console.log('[ollama_model] Tools structure:', JSON.stringify(request.tools, null, 2));
-
     const ollamaTools =
       request.tools
         ?.map((tool) => {
-          console.log('[ollama_model] Processing tool:', {
-            hasName: !!(tool as any).name,
-            hasParamsJsonSchema: !!(tool as any).paramsJsonSchema,
-            hasParameters: !!(tool as any).parameters,
-            hasType: !!(tool as any).type,
-            type: (tool as any).type,
-            keys: Object.keys(tool),
-          });
-
           // Handle FunctionTool objects (from tool() function in agents-core)
           if ((tool as any).name && (tool as any).paramsJsonSchema) {
-            console.log('[ollama_model] Matched FunctionTool with paramsJsonSchema:', (tool as any).name);
             const paramsSchema = (tool as any).paramsJsonSchema;
 
             return {
@@ -279,7 +266,6 @@ export class OllamaModel implements Model {
           }
           // Handle Tool objects with type='function'
           if (tool.type === 'function') {
-            console.log('[ollama_model] Matched Tool with type=function:', tool.name);
             return {
               type: 'function',
               function: {
@@ -289,12 +275,9 @@ export class OllamaModel implements Model {
               },
             };
           }
-          console.log('[ollama_model] Tool did not match any pattern, returning null');
           return null;
         })
         .filter((tool) => tool !== null) || [];
-
-    console.log('[ollama_model] Final ollama tools:', JSON.stringify(ollamaTools, null, 2));
 
     if ((request as any).handoffs && Array.isArray((request as any).handoffs)) {
       for (const handoff of (request as any).handoffs) {
@@ -304,7 +287,7 @@ export class OllamaModel implements Model {
             ollamaTools.push(handoffTool);
           }
         } catch (e) {
-          console.warn('🔍 Failed to convert handoff to tool:', e);
+          // Silently skip handoffs that can't be converted
         }
       }
     }

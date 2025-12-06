@@ -12,10 +12,7 @@ __all__ = [
     "MultiModelProviderMap",
     "run_agent",
     "consume_result",
-    "InterruptionException",
     "RunStateStore",
-    "DatabaseRunStateStore",
-    "create_run_state_store",
     "web_search",
 ]
 
@@ -25,21 +22,8 @@ from ._vendored_imports import (
     AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
     SessionABC
 )
-from pathlib import Path
-import json
-import os
 
-class InterruptionException(Exception):
-    """Exception raised when agent execution is interrupted for approval."""
-    def __init__(self, message: str = "Agent execution interrupted for approval"):
-        super().__init__(message)
-
-# Import RunStateStore (database-backed, PGLite by default)
 from .run_state_store import RunStateStore
-
-
-# Factory function removed - use RunStateStore constructor directly
-# RunStateStore defaults to PGLite, or use connection_string for PostgreSQL
 
 async def consume_result(result: Any) -> Any:
     """

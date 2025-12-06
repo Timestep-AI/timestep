@@ -345,4 +345,3 @@ The Ollama client is only created when `get_model()` is first called. This means
 - [OllamaModel](ollama-model.md) - The model class that handles response conversion
 - [MultiModelProvider](multi-model-provider.md) - For using Ollama alongside OpenAI
 - [Architecture](../architecture.md) - For details on Ollama integration
-

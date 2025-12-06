@@ -7,19 +7,6 @@ export { RunStateStore } from './run_state_store.ts';
 import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
 
-export class InterruptionException extends Error {
-  constructor(message: string = 'Agent execution interrupted for approval') {
-    super(message);
-    this.name = 'InterruptionException';
-  }
-}
-
-// File-based RunStateStore removed - use database-backed RunStateStore (PGLite by default)
-// Import from run_state_store.ts
-
-// Factory function removed - use RunStateStore constructor directly
-// RunStateStore defaults to PGLite, or use connectionString for PostgreSQL
-
 export async function consumeResult(result: any): Promise<any> {
   /**
    * Consume all events from a result (streaming or non-streaming).

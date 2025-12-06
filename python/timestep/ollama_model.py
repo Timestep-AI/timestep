@@ -3,28 +3,12 @@ import string
 import json
 import time
 from typing import Any, AsyncIterator, Optional
-from ._vendored_imports import Model, ModelResponse, Usage, ModelSettings, ModelTracing, TResponseInputItem, Handoff, Tool, RawResponsesStreamEvent
+from ._vendored_imports import Model, ModelResponse, Usage, ModelSettings, ModelTracing, TResponseInputItem, Handoff, Tool
 from openai.types.responses import ResponseCompletedEvent, ResponseOutputItemDoneEvent, ResponseOutputItemAddedEvent, Response, ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_usage import ResponseUsage, InputTokensDetails, OutputTokensDetails
 from openai.types.responses.response_output_message import ResponseOutputMessage
 from openai.types.responses.response_output_text import ResponseOutputText
 from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
-
-
-class EventObject:
-    """Simple class to convert dict to object with attribute access."""
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            # Recursively convert nested dicts to EventObjects
-            if isinstance(value, dict):
-                setattr(self, key, EventObject(**value))
-            elif isinstance(value, list):
-                setattr(self, key, [
-                    EventObject(**item) if isinstance(item, dict) else item
-                    for item in value
-                ])
-            else:
-                setattr(self, key, value)
 
 
 def generate_openai_id(prefix: str, length: int) -> str:
@@ -302,8 +286,9 @@ class OllamaModel(Model):
                     handoff_tool = self._convert_handoff_tool(handoff)
                     if handoff_tool:
                         ollama_tools.append(handoff_tool)
-                except Exception as e:
-                    print(f'🔍 Failed to convert handoff to tool: {e}')
+                except Exception:
+                    # Silently skip handoffs that can't be converted
+                    pass
 
         # Prepare chat options
         chat_options: dict[str, Any] = {
@@ -487,7 +472,6 @@ class OllamaModel(Model):
         """Stream a response from the Ollama model.
         
         Matches TypeScript getStreamedResponse implementation, adapted for Python Model interface.
-        Returns RawResponsesStreamEvent objects that wrap the inner events.
         """
         # Note: Span handling would need to be implemented based on Python agents library API
         try:
@@ -496,7 +480,6 @@ class OllamaModel(Model):
             )
 
             async for event in self._convert_ollama_stream_to_responses(stream, None, tracing.enabled if hasattr(tracing, 'enabled') else False):
-                # Yield events directly - agents library will wrap them in RawResponsesStreamEvent
                 yield event
         except Exception as error:
             # Error handling would need span support
@@ -641,8 +624,6 @@ class OllamaModel(Model):
                         span.span_data['output'] = outputs
 
                 # Yield ResponseCompletedEvent for agents library to extract final_response
-                from datetime import datetime
-                
                 response_usage = None
                 if usage:
                     response_usage = ResponseUsage(

@@ -67,27 +67,13 @@ class RunStateStore:
             self._connected = True
     
     async def _ensure_run_id(self) -> str:
-        """Ensure we have a run_id, creating a minimal run record if needed."""
+        """Ensure we have a run_id, creating one if needed."""
         if self.run_id:
             return self.run_id
         
         # Generate a new run_id
         self.run_id = str(uuid.uuid4())
-        
-        # For MVP, we'll create a minimal run record if the runs table exists
-        # Otherwise, we'll use the run_id directly (the foreign key constraint
-        # will be handled by the application layer)
-        try:
-            await self._ensure_connected()
-            
-            # Check if runs table exists and create a minimal run if needed
-            # This is a simplified approach for MVP
-            # In production, you'd want to properly create a run record
-            pass
-        except Exception:
-            # If we can't create a run record, we'll still use the run_id
-            # The database constraint will need to be handled at the application level
-            pass
+        await self._ensure_connected()
         
         return self.run_id
     
@@ -105,7 +91,6 @@ class RunStateStore:
         state_json = state.to_json()
         
         # Determine state type
-        # For MVP, we'll use 'interrupted' if there are interruptions, otherwise 'checkpoint'
         state_type = "interrupted" if state_json.get("interruptions") else "checkpoint"
         
         # Mark previous states as inactive

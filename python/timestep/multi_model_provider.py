@@ -85,22 +85,6 @@ class MultiModelProvider(ModelProvider):
         self.provider_map = provider_map
         self._fallback_providers: Dict[str, ModelProvider] = {}
 
-        # Create OpenAIProvider
-        provider_kwargs = {}
-        # if openai_api_key:
-        #     provider_kwargs['api_key'] = openai_api_key
-        # if openai_base_url:
-        #     provider_kwargs['base_url'] = openai_base_url
-        # if openai_client:
-        #     provider_kwargs['client'] = openai_client
-        # if openai_organization:
-        #     provider_kwargs['organization'] = openai_organization
-        # if openai_project:
-        #     provider_kwargs['project'] = openai_project
-        # if openai_use_responses is not None:
-        #     provider_kwargs['use_responses'] = openai_use_responses
-
-        # self.openai_provider = OpenAIProvider(**provider_kwargs)
         self.openai_provider = OpenAIProvider(
             api_key=openai_api_key,
             base_url=openai_base_url,
