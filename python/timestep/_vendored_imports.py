@@ -1,8 +1,15 @@
 """Compatibility layer for importing vendored or installed agents package."""
 
+import sys
+
 # Try to import from vendored code first (for published packages), 
 # then fall back to installed package (for development)
 try:
+    # Add sys.modules shim so vendored code's absolute imports work
+    # This must happen BEFORE importing from _vendored.agents
+    import timestep._vendored.agents as _vendored_agents_module
+    sys.modules['agents'] = _vendored_agents_module
+    
     from ._vendored.agents import (
         Agent, Runner, RunConfig, RunState, TResponseInputItem,
         Model, ModelProvider, ModelResponse, Usage, ModelSettings, 
