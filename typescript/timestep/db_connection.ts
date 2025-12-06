@@ -25,18 +25,16 @@ export class DatabaseConnection {
     // Use process.env for Node.js compatibility (works in both Node.js and Deno)
     const env = typeof process !== 'undefined' ? process.env : (typeof Deno !== 'undefined' ? Deno.env.toObject() : {});
     this.connectionString =
-      options.connectionString || env['TIMESTEP_DB_URL'];
+      options.connectionString || env['PG_CONNECTION_URI'];
     // Default to PGLite if no connection string provided
     // Only use PostgreSQL if explicitly provided via connection string
     this.usePglite =
       options.usePglite !== undefined
         ? options.usePglite
-        : !this.connectionString || env['TIMESTEP_USE_PGLITE']?.toLowerCase() === 'true';
+        : !this.connectionString;
     // Use app directory for PGLite storage if path not explicitly provided
     if (options.pglitePath) {
       this.pglitePath = options.pglitePath;
-    } else if (env['TIMESTEP_PGLITE_PATH']) {
-      this.pglitePath = env['TIMESTEP_PGLITE_PATH'];
     } else {
       // Default to app directory (matching Click/Typer conventions)
       // This must match Python's get_app_dir() implementation exactly
@@ -50,26 +48,28 @@ export class DatabaseConnection {
   }
 
   async connect(): Promise<boolean> {
-    // Try PostgreSQL first if connection string is explicitly provided
+    /**
+     * Connect to database.
+     * 
+     * Connection logic:
+     * - If PG_CONNECTION_URI is set → use PostgreSQL
+     * - Otherwise → use PGLite (default)
+     */
+    // If connection string is explicitly provided, use PostgreSQL
     if (this.connectionString && !this.usePglite) {
       try {
         return await this.connectPostgreSQL();
       } catch (e) {
-        // Fall through to try PGLite
+        throw new Error(`Failed to connect to PostgreSQL: ${e}`);
       }
     }
 
-    // Default to PGLite (or if explicitly enabled)
-    if (this.usePglite || !this.connectionString) {
-      try {
-        return await this.connectPglite();
-      } catch (e) {
-        // Connection failed
-        throw new Error(`Failed to connect to PGLite: ${e}`);
-      }
+    // Default to PGLite
+    try {
+      return await this.connectPglite();
+    } catch (e) {
+      throw new Error(`Failed to connect to PGLite: ${e}`);
     }
-
-    return false;
   }
 
   private async connectPostgreSQL(): Promise<boolean> {

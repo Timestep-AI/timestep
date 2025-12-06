@@ -12,7 +12,7 @@ npm install @timestep-ai/timestep
 ## Prerequisites (TypeScript)
 - `OPENAI_API_KEY`
 - Node 20+.
-- `@electric-sql/pglite` is already a dependency; default storage lives under `~/.config/timestep/pglite/` (or the platform equivalent). Set `TIMESTEP_DB_URL` to Postgres for production.
+- `@electric-sql/pglite` is already a dependency; default storage lives under `~/.config/timestep/pglite/` (or the platform equivalent). Set `PG_CONNECTION_URI` to Postgres for production.
 
 ## Quick start
 ```typescript

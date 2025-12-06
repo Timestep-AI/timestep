@@ -4,38 +4,19 @@ async def initialize_schema(db) -> None:
     """
     Initialize the database schema for run_states table.
     This creates the necessary tables and indexes if they don't exist.
+    
+    Args:
+        db: DatabaseConnection instance with unified interface (execute, fetchval, fetchrow)
     """
-    # Check if run_states table exists
-    if hasattr(db, 'fetchval'):
-        # asyncpg
-        table_exists = await db.fetchval("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'run_states'
-            )
-        """)
-    elif hasattr(db, 'fetchrow'):
-        # PGLite - use fetchrow method
-        row = await db.fetchrow("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'run_states'
-            ) as exists
-        """)
-        table_exists = row.get('exists', False) if row else False
-    else:
-        # Fallback: try query method
-        result = await db.query("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'run_states'
-            ) as exists
-        """)
-        rows = result.get('rows', []) if isinstance(result, dict) else []
-        table_exists = rows[0].get('exists', False) if rows else False
+    # Check if run_states table exists using unified interface
+    # DatabaseConnection provides fetchval for both PostgreSQL and PGLite
+    table_exists = await db.fetchval("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = 'run_states'
+        )
+    """)
     
     if table_exists:
         # Table already exists

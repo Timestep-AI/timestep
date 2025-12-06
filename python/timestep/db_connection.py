@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Optional, Any
 from enum import Enum
 from .app_dir import get_pglite_dir
-from .postgres_helper import try_local_postgres
 from .pglite_sidecar.client import PGliteSidecarClient
 
 
@@ -14,68 +13,6 @@ class DatabaseType(Enum):
     POSTGRESQL = "postgresql"
     PGLITE = "pglite"
     NONE = "none"
-
-
-class PGLiteConnection:
-    """PGLite connection wrapper using sidecar process."""
-    
-    def __init__(self, pglite_path: str):
-        self.pglite_path = Path(pglite_path)
-        self.pglite_path.mkdir(parents=True, exist_ok=True)
-        self._sidecar: Optional[PGliteSidecarClient] = None
-        self._started = False
-    
-    async def _ensure_started(self) -> None:
-        """Ensure the sidecar is started."""
-        if not self._started:
-            self._sidecar = PGliteSidecarClient(str(self.pglite_path))
-            await self._sidecar.start()
-            self._started = True
-    
-    async def query(self, sql: str, params: Optional[list] = None) -> dict:
-        """Execute a query via PGLite sidecar."""
-        await self._ensure_started()
-        if not self._sidecar:
-            raise RuntimeError("Sidecar not initialized")
-        return await self._sidecar.query(sql, params)
-    
-    async def execute(self, sql: str, *args) -> None:
-        """Execute a query (for DDL statements or DML with parameters)."""
-        await self._ensure_started()
-        if not self._sidecar:
-            raise RuntimeError("Sidecar not initialized")
-        if args:
-            await self._sidecar.execute(sql, list(args))
-        else:
-            await self._sidecar.execute(sql, None)
-    
-    async def fetch(self, sql: str, *args) -> list:
-        """Fetch rows from a query."""
-        await self._ensure_started()
-        if not self._sidecar:
-            raise RuntimeError("Sidecar not initialized")
-        return await self._sidecar.fetch(sql, list(args) if args else None)
-    
-    async def fetchrow(self, sql: str, *args) -> Optional[dict]:
-        """Fetch a single row from a query."""
-        await self._ensure_started()
-        if not self._sidecar:
-            raise RuntimeError("Sidecar not initialized")
-        return await self._sidecar.fetchrow(sql, list(args) if args else None)
-    
-    async def fetchval(self, sql: str, *args) -> Any:
-        """Fetch a single value from a query."""
-        await self._ensure_started()
-        if not self._sidecar:
-            raise RuntimeError("Sidecar not initialized")
-        return await self._sidecar.fetchval(sql, list(args) if args else None)
-    
-    async def close(self) -> None:
-        """Close connection and stop sidecar."""
-        if self._sidecar:
-            await self._sidecar.stop()
-            self._sidecar = None
-            self._started = False
 
 
 class DatabaseConnection:
@@ -95,63 +32,45 @@ class DatabaseConnection:
             use_pglite: Whether to use PGLite (defaults to True if no connection string)
             pglite_path: Path for PGLite data directory
         """
-        self.connection_string = connection_string or os.environ.get("TIMESTEP_DB_URL")
+        self.connection_string = connection_string or os.environ.get("PG_CONNECTION_URI")
         # Default to PGLite if no connection string provided
         if use_pglite is None:
-            use_pglite = not self.connection_string or os.environ.get("TIMESTEP_USE_PGLITE", "").lower() == "true"
+            use_pglite = not self.connection_string
         self.use_pglite = use_pglite
         # Use app directory for PGLite storage if path not explicitly provided
         if pglite_path:
             self.pglite_path = pglite_path
         else:
-            env_path = os.environ.get("TIMESTEP_PGLITE_PATH")
-            if env_path:
-                self.pglite_path = env_path
-            else:
-                # Default to app directory
-                self.pglite_path = str(get_pglite_dir())
+            # Default to app directory
+            self.pglite_path = str(get_pglite_dir())
         self._connection: Optional[Any] = None
         self._db_type: DatabaseType = DatabaseType.NONE
+        self._pglite_sidecar: Optional[PGliteSidecarClient] = None
+        self._pglite_started = False
         
     async def connect(self) -> bool:
         """
         Connect to database. Returns True if successful, False otherwise.
         
-        Connection priority:
-        1. Explicit connection string (TIMESTEP_DB_URL or connection_string parameter)
-        2. Local Postgres on localhost:5432 (auto-detect)
-        3. PGLite with sidecar (fallback)
+        Connection logic:
+        - If PG_CONNECTION_URI is set → use PostgreSQL
+        - Otherwise → use PGLite (default)
         
         Returns:
             True if connection successful, False otherwise
         """
-        # 1. Try explicit connection string first (remote or local)
+        # If connection string is explicitly provided, use PostgreSQL
         if self.connection_string and not self.use_pglite:
             try:
                 return await self._connect_postgresql()
             except Exception as e:
-                # If explicit connection fails, don't fall back - raise the error
                 raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
         
-        # 2. Try local Postgres (auto-detect)
-        if not self.use_pglite:
-            try:
-                local_conn = await try_local_postgres()
-                if local_conn:
-                    self.connection_string = local_conn
-                    return await self._connect_postgresql()
-            except Exception:
-                # Local Postgres not available, continue to fallback
-                pass
-        
-        # 3. Fall back to PGLite (with sidecar for performance)
-        if self.use_pglite or not self.connection_string:
-            try:
-                return await self._connect_pglite()
-            except Exception as e:
-                raise ConnectionError(f"Failed to connect to PGLite: {e}")
-        
-        return False
+        # Default to PGLite (with sidecar for performance)
+        try:
+            return await self._connect_pglite()
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to PGLite: {e}")
     
     async def _connect_postgresql(self) -> bool:
         """Connect to PostgreSQL database."""
@@ -165,9 +84,9 @@ class DatabaseConnection:
             # Test connection
             await self._connection.fetchval("SELECT 1")
             
-            # Initialize schema
+            # Initialize schema (pass self so it uses our unified interface)
             from .schema import initialize_schema
-            await initialize_schema(self._connection)
+            await initialize_schema(self)
             
             return True
         except ImportError:
@@ -181,15 +100,25 @@ class DatabaseConnection:
     async def _connect_pglite(self) -> bool:
         """Connect to PGLite database via sidecar."""
         try:
-            self._connection = PGLiteConnection(self.pglite_path)
+            # Initialize PGLite path
+            pglite_path = Path(self.pglite_path)
+            pglite_path.mkdir(parents=True, exist_ok=True)
+            
+            # Start sidecar
+            self._pglite_sidecar = PGliteSidecarClient(str(pglite_path))
+            await self._pglite_sidecar.start()
+            self._pglite_started = True
+            
+            # Store path for reference, connection is the sidecar
+            self._connection = self._pglite_sidecar
             self._db_type = DatabaseType.PGLITE
             
-            # Test connection (this will start the sidecar)
-            await self._connection.query("SELECT 1")
+            # Test connection
+            await self._pglite_sidecar.query("SELECT 1", None)
             
-            # Initialize schema
+            # Initialize schema (pass self so it uses our unified interface)
             from .schema import initialize_schema
-            await initialize_schema(self._connection)
+            await initialize_schema(self)
             
             return True
         except Exception as e:
@@ -201,7 +130,11 @@ class DatabaseConnection:
             if self._db_type == DatabaseType.POSTGRESQL:
                 await self._connection.close()
             elif self._db_type == DatabaseType.PGLITE:
-                await self._connection.close()
+                # Stop the sidecar
+                if self._pglite_sidecar:
+                    await self._pglite_sidecar.stop()
+                    self._pglite_sidecar = None
+                    self._pglite_started = False
             self._connection = None
             self._db_type = DatabaseType.NONE
     
@@ -227,8 +160,11 @@ class DatabaseConnection:
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.execute(query, *args)
         elif self._db_type == DatabaseType.PGLITE:
+            if not self._pglite_sidecar:
+                raise RuntimeError("PGLite sidecar not initialized")
             # PGLite uses query method which returns result
-            result = await self._connection.query(query, list(args) if args else None)
+            params = list(args) if args else None
+            result = await self._pglite_sidecar.query(query, params)
             # Return rowCount if available, otherwise None
             return result.get('rowCount', None) if isinstance(result, dict) else None
         else:
@@ -239,7 +175,10 @@ class DatabaseConnection:
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.fetch(query, *args)
         elif self._db_type == DatabaseType.PGLITE:
-            return await self._connection.fetch(query, *args)
+            if not self._pglite_sidecar:
+                raise RuntimeError("PGLite sidecar not initialized")
+            params = list(args) if args else None
+            return await self._pglite_sidecar.fetch(query, params)
         else:
             raise NotImplementedError(f"Fetch not implemented for {self._db_type}")
     
@@ -248,7 +187,10 @@ class DatabaseConnection:
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.fetchrow(query, *args)
         elif self._db_type == DatabaseType.PGLITE:
-            return await self._connection.fetchrow(query, *args)
+            if not self._pglite_sidecar:
+                raise RuntimeError("PGLite sidecar not initialized")
+            params = list(args) if args else None
+            return await self._pglite_sidecar.fetchrow(query, params)
         else:
             raise NotImplementedError(f"Fetchrow not implemented for {self._db_type}")
     
@@ -257,7 +199,10 @@ class DatabaseConnection:
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.fetchval(query, *args)
         elif self._db_type == DatabaseType.PGLITE:
-            return await self._connection.fetchval(query, *args)
+            if not self._pglite_sidecar:
+                raise RuntimeError("PGLite sidecar not initialized")
+            params = list(args) if args else None
+            return await self._pglite_sidecar.fetchval(query, params)
         else:
             raise NotImplementedError(f"Fetchval not implemented for {self._db_type}")
 

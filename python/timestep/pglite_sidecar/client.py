@@ -57,7 +57,7 @@ class PGliteSidecarClient:
         if not node_path:
             raise RuntimeError(
                 "Node.js is required for PGLite support. "
-                "Install Node.js from https://nodejs.org/ or use PostgreSQL via TIMESTEP_DB_URL"
+                "Install Node.js from https://nodejs.org/ or use PostgreSQL via PG_CONNECTION_URI"
             )
         return node_path
     

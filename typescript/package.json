@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.11",
+  "version": "2026.0.12",
   "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

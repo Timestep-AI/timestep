@@ -83,12 +83,7 @@ export const webSearch = tool({
     required: ['query'],
     additionalProperties: false,
   } as any,
-  execute: async (args: {
-    query: string;
-    userLocation?: string;
-    filters?: { allowedDomains?: string[] | null };
-    searchContextSize?: 'low' | 'medium' | 'high';
-  }): Promise<string> => {
+  execute: async (args: any): Promise<string> => {
     try {
       const client = getFirecrawlClient();
       
@@ -107,7 +102,7 @@ export const webSearch = tool({
       }
       
       // Perform search
-      const results = await client.search(args.query, searchOptions);
+      const results: any = await client.search(args.query, searchOptions);
       
       // Extract web results
       const webResults = results?.data?.web || [];

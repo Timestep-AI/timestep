@@ -17,7 +17,6 @@ class RunStateStore:
     def __init__(
         self,
         agent: Agent,
-        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         connection_string: Optional[str] = None,
         use_pglite: Optional[bool] = None,
@@ -28,23 +27,22 @@ class RunStateStore:
         
         Args:
             agent: Agent instance (required)
-            run_id: UUID of the run (optional, will be generated if not provided)
-            session_id: Session ID to use as identifier (alternative to run_id)
+            session_id: Session ID to use as identifier (required, will be generated if not provided)
             connection_string: PostgreSQL connection string (optional, uses PGLite if not provided)
             use_pglite: Whether to use PGLite (defaults to True if no connection_string)
-            pglite_path: Path for PGLite data directory (defaults to ./.timestep/pglite)
+            pglite_path: Path for PGLite data directory (defaults to app directory)
         """
         if agent is None:
             raise ValueError("agent is required")
         
         self.agent = agent
-        self.run_id = run_id or session_id  # Use session_id as fallback
+        self.session_id = session_id
         
         # Use session ID in PGLite path to avoid concurrent access issues
         # Each session gets its own database file
         if not pglite_path and not connection_string and (use_pglite is not False):
             from .app_dir import get_pglite_dir
-            session_id_for_path = session_id or run_id or 'default'
+            session_id_for_path = session_id or 'default'
             pglite_path = str(get_pglite_dir(session_id_for_path))
         
         # Default to PGLite if no connection string provided
@@ -62,20 +60,20 @@ class RunStateStore:
             if not connected:
                 raise RuntimeError(
                     "Failed to connect to database. "
-                    "Check TIMESTEP_DB_URL environment variable or ensure PGLite dependencies are installed."
+                    "Check PG_CONNECTION_URI environment variable or ensure PGLite dependencies are installed."
                 )
             self._connected = True
     
-    async def _ensure_run_id(self) -> str:
-        """Ensure we have a run_id, creating one if needed."""
-        if self.run_id:
-            return self.run_id
+    async def _ensure_session_id(self) -> str:
+        """Ensure we have a session_id, creating one if needed."""
+        if self.session_id:
+            return self.session_id
         
-        # Generate a new run_id
-        self.run_id = str(uuid.uuid4())
+        # Generate a new session_id
+        self.session_id = str(uuid.uuid4())
         await self._ensure_connected()
         
-        return self.run_id
+        return self.session_id
     
     async def save(self, state: Any) -> None:
         """
@@ -85,7 +83,7 @@ class RunStateStore:
             state: RunState instance to save
         """
         await self._ensure_connected()
-        run_id = await self._ensure_run_id()
+        session_id = await self._ensure_session_id()
         
         # Convert state to JSON
         state_json = state.to_json()
@@ -100,7 +98,7 @@ class RunStateStore:
             SET is_active = false
             WHERE run_id = $1 AND is_active = true
             """,
-            run_id
+            session_id
         )
         
         # Insert new state
@@ -109,7 +107,7 @@ class RunStateStore:
             INSERT INTO run_states (run_id, state_type, schema_version, state_data, is_active)
             VALUES ($1, $2, $3, $4, true)
             """,
-            run_id,
+            session_id,
             state_type,
             self.SCHEMA_VERSION,
             json.dumps(state_json)
@@ -123,7 +121,7 @@ class RunStateStore:
             RunState instance
         """
         await self._ensure_connected()
-        run_id = await self._ensure_run_id()
+        session_id = await self._ensure_session_id()
         
         # Fetch active state
         row = await self.db.fetchrow(
@@ -134,12 +132,12 @@ class RunStateStore:
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            run_id
+            session_id
         )
         
         if not row:
             raise FileNotFoundError(
-                f"No active state found for run_id: {run_id}. "
+                f"No active state found for session_id: {session_id}. "
                 "Make sure you've saved a state first."
             )
         
@@ -150,7 +148,7 @@ class RunStateStore:
             SET resumed_at = NOW()
             WHERE run_id = $1 AND is_active = true
             """,
-            run_id
+            session_id
         )
         
         # Deserialize state
@@ -162,7 +160,7 @@ class RunStateStore:
     
     async def clear(self) -> None:
         """Mark state as inactive (soft delete)."""
-        if not self.run_id:
+        if not self.session_id:
             return
         
         try:
@@ -173,7 +171,7 @@ class RunStateStore:
                 SET is_active = false
                 WHERE run_id = $1
                 """,
-                self.run_id
+                self.session_id
             )
         except Exception:
             # If database is not available, silently fail (graceful degradation)

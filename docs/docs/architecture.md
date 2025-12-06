@@ -59,7 +59,7 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 ### Storage
 
 - **Default (dev-friendly):** PGLite in a shared app directory (`~/.config/timestep/pglite/` on Linux; platform equivalents elsewhere) via a high-performance sidecar process.
-- **Production/fast path:** Postgres via `TIMESTEP_DB_URL` or auto-detected local Postgres on `localhost:5432`.
+- **Production/fast path:** Postgres via `PG_CONNECTION_URI` environment variable.
 
 ## System Architecture
 

@@ -6,7 +6,7 @@ This guide will help you get up and running with Timestep in both Python and Typ
 
 - `OPENAI_API_KEY`
 - **Python storage options** (in order of preference):
-  1. **PostgreSQL** (recommended): Set `TIMESTEP_DB_URL=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
+  1. **PostgreSQL** (recommended): Set `PG_CONNECTION_URI=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
   2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
 
 ## Installation
@@ -428,7 +428,7 @@ Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage back
   - Linux: `~/.config/timestep/pglite/`
   - macOS: `~/Library/Application Support/timestep/pglite/`
   - Windows: `%APPDATA%/timestep/pglite/`
-- **PostgreSQL Option**: Use full PostgreSQL by setting `TIMESTEP_DB_URL` environment variable
+- **PostgreSQL Option**: Use full PostgreSQL by setting `PG_CONNECTION_URI` environment variable
 - **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution

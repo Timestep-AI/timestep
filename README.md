@@ -5,15 +5,15 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 ## What Timestep gives you
 - Durable runs: save and resume `RunState` without changing your agent code.
 - Cross-language parity: same surface in Python and TypeScript; state stays compatible.
-- Single storage story: auto-detects local Postgres, falls back to PGLite, or use `TIMESTEP_DB_URL` for remote Postgres.
+- Single storage story: use `PG_CONNECTION_URI` for PostgreSQL, or default to PGLite.
 - Model routing without new APIs: prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
 - Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`, `consume_result`.
 
 ## Prerequisites
 - `OPENAI_API_KEY`
-- **Python storage options** (in order of preference):
-  1. **PostgreSQL** (recommended): Set `TIMESTEP_DB_URL=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
-  2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
+- **Python storage options**:
+  1. **PostgreSQL** (recommended): Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
+  2. **PGLite** (default): Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
 
 ## Quick start
 

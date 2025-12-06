@@ -6,7 +6,6 @@ import { getPgliteDir } from './app_dir.ts';
 
 export interface RunStateStoreOptions {
   agent: Agent;
-  runId?: string;
   sessionId?: string;
   connectionString?: string;
   usePglite?: boolean;
@@ -17,7 +16,7 @@ export class RunStateStore {
   private static readonly SCHEMA_VERSION = '1.0';
 
   private agent: Agent;
-  private runId?: string;
+  private sessionId?: string;
   private db: DatabaseConnection;
   private connected: boolean = false;
 
@@ -27,14 +26,14 @@ export class RunStateStore {
     }
 
     this.agent = options.agent;
-    this.runId = options.runId || options.sessionId;
+    this.sessionId = options.sessionId;
     
     // Use session ID in PGLite path to avoid concurrent access issues
     // Each session gets its own database file
     // This must match Python's get_pglite_dir() implementation exactly
     let pglitePath = options.pglitePath;
     if (!pglitePath && !options.connectionString && (options.usePglite !== false)) {
-      const sessionId = options.sessionId || options.runId || 'default';
+      const sessionId = options.sessionId || 'default';
       pglitePath = getPgliteDir({ sessionId });
     }
     
@@ -52,28 +51,28 @@ export class RunStateStore {
       if (!connected) {
         throw new Error(
           'Failed to connect to database. ' +
-          'Check TIMESTEP_DB_URL environment variable or ensure PGLite dependencies are installed.'
+          'Check PG_CONNECTION_URI environment variable or ensure PGLite dependencies are installed.'
         );
       }
       this.connected = true;
     }
   }
 
-  private async ensureRunId(): Promise<string> {
-    if (this.runId) {
-      return this.runId;
+  private async ensureSessionId(): Promise<string> {
+    if (this.sessionId) {
+      return this.sessionId;
     }
 
-    // Generate a new run_id
-    this.runId = crypto.randomUUID();
+    // Generate a new session_id
+    this.sessionId = crypto.randomUUID();
     await this.ensureConnected();
 
-    return this.runId;
+    return this.sessionId;
   }
 
   async save(state: any): Promise<void> {
     await this.ensureConnected();
-    const runId = await this.ensureRunId();
+    const sessionId = await this.ensureSessionId();
 
     // Convert state to JSON string
     const stateString = state.toString();
@@ -87,20 +86,20 @@ export class RunStateStore {
       `UPDATE run_states
        SET is_active = false
        WHERE run_id = $1 AND is_active = true`,
-      [runId]
+      [sessionId]
     );
 
     // Insert new state
     await this.db.query(
       `INSERT INTO run_states (run_id, state_type, schema_version, state_data, is_active)
        VALUES ($1, $2, $3, $4, true)`,
-      [runId, stateType, RunStateStore.SCHEMA_VERSION, JSON.stringify(stateJson)]
+      [sessionId, stateType, RunStateStore.SCHEMA_VERSION, JSON.stringify(stateJson)]
     );
   }
 
   async load(): Promise<any> {
     await this.ensureConnected();
-    const runId = await this.ensureRunId();
+    const sessionId = await this.ensureSessionId();
 
     // Fetch active state
     const result = await this.db.query(
@@ -109,12 +108,12 @@ export class RunStateStore {
        WHERE run_id = $1 AND is_active = true
        ORDER BY created_at DESC
        LIMIT 1`,
-      [runId]
+      [sessionId]
     );
 
     if (!result.rows || result.rows.length === 0) {
       throw new Error(
-        `No active state found for run_id: ${runId}. ` +
+        `No active state found for session_id: ${sessionId}. ` +
         "Make sure you've saved a state first."
       );
     }
@@ -126,7 +125,7 @@ export class RunStateStore {
       `UPDATE run_states
        SET resumed_at = NOW()
        WHERE run_id = $1 AND is_active = true`,
-      [runId]
+      [sessionId]
     );
 
     // Deserialize state
@@ -141,7 +140,7 @@ export class RunStateStore {
   }
 
   async clear(): Promise<void> {
-    if (!this.runId) {
+    if (!this.sessionId) {
       return;
     }
 
@@ -151,7 +150,7 @@ export class RunStateStore {
         `UPDATE run_states
          SET is_active = false
          WHERE run_id = $1`,
-        [this.runId]
+        [this.sessionId]
       );
     } catch (e) {
       // If database is not available, silently fail (graceful degradation)

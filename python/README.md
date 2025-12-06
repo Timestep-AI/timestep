@@ -9,9 +9,9 @@ pip install timestep
 
 ## Prerequisites (Python)
 - `OPENAI_API_KEY`
-- **Database storage** (connection priority):
-  1. **PostgreSQL** (recommended): Set `TIMESTEP_DB_URL=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
-  2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process for optimal performance.
+- **Database storage**:
+  1. **PostgreSQL** (recommended): Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
+  2. **PGLite** (default): Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process for optimal performance.
 
 ## Quick start
 ```python
@@ -30,7 +30,7 @@ if result.interruptions:
 ```
 
 ## Cross-language resume
-Save in Python, load in TypeScript with the same `session_id`/`run_id` and `RunStateStore.load()`.
+Save in Python, load in TypeScript with the same `session_id` and `RunStateStore.load()`.
 
 ## Model routing
 Use `MultiModelProvider` if you need OpenAI + Ollama routing:
