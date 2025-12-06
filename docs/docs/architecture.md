@@ -1,24 +1,6 @@
 # Architecture
 
-This document explains how Timestep works under the hood, including the RISC architecture philosophy, durable execution, model routing, provider mapping, and integration with OpenAI and Ollama.
-
-## Architecture Philosophy: RISC vs CISC
-
-Timestep is built on the principle that the OpenAI Agents SDK is like a **CISC (Complex Instruction Set Computer)** architecture—powerful and feature-rich, but with many abstractions and layers that can be complex to work with. Timestep provides a **RISC (Reduced Instruction Set Computer)** approach—a simpler, cleaner interface that exposes the fundamental components needed for building robust agent systems.
-
-### RISC Design Principles
-
-1. **Simpler API**: Clean abstractions focused on essential operations
-2. **Durable Execution**: Built-in state persistence and resumable workflows
-3. **Cross-Language Parity**: Identical behavior and APIs in Python and TypeScript
-4. **Composable**: Fundamental building blocks that can be combined as needed
-
-### What Timestep Provides
-
-- **`run_agent()`**: Simplified agent execution with built-in state management
-- **`RunStateStore`**: Persistent storage for agent state (file-based or database-backed)
-- **`consume_result()`**: Utility for handling streaming and non-streaming results
-- **Multi-Model Providers**: Unified interface for OpenAI and Ollama
+How Timestep fits around the OpenAI Agents SDK and keeps runs durable across Python and TypeScript.
 
 ## Durable Execution Architecture
 
@@ -74,16 +56,11 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 3. **TypeScript** loads the same JSON using `RunStateStore.load()`
 4. Execution continues with full context preserved
 
-### DBOS/PGLite Integration
+### Storage
 
-Timestep uses **DBOS** (Database Operating System) and **PGLite** (PostgreSQL in WebAssembly) for production-ready durability:
-
-- **State Persistence**: Agent run states are stored in PostgreSQL
-- **Schema**: Comprehensive database schema for agents, runs, sessions, and state snapshots
-- **Resumability**: Load any saved state and continue execution
-- **Cross-Language**: State format is identical between Python and TypeScript
-
-See [database/README.md](../../database/README.md) for the complete database schema.
+- **Default (dev-friendly):** PGLite in a shared app directory (`~/.config/timestep/pglite/` on Linux; platform equivalents elsewhere).
+- **Production/fast path:** Postgres via `TIMESTEP_DB_URL`.
+- **Python PGLite caveat:** The current Python path shells out to Node per query. Use Postgres for performance, or keep a long-lived Node/Deno sidecar that holds a `PGlite` connection if you must stay on PGLite.
 
 ## System Architecture
 
@@ -119,7 +96,7 @@ See [database/README.md](../../database/README.md) for the complete database sch
 │  └──────────┼───────────────────────┼────────────────────┘ │
 └─────────────┼───────────────────────┼───────────────────────┘
               │                       │
-              ▼                       ▼
+             ▼                       ▼
 ┌──────────────────┐    ┌──────────────────────┐
 │  OpenAIProvider   │    │  OllamaModelProvider  │
 │  (from SDK)       │    │  (Timestep)          │
@@ -269,61 +246,26 @@ The `OllamaModel` class converts Ollama API responses to OpenAI-compatible forma
 | `done` (streaming) | `choices[0].finish_reason` |
 | Function calls | Tool calls with `function` format |
 
-## Design Decisions
+## Design Notes
 
-### Why RISC Architecture?
-
-- **Simplicity**: Clean abstractions that focus on essential operations
-- **Composability**: Fundamental building blocks that can be combined as needed
-- **Maintainability**: Easier to understand and extend than complex SDK patterns
-- **Cross-Language Parity**: Simpler APIs are easier to maintain identically across languages
-
-### Why Durable Execution?
-
-- **Resumability**: Pause and resume agent workflows at any point
-- **Cross-Language**: State format is identical between Python and TypeScript
-- **Human-in-the-Loop**: Seamlessly handle interruptions for approvals
-- **Production-Ready**: DBOS/PGLite integration for enterprise durability
-
-### Why Prefix-Based Routing?
-
-- **Simple and Intuitive**: Model names like `ollama/llama3` are self-documenting
-- **Flexible**: Easy to add new providers without changing existing code
-- **Backward Compatible**: Unprefixed models default to OpenAI, maintaining compatibility
-
-### Why Lazy Initialization?
-
-- **Graceful Degradation**: Code can be written that works with or without Ollama
-- **Performance**: Avoids unnecessary client creation
-- **Error Handling**: Errors occur at the right time (when using the model, not when creating the provider)
-
-### Why Response Conversion?
-
-- **SDK Compatibility**: Ensures seamless integration with OpenAI Agents SDK
-- **Unified Interface**: Applications don't need to handle different response formats
-- **Future-Proof**: Easy to add support for other providers that need conversion
+- Durable execution: pause/resume with a single `RunStateStore` call.
+- Cross-language: same state format; same APIs.
+- Prefix-based routing: model names stay self-documenting; defaults stay OpenAI.
+- Lazy initialization: providers are created only when needed; Ollama client comes up on first use.
 
 ## Cross-Language Parity
 
-Timestep maintains feature parity between Python and TypeScript implementations:
-
-- **Same API**: Method names and signatures are equivalent
-- **Same Behavior**: Routing logic and response conversion work identically
-- **Same Features**: All features available in both languages
-- **State Compatibility**: State format is identical, enabling cross-language state transfer
-
-This allows teams to use the same patterns and code structure regardless of their language choice.
+- Same API names/signatures.
+- Same routing behavior and state format.
+- State files/rows are interchangeable between languages.
 
 ## Performance Considerations
 
-- **Provider Caching**: Fallback providers are cached to avoid repeated creation
-- **Lazy Loading**: Ollama client is only created when needed
-- **Minimal Overhead**: Routing logic adds negligible overhead to model requests
-- **State Serialization**: Efficient JSON serialization for state persistence
+- Postgres is the recommended production backend.
+- PGLite is great for local/dev; keep a long-lived process if using it from Python to avoid per-query Node startup.
+- Minimal overhead in routing; provider instances are cached.
 
 ## Security Considerations
 
-- **API Keys**: API keys should be stored in environment variables, not in code
-- **Local Ollama**: Defaults to localhost, but can be configured for remote instances
-- **Cloud Authentication**: Ollama Cloud uses Bearer token authentication
-- **State Storage**: State files should be secured appropriately (file permissions, encryption)
+- Keep API keys in env vars.
+- Lock down state storage (permissions, encryption) if you persist real data.

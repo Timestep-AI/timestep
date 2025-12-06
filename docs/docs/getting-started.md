@@ -2,6 +2,12 @@
 
 This guide will help you get up and running with Timestep in both Python and TypeScript, focusing on durable execution and cross-language state persistence.
 
+## Prerequisites
+
+- `OPENAI_API_KEY`
+- Python default storage: Node.js + `@electric-sql/pglite` on PATH (Python shells out to Node today).
+- Better performance: set `TIMESTEP_DB_URL` to Postgres. If you must stay on PGLite with Python, keep a long-lived Node/Deno sidecar that holds a `PGlite` connection instead of spawning Node per query.
+
 ## Installation
 
 === "Python"
@@ -425,7 +431,6 @@ Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage back
 - **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution
-- **Database Schema**: See [database/README.md](../../database/README.md) for the complete schema
 
 ### Python PGLite Setup
 
