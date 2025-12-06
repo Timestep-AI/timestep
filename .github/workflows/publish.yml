@@ -44,7 +44,7 @@ jobs:
         run: |
           cd python
           uv pip install --force-reinstall ../3rdparty/openai-agents-python
-          uv run python vendor_openai_agents.py
+          python3 vendor_openai_agents.py
           uv sync
       
       - name: Build submodule dependencies
@@ -106,7 +106,7 @@ jobs:
       - name: Vendor dependencies
         run: |
           cd python
-          uv run python vendor_openai_agents.py
+          python3 vendor_openai_agents.py
       
       - name: Build package
         run: |

@@ -9,7 +9,7 @@ try:
         ModelTracing, Handoff, Tool, RawResponsesStreamEvent,
         function_tool, OpenAIProvider,
         input_guardrail, output_guardrail, GuardrailFunctionOutput,
-        RunContextWrapper
+        RunContextWrapper, OpenAIConversationsSession
     )
     from ._vendored.agents.exceptions import (
         AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
@@ -24,7 +24,7 @@ except ImportError:
         ModelTracing, Handoff, Tool, RawResponsesStreamEvent,
         function_tool, OpenAIProvider,
         input_guardrail, output_guardrail, GuardrailFunctionOutput,
-        RunContextWrapper
+        RunContextWrapper, OpenAIConversationsSession
     )
     from agents.exceptions import (
         AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
@@ -38,7 +38,7 @@ __all__ = [
     'ModelTracing', 'Handoff', 'Tool', 'RawResponsesStreamEvent',
     'function_tool', 'OpenAIProvider',
     'input_guardrail', 'output_guardrail', 'GuardrailFunctionOutput',
-    'RunContextWrapper',
+    'RunContextWrapper', 'OpenAIConversationsSession',
     'AgentsException', 'MaxTurnsExceeded', 'ModelBehaviorError', 'UserError',
     'InputGuardrailTripwireTriggered', 'OutputGuardrailTripwireTriggered',
     'SessionABC',

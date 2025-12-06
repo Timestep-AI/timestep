@@ -17,8 +17,6 @@ from timestep._vendored_imports import (
     InputGuardrailTripwireTriggered,
     OutputGuardrailTripwireTriggered,
     RunContextWrapper,
-)
-from agents import (
     OpenAIConversationsSession,
     ModelSettings,
     function_tool,
