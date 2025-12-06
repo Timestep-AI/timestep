@@ -4,49 +4,63 @@ import sys
 import types
 import importlib
 import importlib.util
+from importlib.machinery import ModuleSpec
 from pathlib import Path
+
+# Custom import finder to redirect 'agents.*' imports to 'timestep._vendored.agents.*'
+class _VendoredAgentsFinder:
+    """MetaPathFinder that redirects 'agents.*' imports to vendored location."""
+    
+    def find_spec(self, name, path, target=None):
+        if name == 'agents':
+            # For the main 'agents' module, we'll handle it after import
+            # Return None to let normal import handle it
+            return None
+        elif name.startswith('agents.'):
+            # For submodules like 'agents.model_settings', redirect to vendored location
+            # But import the submodule directly, not through the main package
+            submodule_name = name[len('agents.'):]
+            vendored_name = f'timestep._vendored.agents.{submodule_name}'
+            try:
+                spec = importlib.util.find_spec(vendored_name)
+                if spec:
+                    # Create a new spec with the original name so imports work correctly
+                    return ModuleSpec(
+                        name=name,
+                        loader=spec.loader,
+                        origin=spec.origin,
+                        loader_state=spec.loader_state,
+                        is_package=spec.is_package,
+                        submodule_search_locations=spec.submodule_search_locations
+                    )
+            except (ImportError, ValueError, AttributeError):
+                pass
+        return None
 
 # Try to import from vendored code first (for published packages), 
 # then fall back to installed package (for development)
 try:
-    # Add sys.modules shim so vendored code's absolute imports work
-    # This must happen BEFORE importing from _vendored.agents
-    # We need to pre-populate sys.modules with the vendored submodules
-    # that the vendored code's __init__.py will try to import
+    # Install the custom finder FIRST, before any imports
+    _finder = _VendoredAgentsFinder()
+    if _finder not in sys.meta_path:
+        sys.meta_path.insert(0, _finder)
     
-    # Create the base 'agents' module first as a package
-    _agents_proxy = types.ModuleType('agents')
-    _agents_proxy.__path__ = []
-    _agents_proxy.__package__ = 'agents'
-    sys.modules['agents'] = _agents_proxy
-    
-    # Pre-populate key submodules that are imported during module initialization
-    # Load them directly from file system to avoid import resolution issues
+    # Pre-import model_settings to avoid circular imports during main package initialization
+    # This must happen before importing the main agents module
     try:
-        # Get the path to the model_settings module
-        _vendored_path = Path(__file__).parent / '_vendored' / 'agents'
-        _model_settings_file = _vendored_path / 'model_settings.py'
-        
-        if _model_settings_file.exists():
-            # Load the module directly from file
-            spec = importlib.util.spec_from_file_location('agents.model_settings', _model_settings_file)
-            if spec and spec.loader:
-                _model_settings_module = importlib.util.module_from_spec(spec)
-                _model_settings_module.__name__ = 'agents.model_settings'
-                _model_settings_module.__package__ = 'agents'
-                # Execute the module
-                spec.loader.exec_module(_model_settings_module)
-                # Register it in sys.modules
-                sys.modules['agents.model_settings'] = _model_settings_module
-                # Also set it as an attribute on the agents module
-                setattr(_agents_proxy, 'model_settings', _model_settings_module)
-    except (ImportError, FileNotFoundError, AttributeError):
+        import timestep._vendored.agents.model_settings as _model_settings_module
+        sys.modules['agents.model_settings'] = _model_settings_module
+        # Create a temporary 'agents' module to hold it
+        _temp_agents = types.ModuleType('agents')
+        _temp_agents.model_settings = _model_settings_module
+        sys.modules['agents'] = _temp_agents
+    except ImportError:
         pass
     
-    # Now import the main vendored module - its internal imports will find 'agents' in sys.modules
+    # Now import the main vendored module - the finder will redirect 'agents.*' imports
     import timestep._vendored.agents as _vendored_agents_module
     
-    # Replace the proxy with the real module and update all submodules
+    # Register the vendored module as 'agents' in sys.modules
     sys.modules['agents'] = _vendored_agents_module
     # Make sure model_settings is still accessible
     if 'agents.model_settings' in sys.modules:
