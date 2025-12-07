@@ -19,7 +19,7 @@ async function exampleDurableWorkflow(): Promise<void> {
   console.log('=== Example 1: Durable Workflow ===');
   
   // Configure and launch DBOS
-  configureDBOS();
+  await configureDBOS();
   await ensureDBOSLaunched();
   
   // Create agent and session

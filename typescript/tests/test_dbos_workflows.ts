@@ -19,17 +19,14 @@ let dbosAvailable = false;
 
 beforeAll(async () => {
   try {
-    configureDBOS({ name: 'timestep-test' });
+    await configureDBOS({ name: 'timestep-test' });
     await ensureDBOSLaunched();
     dbosAvailable = true;
   } catch (error: any) {
-    // Skip tests if database is not available
-    if (error?.message?.includes('ECONNREFUSED') || error?.message?.includes('database')) {
-      dbosAvailable = false;
-      console.warn('DBOS tests skipped: Database not available');
-    } else {
-      throw error;
-    }
+    // Fail the test suite if configuration fails
+    // Don't silently skip - configuration errors should be fixed
+    console.error('DBOS configuration failed:', error);
+    throw error;
   }
 });
 

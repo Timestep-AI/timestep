@@ -37,6 +37,17 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     const pglitePath = getPgliteDir({ appName: name });
     const dbPath = path.join(pglitePath, 'dbos_system');
     
+    // Ensure parent directory exists
+    const fs = await import('fs/promises');
+    try {
+      await fs.mkdir(path.dirname(dbPath), { recursive: true });
+    } catch (e: any) {
+      // Ignore if directory already exists
+      if (e.code !== 'EEXIST') {
+        throw e;
+      }
+    }
+    
     // Start PGLite socket server
     const { PGlite } = await import('@electric-sql/pglite');
     const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');

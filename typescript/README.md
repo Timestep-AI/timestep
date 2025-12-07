@@ -46,7 +46,7 @@ Timestep supports durable agent execution via DBOS workflows. Run agents in work
 import { runAgentWorkflow, configureDBOS, ensureDBOSLaunched } from '@timestep-ai/timestep';
 import { Agent, OpenAIConversationsSession } from '@openai/agents';
 
-configureDBOS();
+await configureDBOS();
 await ensureDBOSLaunched();
 
 const agent = new Agent({ model: 'gpt-4.1' });
