@@ -17,7 +17,7 @@ def get_session_id_from_env() -> str:
     """Get session ID from environment variable."""
     session_id = os.environ.get('CROSS_LANG_SESSION_ID')
     if not session_id:
-        raise ValueError("Session ID not provided. CROSS_LANG_SESSION_ID environment variable must be set.")
+        pytest.skip("CROSS_LANG_SESSION_ID not set. These tests are meant to be orchestrated by TypeScript tests.")
     return session_id
 
 
