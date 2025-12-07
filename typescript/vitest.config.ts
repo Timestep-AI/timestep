@@ -8,6 +8,7 @@ export default defineConfig({
     fileParallelism: false, // Run tests sequentially to avoid conflicts
     testTimeout: 60000, // 60 seconds for long-running agent tests
     hookTimeout: 60000,
+    bail: 1, // Stop on first failure
   },
 });
 

@@ -56,26 +56,26 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     pgliteDb = new PGlite(dbPath, { dataDir: dbPath });
     await pgliteDb.waitReady;
     
-    // Use Unix socket for better performance (or TCP if on Windows)
-    const isWindows = typeof process !== 'undefined' && process.platform === 'win32';
-    const socketPath = isWindows ? undefined : path.join(pglitePath, '.s.PGSQL.5432');
-    const port = isWindows ? 5432 : undefined;
+    // Use TCP connection for simplicity and compatibility
+    // Port 0 means let the OS assign an available port
+    const port = 0;
     
     pgliteServer = new PGLiteSocketServer({
       db: pgliteDb,
-      ...(socketPath ? { path: socketPath } : { port, host: '127.0.0.1' }),
+      port: port,
+      host: '127.0.0.1',
     });
     
     await pgliteServer.start();
     
-    // Construct PostgreSQL connection string pointing to the socket server
-    if (socketPath) {
-      // Unix socket connection
-      dbUrl = `postgresql://postgres:postgres@/postgres?host=${path.dirname(socketPath)}&sslmode=disable`;
-    } else {
-      // TCP connection
-      dbUrl = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?sslmode=disable`;
+    // Get the actual port that was assigned
+    const actualPort = (pgliteServer as any).server?.address()?.port;
+    if (!actualPort) {
+      throw new Error('Failed to get port from PGLite socket server');
     }
+    
+    // Construct PostgreSQL connection string pointing to the socket server
+    dbUrl = `postgresql://postgres:postgres@127.0.0.1:${actualPort}/postgres?sslmode=disable`;
   }
   
   // DBOS will use the same database but different schema (dbos schema)
