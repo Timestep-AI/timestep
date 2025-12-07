@@ -1,17 +1,13 @@
 """Database connection management for Timestep."""
 
-import os
-from pathlib import Path
 from typing import Optional, Any
 from enum import Enum
-from .app_dir import get_pglite_dir
-from .pglite_sidecar.client import PGliteSidecarClient
+import asyncpg
 
 
 class DatabaseType(Enum):
     """Database type enumeration."""
     POSTGRESQL = "postgresql"
-    PGLITE = "pglite"
     NONE = "none"
 
 
@@ -20,40 +16,24 @@ class DatabaseConnection:
     
     def __init__(
         self,
-        connection_string: Optional[str] = None,
-        use_pglite: Optional[bool] = None,
-        pglite_path: Optional[str] = None
+        connection_string: str
     ):
         """
         Initialize database connection.
         
         Args:
             connection_string: PostgreSQL connection string (e.g., postgresql://user:pass@host/db)
-            use_pglite: Whether to use PGLite (required if connection_string is None)
-            pglite_path: Path for PGLite data directory (required if use_pglite is True)
         """
-        if connection_string:
-            # PostgreSQL mode
-            self.connection_string = connection_string
-            self.use_pglite = False
-            self.pglite_path = None
-        elif use_pglite:
-            # PGLite mode - path is required
-            if not pglite_path:
-                raise ValueError("pglite_path is required when use_pglite=True")
-            self.connection_string = None
-            self.use_pglite = True
-            self.pglite_path = pglite_path
-        else:
-            # No configuration provided
-            raise ValueError(
-                "Either connection_string must be provided for PostgreSQL, "
-                "or use_pglite=True with pglite_path for PGLite"
-            )
+        if not connection_string:
+            raise ValueError("connection_string is required for DatabaseConnection")
+        
+        # Normalize connection string: remove +psycopg2 from scheme for asyncpg compatibility
+        if connection_string.startswith('postgresql+psycopg2://'):
+            connection_string = connection_string.replace('postgresql+psycopg2://', 'postgresql://', 1)
+        
+        self.connection_string = connection_string
         self._connection: Optional[Any] = None
         self._db_type: DatabaseType = DatabaseType.NONE
-        self._pglite_sidecar: Optional[PGliteSidecarClient] = None
-        self._pglite_started = False
         
     async def connect(self) -> bool:
         """
@@ -62,25 +42,14 @@ class DatabaseConnection:
         Returns:
             True if connection successful, False otherwise
         """
-        if self.connection_string and not self.use_pglite:
-            try:
-                return await self._connect_postgresql()
-            except Exception as e:
-                raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
-        
-        if self.use_pglite:
-            try:
-                return await self._connect_pglite()
-            except Exception as e:
-                raise ConnectionError(f"Failed to connect to PGLite: {e}")
-        
-        raise ValueError("No connection configuration provided")
+        try:
+            return await self._connect_postgresql()
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
     
     async def _connect_postgresql(self) -> bool:
         """Connect to PostgreSQL database."""
         try:
-            import asyncpg
-            
             # Parse connection string
             self._connection = await asyncpg.connect(self.connection_string)
             self._db_type = DatabaseType.POSTGRESQL
@@ -101,44 +70,11 @@ class DatabaseConnection:
         except Exception as e:
             raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
     
-    async def _connect_pglite(self) -> bool:
-        """Connect to PGLite database via sidecar."""
-        try:
-            # Initialize PGLite path
-            pglite_path = Path(self.pglite_path)
-            pglite_path.mkdir(parents=True, exist_ok=True)
-            
-            # Start sidecar
-            self._pglite_sidecar = PGliteSidecarClient(str(pglite_path))
-            await self._pglite_sidecar.start()
-            self._pglite_started = True
-            
-            # Store path for reference, connection is the sidecar
-            self._connection = self._pglite_sidecar
-            self._db_type = DatabaseType.PGLITE
-            
-            # Test connection
-            await self._pglite_sidecar.query("SELECT 1", None)
-            
-            # Initialize schema (pass self so it uses our unified interface)
-            from .schema import initialize_schema
-            await initialize_schema(self)
-            
-            return True
-        except Exception as e:
-            raise ConnectionError(f"Failed to connect to PGLite: {e}")
-    
     async def disconnect(self) -> None:
         """Disconnect from database."""
         if self._connection:
             if self._db_type == DatabaseType.POSTGRESQL:
                 await self._connection.close()
-            elif self._db_type == DatabaseType.PGLITE:
-                # Stop the sidecar
-                if self._pglite_sidecar:
-                    await self._pglite_sidecar.stop()
-                    self._pglite_sidecar = None
-                    self._pglite_started = False
             self._connection = None
             self._db_type = DatabaseType.NONE
     
@@ -163,14 +99,6 @@ class DatabaseConnection:
         """Execute a query."""
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.execute(query, *args)
-        elif self._db_type == DatabaseType.PGLITE:
-            if not self._pglite_sidecar:
-                raise RuntimeError("PGLite sidecar not initialized")
-            # PGLite uses query method which returns result
-            params = list(args) if args else None
-            result = await self._pglite_sidecar.query(query, params)
-            # Return rowCount if available, otherwise None
-            return result.get('rowCount', None) if isinstance(result, dict) else None
         else:
             raise NotImplementedError(f"Execute not implemented for {self._db_type}")
     
@@ -178,11 +106,6 @@ class DatabaseConnection:
         """Fetch rows from a query."""
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.fetch(query, *args)
-        elif self._db_type == DatabaseType.PGLITE:
-            if not self._pglite_sidecar:
-                raise RuntimeError("PGLite sidecar not initialized")
-            params = list(args) if args else None
-            return await self._pglite_sidecar.fetch(query, params)
         else:
             raise NotImplementedError(f"Fetch not implemented for {self._db_type}")
     
@@ -190,11 +113,6 @@ class DatabaseConnection:
         """Fetch a single row from a query."""
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.fetchrow(query, *args)
-        elif self._db_type == DatabaseType.PGLITE:
-            if not self._pglite_sidecar:
-                raise RuntimeError("PGLite sidecar not initialized")
-            params = list(args) if args else None
-            return await self._pglite_sidecar.fetchrow(query, params)
         else:
             raise NotImplementedError(f"Fetchrow not implemented for {self._db_type}")
     
@@ -202,11 +120,5 @@ class DatabaseConnection:
         """Fetch a single value from a query."""
         if self._db_type == DatabaseType.POSTGRESQL:
             return await self._connection.fetchval(query, *args)
-        elif self._db_type == DatabaseType.PGLITE:
-            if not self._pglite_sidecar:
-                raise RuntimeError("PGLite sidecar not initialized")
-            params = list(args) if args else None
-            return await self._pglite_sidecar.fetchval(query, params)
         else:
             raise NotImplementedError(f"Fetchval not implemented for {self._db_type}")
-

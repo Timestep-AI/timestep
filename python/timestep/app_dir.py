@@ -60,18 +60,4 @@ def get_app_dir(
     return app_path
 
 
-def get_pglite_dir(session_id: str | None = None) -> Path:
-    """
-    Get the PGLite database directory for a session.
-    
-    Args:
-        session_id: Optional session ID to create a unique database per session
-    
-    Returns:
-        Path to the PGLite database directory
-    """
-    app_dir = get_app_dir()
-    if session_id:
-        return app_dir / "pglite" / f"db_{session_id}"
-    return app_dir / "pglite" / "default"
 

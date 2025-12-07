@@ -480,3 +480,4 @@ Replaces all mappings with a new set of mappings.
 - [MultiModelProvider](multi-model-provider.md) - Uses MultiModelProviderMap for routing
 - [OllamaModelProvider](ollama-model-provider.md) - Common provider to add to the map
 - [Architecture](../architecture.md) - For details on provider mapping
+

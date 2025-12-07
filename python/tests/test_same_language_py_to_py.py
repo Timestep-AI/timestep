@@ -59,7 +59,9 @@ async def test_same_language_py_to_py_blocking_non_streaming():
     """Test Python -> Python: blocking, non-streaming."""
     # Step 1: Run Python partial test (inputs 0-3) which stops at interruption
     # Explicitly pass session_id=None to ensure a fresh session for each test
-    session_id = await run_agent_test_partial(run_in_parallel=False, stream=False, session_id=None, start_index=0, end_index=4)
+    result = await run_agent_test_partial(run_in_parallel=False, stream=False, session_id=None, start_index=0, end_index=4)
+    # Handle both dict return (new format) and string return (old format for backwards compatibility)
+    session_id = result["session_id"] if isinstance(result, dict) else result
     print(f"Python test completed, session ID: {session_id}")
     
     # Step 2: Resume in Python (instead of TypeScript) using the same pattern as cross-language
@@ -77,7 +79,9 @@ async def test_same_language_py_to_py_blocking_non_streaming():
 async def test_same_language_py_to_py_blocking_streaming():
     """Test Python -> Python: blocking, streaming."""
     # Explicitly pass session_id=None to ensure a fresh session for each test
-    session_id = await run_agent_test_partial(run_in_parallel=False, stream=True, session_id=None, start_index=0, end_index=4)
+    result = await run_agent_test_partial(run_in_parallel=False, stream=True, session_id=None, start_index=0, end_index=4)
+    # Handle both dict return (new format) and string return (old format for backwards compatibility)
+    session_id = result["session_id"] if isinstance(result, dict) else result
     print(f"Python test completed, session ID: {session_id}")
     
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=True)
@@ -94,7 +98,9 @@ async def test_same_language_py_to_py_blocking_streaming():
 async def test_same_language_py_to_py_parallel_non_streaming():
     """Test Python -> Python: parallel, non-streaming."""
     # Explicitly pass session_id=None to ensure a fresh session for each test
-    session_id = await run_agent_test_partial(run_in_parallel=True, stream=False, session_id=None, start_index=0, end_index=4)
+    result = await run_agent_test_partial(run_in_parallel=True, stream=False, session_id=None, start_index=0, end_index=4)
+    # Handle both dict return (new format) and string return (old format for backwards compatibility)
+    session_id = result["session_id"] if isinstance(result, dict) else result
     print(f"Python test completed, session ID: {session_id}")
     
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=False)
@@ -111,7 +117,9 @@ async def test_same_language_py_to_py_parallel_non_streaming():
 async def test_same_language_py_to_py_parallel_streaming():
     """Test Python -> Python: parallel, streaming."""
     # Explicitly pass session_id=None to ensure a fresh session for each test
-    session_id = await run_agent_test_partial(run_in_parallel=True, stream=True, session_id=None, start_index=0, end_index=4)
+    result = await run_agent_test_partial(run_in_parallel=True, stream=True, session_id=None, start_index=0, end_index=4)
+    # Handle both dict return (new format) and string return (old format for backwards compatibility)
+    session_id = result["session_id"] if isinstance(result, dict) else result
     print(f"Python test completed, session ID: {session_id}")
     
     items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=True)

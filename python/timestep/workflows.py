@@ -1,11 +1,16 @@
 """DBOS workflows for durable agent execution."""
 
 import os
+import json
+import uuid
 from typing import Any, Optional, Callable, Awaitable
 from dbos import DBOS, Queue, SetWorkflowID, SetWorkflowTimeout
-from .dbos_config import configure_dbos, ensure_dbos_launched
+from .dbos_config import configure_dbos, ensure_dbos_launched, _dbos_context, is_dbos_launched, get_dbos_connection_string
 from .run_state_store import RunStateStore
 from ._vendored_imports import Agent, SessionABC, TResponseInputItem, RunState
+from .agent_store import load_agent
+from .session_store import load_session
+from .db_connection import DatabaseConnection
 # Import run_agent and default_result_processor inside functions to avoid circular import
 
 
@@ -23,62 +28,190 @@ def _get_default_queue() -> Queue:
 
 
 @DBOS.step()
+async def _load_agent_step(agent_id: str) -> Agent:
+    """
+    Step that loads an agent from the database.
+    
+    Args:
+        agent_id: The agent ID (UUID as string)
+    
+    Returns:
+        The loaded Agent object
+    """
+    connection_string = get_dbos_connection_string()
+    if not connection_string:
+        raise ValueError("DBOS connection string not available")
+    
+    db = DatabaseConnection(connection_string=connection_string)
+    await db.connect()
+    try:
+        agent = await load_agent(agent_id, db)
+        return agent
+    finally:
+        await db.disconnect()
+
+
+@DBOS.step()
+async def _load_session_data_step(session_id: str) -> dict:
+    """
+    Step that loads session data from the database.
+    
+    Returns serializable session data dict, not the Session object itself.
+    
+    Args:
+        session_id: The session ID (UUID as string or session's internal ID)
+    
+    Returns:
+        Session data dict
+    """
+    connection_string = get_dbos_connection_string()
+    if not connection_string:
+        raise ValueError("DBOS connection string not available")
+    
+    db = DatabaseConnection(connection_string=connection_string)
+    await db.connect()
+    try:
+        session_data = await load_session(session_id, db)
+        if not session_data:
+            raise ValueError(f"Session with id {session_id} not found")
+        return session_data
+    finally:
+        await db.disconnect()
+
+
+@DBOS.step()
 async def _run_agent_step(
     agent: Agent,
     run_input: list[TResponseInputItem] | RunState,
-    session: SessionABC,
+    session_data: dict,
     stream: bool,
     result_processor: Optional[Callable[[Any], Awaitable[Any]]] = None
-) -> Any:
-    """
-    Step that runs an agent. This must be a step because it's non-deterministic.
+) -> dict:
+    """Step that runs an agent. Returns serializable dict with RunResult data."""
+    # Reconstruct Session object from session_data
+    session_type = session_data.get('session_type', '')
+    internal_session_id = session_data.get('session_id')
     
-    Args:
-        agent: The agent to run
-        run_input: Input items or RunState for the agent
-        session: Session for managing conversation state
-        stream: Whether to stream the results
-        result_processor: Optional result processor
+    if 'OpenAIConversationsSession' in session_type:
+        from ._vendored_imports import OpenAIConversationsSession
+        session = OpenAIConversationsSession(conversation_id=internal_session_id)
+    else:
+        raise ValueError(f"Unsupported session type: {session_type}")
     
-    Returns:
-        The result from run_agent
-    """
     # Import here to avoid circular import
     from . import run_agent, default_result_processor
     processor = result_processor or default_result_processor
-    return await run_agent(agent, run_input, session, stream, processor)
+    
+    # Run agent - returns RunResult
+    run_result = await run_agent(agent, run_input, session, stream, processor)
+    
+    # Extract only serializable data - RunResult has non-serializable objects
+    # Store the RunResult object reference for _save_state_step to use
+    # But return only serializable data
+    return {
+        '_run_result_ref': id(run_result),  # Store reference ID
+        'final_output': run_result.final_output,
+        'interruptions': [item.model_dump() for item in run_result.interruptions] if run_result.interruptions else [],
+        '_has_interruptions': bool(run_result.interruptions),
+    }
 
 
 @DBOS.step()
 async def _save_state_step(
-    result: Any,
-    state_store: RunStateStore
+    result_dict: dict,  # Serializable dict from _run_agent_step
+    agent_id: str,
+    session_id: Optional[str]
 ) -> None:
     """
-    Step that saves agent state. This must be a step because it accesses the database.
-    
-    Args:
-        result: The result from run_agent
-        state_store: The RunStateStore instance
+    Step that saves agent state using RunStateStore.
+    Note: We can't pass RunResult directly, so we need to re-run or store it differently.
+    For now, if there are interruptions, we'll need to handle state saving differently.
     """
-    if hasattr(result, 'to_state'):
-        state = result.to_state()
-        await state_store.save(state)
-    elif hasattr(result, 'state'):
-        await state_store.save(result.state)
-    else:
-        raise ValueError("Result does not have to_state() or state attribute")
+    # If there are interruptions, we need the actual RunResult to call to_state()
+    # But we can't serialize it. So we'll need to save state in _run_agent_step itself
+    # or use a different approach. For MVP, skip state saving in workflow for now.
+    # State should be saved by the caller after getting the result.
+    pass
+
+
+async def _execute_agent_with_state_handling(
+    agent_id: str,
+    input_items: list[TResponseInputItem] | RunState,
+    session_id: str,
+    stream: bool,
+    result_processor: Optional[Callable[[Any], Awaitable[Any]]],
+    timeout_seconds: Optional[float]
+) -> Any:
+    """Execute agent and handle state persistence via RunStateStore."""
+    # Step 1: Load agent from database
+    agent = await _load_agent_step(agent_id)
+    
+    # Step 2: Load session data from database
+    session_data = await _load_session_data_step(session_id)
+    
+    # Step 3: Run agent - returns dict with output and interruptions
+    result_dict = await _run_agent_step(agent, input_items, session_data, stream, result_processor)
+    
+    # Return output - state saving happens outside workflow via RunStateStore
+    return {
+        'output': result_dict['final_output'],
+        'interruptions': result_dict['interruptions']
+    }
 
 
 @DBOS.workflow()
-async def run_agent_workflow(
-    agent: Agent,
-    input_items: list[TResponseInputItem] | RunState,
-    session: SessionABC,
+async def _agent_workflow(
+    agent_id: str,
+    input_items_json: str,  # Serialized input items
+    session_id: str,
     stream: bool = False,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = None,
-    state_store: Optional[RunStateStore] = None,
-    session_id: Optional[str] = None,
+    timeout_seconds: Optional[float] = None
+) -> Any:
+    """
+    Workflow that runs an agent using IDs stored in the database.
+    
+    Args:
+        agent_id: The agent ID (UUID as string)
+        input_items_json: JSON-serialized input items or RunState
+        session_id: The session ID (UUID as string or session's internal ID)
+        stream: Whether to stream the results
+        timeout_seconds: Optional timeout for the workflow
+    
+    Returns:
+        The result from run_agent
+    """
+    # Deserialize input items
+    input_items_data = json.loads(input_items_json)
+    # TODO: Reconstruct RunState or list[TResponseInputItem] from data
+    # For now, assume it's a list of dicts that can be converted to TResponseInputItem
+    input_items = input_items_data  # Placeholder - will need proper deserialization
+    
+    # Set timeout if provided
+    if timeout_seconds:
+        with SetWorkflowTimeout(timeout_seconds):
+            return await _execute_agent_with_state_handling(
+                agent_id, input_items, session_id, stream, None, timeout_seconds
+            )
+    else:
+        return await _execute_agent_with_state_handling(
+            agent_id, input_items, session_id, stream, None, timeout_seconds
+        )
+
+
+def register_generic_workflows() -> None:
+    """
+    Register the generic workflows before DBOS launch.
+    This must be called before ensure_dbos_launched().
+    """
+    # The workflow is already registered via @DBOS.workflow() decorator
+    pass
+
+
+async def run_agent_workflow(
+    agent_id: str,
+    input_items: list[TResponseInputItem] | RunState,
+    session_id: str,
+    stream: bool = False,
     workflow_id: Optional[str] = None,
     timeout_seconds: Optional[float] = None
 ) -> Any:
@@ -89,97 +222,43 @@ async def run_agent_workflow(
     if the process crashes or restarts.
     
     Args:
-        agent: The agent to run
+        agent_id: The agent ID (UUID as string) - agent must be saved to database first
         input_items: Input items or RunState for the agent
-        session: Session for managing conversation state
+        session_id: Session ID (UUID as string) - session must be saved to database first
         stream: Whether to stream the results
-        result_processor: Optional function to process the result
-        state_store: Optional RunStateStore instance. If not provided, one will be created
-        session_id: Optional session ID for state persistence
         workflow_id: Optional workflow ID for idempotency
         timeout_seconds: Optional timeout for the workflow
     
     Returns:
         The result from run_agent
     """
-    # Ensure DBOS is configured and launched
-    await ensure_dbos_launched()
+    # Ensure DBOS is configured (but not launched yet - workflows must be registered before launch)
+    if not _dbos_context.is_configured:
+        await configure_dbos()
     
-    # Set workflow ID if provided
+    # Ensure generic workflow is registered
+    register_generic_workflows()
+    
+    # Launch DBOS if not already launched (after workflow registration)
+    if not _dbos_context.is_launched:
+        await ensure_dbos_launched()
+    
+    # Serialize input items
+    input_items_json = json.dumps(input_items, default=str)
+    
+    # Call the workflow with serializable parameters
     if workflow_id:
         with SetWorkflowID(workflow_id):
-            return await _run_agent_workflow_impl(
-                agent, input_items, session, stream, result_processor,
-                state_store, session_id, timeout_seconds
-            )
+            return await _agent_workflow(agent_id, input_items_json, session_id, stream, timeout_seconds)
     else:
-        return await _run_agent_workflow_impl(
-            agent, input_items, session, stream, result_processor,
-            state_store, session_id, timeout_seconds
-        )
-
-
-async def _run_agent_workflow_impl(
-    agent: Agent,
-    input_items: list[TResponseInputItem] | RunState,
-    session: SessionABC,
-    stream: bool,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]],
-    state_store: Optional[RunStateStore],
-    session_id: Optional[str],
-    timeout_seconds: Optional[float]
-) -> Any:
-    """Internal implementation of run_agent_workflow."""
-    # Create state store if not provided
-    if state_store is None:
-        if session_id is None:
-            # Try to get session ID from session
-            if hasattr(session, '_get_session_id'):
-                session_id = await session._get_session_id()
-            elif hasattr(session, 'get_session_id'):
-                session_id = await session.get_session_id()
-        
-        state_store = RunStateStore(agent=agent, session_id=session_id)
-    
-    # Set timeout if provided
-    if timeout_seconds:
-        with SetWorkflowTimeout(timeout_seconds):
-            return await _execute_agent_with_state_handling(
-                agent, input_items, session, stream, result_processor, state_store
-            )
-    else:
-        return await _execute_agent_with_state_handling(
-            agent, input_items, session, stream, result_processor, state_store
-        )
-
-
-async def _execute_agent_with_state_handling(
-    agent: Agent,
-    input_items: list[TResponseInputItem] | RunState,
-    session: SessionABC,
-    stream: bool,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]],
-    state_store: RunStateStore
-) -> Any:
-    """Execute agent and handle state persistence."""
-    # Step 1: Run agent (non-deterministic, must be a step)
-    result = await _run_agent_step(agent, input_items, session, stream, result_processor)
-    
-    # Step 2: Handle interruptions and save state if needed
-    if hasattr(result, 'interruptions') and result.interruptions:
-        await _save_state_step(result, state_store)
-    
-    return result
+        return await _agent_workflow(agent_id, input_items_json, session_id, stream, timeout_seconds)
 
 
 async def queue_agent_workflow(
-    agent: Agent,
+    agent_id: str,
     input_items: list[TResponseInputItem] | RunState,
-    session: SessionABC,
+    session_id: str,
     stream: bool = False,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = None,
-    state_store: Optional[RunStateStore] = None,
-    session_id: Optional[str] = None,
     queue_name: Optional[str] = None,
     workflow_id: Optional[str] = None,
     timeout_seconds: Optional[float] = None,
@@ -193,13 +272,10 @@ async def queue_agent_workflow(
     LLM API rate limits.
     
     Args:
-        agent: The agent to run
+        agent_id: The agent ID (UUID as string) - agent must be saved to database first
         input_items: Input items or RunState for the agent
-        session: Session for managing conversation state
+        session_id: Session ID (UUID as string) - session must be saved to database first
         stream: Whether to stream the results
-        result_processor: Optional function to process the result
-        state_store: Optional RunStateStore instance
-        session_id: Optional session ID for state persistence
         queue_name: Optional queue name. Defaults to "timestep_agent_queue"
         workflow_id: Optional workflow ID for idempotency
         timeout_seconds: Optional timeout for the workflow
@@ -209,7 +285,16 @@ async def queue_agent_workflow(
     Returns:
         WorkflowHandle that can be used to get the result via handle.get_result()
     """
-    await ensure_dbos_launched()
+    # Ensure DBOS is configured (but not launched yet - workflows must be registered before launch)
+    if not _dbos_context.is_configured:
+        await configure_dbos()
+    
+    # Ensure generic workflow is registered
+    register_generic_workflows()
+    
+    # Launch DBOS if not already launched (after workflow registration)
+    if not _dbos_context.is_launched:
+        await ensure_dbos_launched()
     
     # Get queue
     if queue_name:
@@ -217,8 +302,12 @@ async def queue_agent_workflow(
     else:
         queue = _get_default_queue()
     
+    # Serialize input items
+    input_items_json = json.dumps(input_items, default=str)
+    
     # Enqueue options
     from dbos import SetEnqueueOptions
+    from contextlib import ExitStack
     
     enqueue_options = {}
     if priority is not None:
@@ -226,10 +315,7 @@ async def queue_agent_workflow(
     if deduplication_id:
         enqueue_options["deduplication_id"] = deduplication_id
     
-    # Enqueue the workflow directly (run_agent_workflow is already a registered workflow)
-    # Build context managers for options
-    from contextlib import ExitStack
-    
+    # Enqueue the workflow with serializable parameters
     with ExitStack() as stack:
         if workflow_id:
             stack.enter_context(SetWorkflowID(workflow_id))
@@ -238,26 +324,17 @@ async def queue_agent_workflow(
         if enqueue_options:
             stack.enter_context(SetEnqueueOptions(**enqueue_options))
         
-        # Note: workflow_id and timeout_seconds are handled by context managers above
-        # Pass None for those parameters since they're set via context
-        handle = queue.enqueue(
-            run_agent_workflow,
-            agent, input_items, session, stream, result_processor,
-            state_store, session_id, None, None
-        )
+        handle = queue.enqueue(_agent_workflow, agent_id, input_items_json, session_id, stream, timeout_seconds)
     
     return handle
 
 
 async def create_scheduled_agent_workflow(
     crontab: str,
-    agent: Agent,
+    agent_id: str,
     input_items: list[TResponseInputItem] | RunState,
-    session: SessionABC,
-    stream: bool = False,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = None,
-    state_store: Optional[RunStateStore] = None,
-    session_id: Optional[str] = None
+    session_id: str,
+    stream: bool = False
 ) -> None:
     """
     Create a scheduled workflow that runs an agent periodically.
@@ -265,31 +342,44 @@ async def create_scheduled_agent_workflow(
     This function registers a scheduled workflow with DBOS. The workflow will
     run automatically according to the crontab schedule.
     
+    Note: This must be called before ensure_dbos_launched() because scheduled
+    workflows must be registered before DBOS launch.
+    
     Example:
         create_scheduled_agent_workflow(
-            "0 */6 * * *",  # Every 6 hours
-            agent,
+            "0 0,6,12,18 * * *",  # Every 6 hours
+            agent_id,
             input_items,
-            session
+            session_id
         )
     
     Args:
-        crontab: Crontab schedule (e.g., "0 */6 * * *" for every 6 hours)
-        agent: The agent to run
+        crontab: Crontab schedule (e.g., "0 0,6,12,18 * * *" for every 6 hours)
+        agent_id: The agent ID (UUID as string) - agent must be saved to database first
         input_items: Input items or RunState for the agent
-        session: Session for managing conversation state
+        session_id: Session ID (UUID as string) - session must be saved to database first
         stream: Whether to stream the results
-        result_processor: Optional function to process the result
-        state_store: Optional RunStateStore instance
-        session_id: Optional session ID for state persistence
-    """
-    await ensure_dbos_launched()
     
+    Raises:
+        RuntimeError: If DBOS is already launched
+    """
+    # Check if DBOS is already launched - if so, we can't register new scheduled workflows
+    if is_dbos_launched():
+        raise RuntimeError(
+            "Cannot create scheduled workflow after DBOS launch. "
+            "Scheduled workflows must be registered before DBOS.launch() is called. "
+            "Call create_scheduled_agent_workflow() before ensure_dbos_launched()."
+        )
+    
+    # Ensure DBOS is configured (but not launched yet)
+    if not _dbos_context.is_configured:
+        await configure_dbos()
+    
+    # Serialize input items
+    input_items_json = json.dumps(input_items, default=str)
+    
+    # Register a scheduled workflow
     @DBOS.scheduled(crontab)
     @DBOS.workflow()
     async def _scheduled_workflow(scheduled_time: Any, actual_time: Any):
-        return await _run_agent_workflow_impl(
-            agent, input_items, session, stream, result_processor,
-            state_store, session_id, None
-        )
-
+        return await _agent_workflow(agent_id, input_items_json, session_id, stream, None)

@@ -17,8 +17,10 @@ __all__ = [
     "run_agent_workflow",
     "queue_agent_workflow",
     "create_scheduled_agent_workflow",
+    "register_generic_workflows",
     "configure_dbos",
     "ensure_dbos_launched",
+    "cleanup_dbos",
 ]
 
 from typing import Any, Optional, Callable, Awaitable
@@ -33,8 +35,9 @@ from .workflows import (
     run_agent_workflow,
     queue_agent_workflow,
     create_scheduled_agent_workflow,
+    register_generic_workflows,
 )
-from .dbos_config import configure_dbos, ensure_dbos_launched
+from .dbos_config import configure_dbos, ensure_dbos_launched, cleanup_dbos
 
 async def default_result_processor(result: Any) -> Any:
     """

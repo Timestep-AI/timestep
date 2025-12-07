@@ -69,27 +69,4 @@ export function getAppDir(options: GetAppDirOptions = {}): string {
   return appPath;
 }
 
-export interface GetPgliteDirOptions {
-  /** Optional session ID to create a unique database per session */
-  sessionId?: string;
-  /** Application name (default: "timestep") */
-  appName?: string;
-}
-
-/**
- * Get the PGLite database directory for a session.
- *
- * @param options Configuration options
- * @returns Path to the PGLite database directory
- */
-export function getPgliteDir(options: GetPgliteDirOptions = {}): string {
-  const { sessionId, appName } = options;
-  const appDir = getAppDir({ appName });
-  const pgliteDir = path.join(appDir, 'pglite');
-
-  if (sessionId) {
-    return path.join(pgliteDir, `db_${sessionId}`);
-  }
-  return path.join(pgliteDir, 'default');
-}
 

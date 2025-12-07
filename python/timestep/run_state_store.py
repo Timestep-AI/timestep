@@ -1,16 +1,15 @@
-"""RunStateStore implementation using PGLite by default."""
+"""RunStateStore implementation using PostgreSQL."""
 
 import json
 import uuid
 from typing import Optional, Any
-from datetime import datetime
 
-from .db_connection import DatabaseConnection, DatabaseType
+from .db_connection import DatabaseConnection
 from ._vendored_imports import Agent, RunState
 
 
 class RunStateStore:
-    """Store for persisting run state using PGLite (default) or PostgreSQL."""
+    """Store for persisting run state using PostgreSQL."""
     
     SCHEMA_VERSION = "1.0"
     
@@ -18,56 +17,75 @@ class RunStateStore:
         self,
         agent: Agent,
         session_id: Optional[str] = None,
-        connection_string: Optional[str] = None,
-        use_pglite: Optional[bool] = None,
-        pglite_path: Optional[str] = None
+        connection_string: Optional[str] = None
     ):
+        """
+        Initialize RunStateStore.
+        
+        Note: If connection_string is not provided and DBOS is not configured,
+        the connection will be initialized lazily when needed (which will configure DBOS
+        and start Testcontainers if necessary).
+        """
         """
         Initialize RunStateStore using DBOS's database connection if available.
         
         RunStateStore will use the same database as DBOS:
         - If PG_CONNECTION_URI is set, both use that PostgreSQL database
-        - Otherwise, both use the same PGLite instance (via DBOS's socket server)
+        - Otherwise, both use the same Testcontainers PostgreSQL instance
         
         Args:
             agent: Agent instance (required)
             session_id: Session ID to use as identifier (required, will be generated if not provided)
             connection_string: PostgreSQL connection string (optional, uses DBOS's connection if not provided)
-            use_pglite: Deprecated - kept for backwards compatibility but ignored
-            pglite_path: Deprecated - kept for backwards compatibility but ignored
         """
         if agent is None:
             raise ValueError("agent is required")
         
         self.agent = agent
         self.session_id = session_id
-        
+        self._connection_string = connection_string
+        self.db: Optional[DatabaseConnection] = None
+        self._connected = False
+    
+    async def _initialize_database(self) -> None:
+        """Initialize the database connection."""
+        connection_string = self._connection_string
         # Get connection string from DBOS if not explicitly provided
         if not connection_string:
-            from .dbos_config import get_dbos_connection_string
+            from .dbos_config import get_dbos_connection_string, configure_dbos
             connection_string = get_dbos_connection_string()
+            
+            # If DBOS is not configured, auto-configure it (will start Testcontainers if needed)
+            if not connection_string:
+                await configure_dbos()
+                connection_string = get_dbos_connection_string()
         
-        # Configure database connection explicitly
-        if connection_string:
-            # Use PostgreSQL connection string
-            self.db = DatabaseConnection(connection_string=connection_string)
-        else:
-            # Use PGLite - ensure path is set
-            if not pglite_path:
-                from .app_dir import get_pglite_dir
-                session_id_for_path = session_id or 'default'
-                pglite_path = str(get_pglite_dir(session_id_for_path))
-            self.db = DatabaseConnection(use_pglite=True, pglite_path=pglite_path)
+        if not connection_string:
+            raise ValueError(
+                "No connection string provided. "
+                "Either provide connection_string in options or ensure DBOS is configured with PG_CONNECTION_URI."
+            )
+        
+        # Normalize connection string: remove +psycopg2 from scheme (asyncpg expects postgresql:// or postgres://)
+        if connection_string.startswith('postgresql+psycopg2://'):
+            connection_string = connection_string.replace('postgresql+psycopg2://', 'postgresql://', 1)
+        elif connection_string.startswith('postgres+psycopg2://'):
+            connection_string = connection_string.replace('postgres+psycopg2://', 'postgresql://', 1)
+        
+        # Use PostgreSQL connection string
+        self.db = DatabaseConnection(connection_string=connection_string)
         self._connected = False
     
     async def _ensure_connected(self) -> None:
         """Ensure database connection is established."""
+        if not self.db:
+            await self._initialize_database()
         if not self._connected:
             connected = await self.db.connect()
             if not connected:
                 raise RuntimeError(
                     "Failed to connect to database. "
-                    "Check PG_CONNECTION_URI environment variable or ensure PGLite dependencies are installed."
+                    "Check PG_CONNECTION_URI environment variable or ensure DBOS is configured."
                 )
             self._connected = True
     
@@ -186,6 +204,6 @@ class RunStateStore:
     
     async def close(self) -> None:
         """Close database connection."""
-        await self.db.disconnect()
+        if self.db:
+            await self.db.disconnect()
         self._connected = False
-

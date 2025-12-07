@@ -281,3 +281,4 @@ If an unknown prefix is used and no custom mapping exists, `get_model()` will ra
 - [MultiModelProviderMap](multi-model-provider-map.md) - For custom provider mappings
 - [OllamaModelProvider](ollama-model-provider.md) - For Ollama-specific configuration
 - [Architecture](../architecture.md) - For detailed routing explanation
+

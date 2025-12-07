@@ -1,15 +1,12 @@
-/** RunStateStore implementation using PGLite by default. */
+/** RunStateStore implementation using PostgreSQL. */
 
 import { DatabaseConnection } from './db_connection.ts';
 import { Agent, RunState } from '@openai/agents';
-import { getPgliteDir } from './app_dir.ts';
 
 export interface RunStateStoreOptions {
   agent: Agent;
   sessionId?: string;
   connectionString?: string;
-  usePglite?: boolean;
-  pglitePath?: string;
 }
 
 export class RunStateStore {
@@ -20,8 +17,6 @@ export class RunStateStore {
   private db: DatabaseConnection | null = null;
   private connected: boolean = false;
   private _connectionString?: string;
-  private _pglitePath?: string;
-  private _usePglite?: boolean;
 
   constructor(options: RunStateStoreOptions) {
     if (!options.agent) {
@@ -33,8 +28,6 @@ export class RunStateStore {
     
     // Store options for lazy initialization
     this._connectionString = options.connectionString;
-    this._pglitePath = options.pglitePath;
-    this._usePglite = options.usePglite;
     this.db = null as any; // Will be initialized in ensureConnected
   }
 
@@ -46,23 +39,25 @@ export class RunStateStore {
     // Get connection string from DBOS if not explicitly provided
     let connectionString = this._connectionString;
     if (!connectionString) {
-      const { getDBOSConnectionString } = await import('./dbos_config.ts');
+      const { getDBOSConnectionString, configureDBOS } = await import('./dbos_config.ts');
       connectionString = getDBOSConnectionString();
+      
+      // If DBOS isn't configured, configure it (will start Testcontainers if needed)
+      if (!connectionString) {
+        await configureDBOS();
+        connectionString = getDBOSConnectionString();
+      }
     }
     
-    // Configure database connection explicitly
-    if (connectionString) {
-      // Use PostgreSQL connection string
-      this.db = new DatabaseConnection({ connectionString });
-    } else {
-      // Use PGLite - ensure path is set
-      let pglitePath = this._pglitePath;
-      if (!pglitePath) {
-        const sessionId = this.sessionId || 'default';
-        pglitePath = getPgliteDir({ sessionId });
-      }
-      this.db = new DatabaseConnection({ usePglite: true, pglitePath });
+    if (!connectionString) {
+      throw new Error(
+        'No connection string provided. ' +
+        'Either provide connectionString in options or ensure DBOS is configured with PG_CONNECTION_URI.'
+      );
     }
+    
+    // Use PostgreSQL connection string
+    this.db = new DatabaseConnection({ connectionString });
   }
 
   private async ensureConnected(): Promise<void> {
@@ -74,7 +69,7 @@ export class RunStateStore {
       if (!connected) {
         throw new Error(
           'Failed to connect to database. ' +
-          'Check PG_CONNECTION_URI environment variable or ensure PGLite dependencies are installed.'
+          'Check PG_CONNECTION_URI environment variable or ensure DBOS is configured.'
         );
       }
       this.connected = true;
@@ -181,8 +176,9 @@ export class RunStateStore {
   }
 
   async close(): Promise<void> {
-    await this.db.disconnect();
+    if (this.db) {
+      await this.db.disconnect();
+    }
     this.connected = false;
   }
 }
-

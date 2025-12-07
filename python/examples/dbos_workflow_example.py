@@ -8,6 +8,7 @@ from timestep import (
     create_scheduled_agent_workflow,
     configure_dbos,
     ensure_dbos_launched,
+    cleanup_dbos,
 )
 from timestep._vendored_imports import (
     Agent,
@@ -22,8 +23,8 @@ async def example_durable_workflow():
     print("=== Example 1: Durable Workflow ===")
     
     # Configure and launch DBOS
-    configure_dbos()
-    ensure_dbos_launched()
+    await configure_dbos()
+    await ensure_dbos_launched()
     
     # Create agent and session
     agent = Agent(
@@ -56,7 +57,7 @@ async def example_queued_workflow():
     """Example: Enqueue agent runs with rate limiting."""
     print("\n=== Example 2: Queued Workflow ===")
     
-    ensure_dbos_launched()
+    await ensure_dbos_launched()
     
     agent = Agent(
         instructions="You are a helpful assistant.",
@@ -90,7 +91,7 @@ async def example_scheduled_workflow():
     """Example: Schedule periodic agent runs."""
     print("\n=== Example 3: Scheduled Workflow ===")
     
-    ensure_dbos_launched()
+    await ensure_dbos_launched()
     
     agent = Agent(
         instructions="You are a helpful assistant.",
@@ -133,6 +134,9 @@ async def main():
         print(f"Error running examples: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Clean up DBOS resources
+        await cleanup_dbos()
 
 
 if __name__ == "__main__":

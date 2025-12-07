@@ -13,18 +13,35 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
     print(f"Running test: {test_name}")
     
     # Step 1: Run Python partial test (inputs 0-3) which stops at interruption
-    session_id = await run_agent_test_partial(
+    result = await run_agent_test_partial(
         run_in_parallel=run_in_parallel,
         stream=stream,
         session_id=None,
         start_index=0,
         end_index=4
     )
+    
+    # Handle both dict return (new format) and string return (old format for backwards compatibility)
+    if isinstance(result, dict):
+        session_id = result["session_id"]
+        connection_string = result.get("connection_string")
+    else:
+        # Old format - just session_id string
+        session_id = result
+        connection_string = None
+    
     print(f"Python test completed, session ID: {session_id}")
+    if connection_string:
+        print(f"Using connection string: {connection_string}")
     
     # Step 2: Run TypeScript test that loads the state and continues, passing session ID as parameter
     ts_test_path = Path(__file__).parent.parent.parent / "typescript" / "tests" / "test_cross_language_py_to_ts.ts"
     ts_dir = ts_test_path.parent.parent
+    
+    # Prepare environment with connection string if available
+    env = {**os.environ}
+    if connection_string:
+        env["PG_CONNECTION_URI"] = connection_string
     
     print(f"Running TypeScript test: {run_in_parallel}, {stream}")
     result = subprocess.run(
@@ -32,7 +49,7 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
         cwd=str(ts_dir),
         capture_output=True,
         text=True,
-        env={**os.environ}
+        env=env
     )
     
     print(result.stdout)

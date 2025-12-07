@@ -6,6 +6,7 @@ import {
   createScheduledAgentWorkflow,
   configureDBOS,
   ensureDBOSLaunched,
+  cleanupDBOS,
 } from '../timestep/index.ts';
 import {
   Agent,
@@ -142,6 +143,9 @@ async function main(): Promise<void> {
     if (e instanceof Error) {
       console.error(e.stack);
     }
+  } finally {
+    // Clean up DBOS resources
+    await cleanupDBOS();
   }
 }
 

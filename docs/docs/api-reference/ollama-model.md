@@ -171,3 +171,4 @@ If Ollama returns an error or unexpected format, the model will:
 - [OllamaModelProvider](ollama-model-provider.md) - The provider that creates OllamaModel instances
 - [Architecture](../architecture.md) - For details on response format conversion
 - [MultiModelProvider](multi-model-provider.md) - For using Ollama models with automatic routing
+

@@ -74,6 +74,7 @@ try:
         input_guardrail, output_guardrail, GuardrailFunctionOutput,
         RunContextWrapper, OpenAIConversationsSession
     )
+    from ._vendored.agents.guardrail import InputGuardrail, OutputGuardrail
     from ._vendored.agents.exceptions import (
         AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
         InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
@@ -89,6 +90,7 @@ except ImportError:
         input_guardrail, output_guardrail, GuardrailFunctionOutput,
         RunContextWrapper, OpenAIConversationsSession
     )
+    from agents.guardrail import InputGuardrail, OutputGuardrail
     from agents.exceptions import (
         AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
         InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
@@ -102,6 +104,7 @@ __all__ = [
     'function_tool', 'OpenAIProvider',
     'input_guardrail', 'output_guardrail', 'GuardrailFunctionOutput',
     'RunContextWrapper', 'OpenAIConversationsSession',
+    'InputGuardrail', 'OutputGuardrail',
     'AgentsException', 'MaxTurnsExceeded', 'ModelBehaviorError', 'UserError',
     'InputGuardrailTripwireTriggered', 'OutputGuardrailTripwireTriggered',
     'SessionABC',

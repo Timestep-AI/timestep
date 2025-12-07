@@ -275,7 +275,9 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
 async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None, start_index: int = 0, end_index: int = None):
     """Run partial agent test up to interruption and save state without approving.
     
-    Returns the session_id for use in cross-language tests.
+    Returns a dict with "session_id" and "connection_string" for use in cross-language tests.
+    The connection_string is the database connection string used by Python, which TypeScript
+    should use to connect to the same database.
     """
     if end_index is None:
         end_index = len(RUN_INPUTS)
@@ -347,11 +349,17 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
 
             # Handle interruptions - save state but don't approve
             if result.interruptions and len(result.interruptions) > 0:
-                # Save state
+                # Save state (this will initialize the database connection if needed)
                 state = result.to_state()
                 await state_store.save(state)
-                # Return session ID without approving
-                return current_session_id
+                
+                # Get the database connection string that was used
+                # This ensures TypeScript can connect to the same database
+                from timestep.dbos_config import get_dbos_connection_string
+                connection_string = get_dbos_connection_string()
+                
+                # Return session ID and connection string without approving
+                return {"session_id": current_session_id, "connection_string": connection_string}
         except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
             # Guardrail was triggered - pop items until we've removed the user message
             recent_items = await session.get_items(2)
@@ -367,8 +375,10 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
                 for _ in range(items_to_pop):
                     await session.pop_item()
 
-    # If we got here without interruption, return session ID anyway
-    return current_session_id
+    # If we got here without interruption, get connection string anyway (may be None if DBOS wasn't configured)
+    from timestep.dbos_config import get_dbos_connection_string
+    connection_string = get_dbos_connection_string()
+    return {"session_id": current_session_id, "connection_string": connection_string}
 
 
 async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool = True, stream: bool = False):

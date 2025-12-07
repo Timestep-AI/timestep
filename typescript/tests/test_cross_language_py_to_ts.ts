@@ -3,7 +3,7 @@
  * It receives the session ID as a command line argument.
  */
 
-import { runAgentTestFromPython, cleanItems, assertConversationItems, EXPECTED_ITEMS } from './test_run_agent';
+import { runAgentTestFromPython, cleanItems, assertConversationItems, EXPECTED_ITEMS } from './test_helpers';
 
 function logItemDifferences(cleaned: any[], expected: any[], maxItems: number = 25): void {
   console.log('\n' + '='.repeat(80));
