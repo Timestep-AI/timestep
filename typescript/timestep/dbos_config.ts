@@ -133,7 +133,7 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     dbosContext.setPgliteServer(pgliteServer);
     
     // Wait for server to initialize (PGLite socket server needs a moment)
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     // Get the actual port that was assigned
     const server = (dbosContext.getPgliteServer() as any).server;
@@ -165,13 +165,16 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
       await testClient.query('SELECT 1');
       await testClient.end();
       // Wait for connection to fully close before DBOS connects
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // PGLite socket server only supports one connection at a time
+      await new Promise(resolve => setTimeout(resolve, 500));
     } catch (e: any) {
       throw new Error(`PGLite socket server connection test failed: ${e.message}`);
     }
     
     // Construct PostgreSQL connection string pointing to the socket server
     dbUrl = `postgresql://postgres:postgres@127.0.0.1:${actualPort}/postgres?sslmode=disable`;
+    console.log(`PGLite socket server listening on port ${actualPort}`);
+    console.log(`DBOS will use connection string: postgresql://postgres:postgres@127.0.0.1:${actualPort}/postgres?sslmode=disable`);
   }
   
   // DBOS will use the same database but different schema (dbos schema)
@@ -179,6 +182,7 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     name,
     systemDatabaseUrl: dbUrl,
   };
+  console.log(`Setting DBOS config with systemDatabaseUrl: ${config.systemDatabaseUrl}`);
   DBOS.setConfig(config);
   dbosContext.setConfig(config);
   dbosContext.setConfigured(true);
@@ -195,6 +199,23 @@ export async function ensureDBOSLaunched(): Promise<void> {
   }
   
   if (!dbosContext.isLaunched) {
+    // Verify the config before launching
+    const connectionString = dbosContext.getConnectionString();
+    console.log(`DBOS config before launch - connection string: ${connectionString}`);
+    if (!connectionString) {
+      throw new Error('DBOS connection string is not set. Call configureDBOS() first.');
+    }
+    
+    // Ensure config is set in DBOS (in case it was cleared or reset)
+    const config = dbosContext.getConnectionString();
+    if (config) {
+      DBOS.setConfig({
+        name: 'timestep',
+        systemDatabaseUrl: config,
+      });
+      console.log(`Re-set DBOS config with connection string: ${config}`);
+    }
+    
     console.log('Calling DBOS.launch()...');
     try {
       await DBOS.launch();
@@ -202,6 +223,9 @@ export async function ensureDBOSLaunched(): Promise<void> {
       dbosContext.setLaunched(true);
     } catch (error: any) {
       console.error('DBOS.launch() failed:', error);
+      // Log the actual config DBOS is trying to use
+      const currentConfig = dbosContext.getConnectionString();
+      console.error(`DBOS was trying to connect to: ${currentConfig}`);
       throw error;
     }
   }

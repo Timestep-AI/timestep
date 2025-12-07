@@ -27,7 +27,8 @@ beforeAll(async () => {
     dbosAvailable = true;
   } catch (error: any) {
     console.error('DBOS setup failed:', error);
-    throw error;
+    // Exit immediately on failure to stop test suite
+    process.exit(1);
   }
 }, 120000); // 120 second timeout
 
