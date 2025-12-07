@@ -6,6 +6,8 @@ export default defineConfig({
     exclude: ['tests/test_cross_language_py_to_ts.ts'], // Called by Python, not run directly
     globals: true,
     fileParallelism: false, // Run tests sequentially to avoid conflicts
+    testTimeout: 60000, // 60 seconds for long-running agent tests
+    hookTimeout: 60000,
   },
 });
 

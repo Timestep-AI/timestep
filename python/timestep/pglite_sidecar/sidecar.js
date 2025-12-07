@@ -9,8 +9,15 @@
 
 // Try to load PGlite from various locations
 let PGlite;
+let PGLiteSocketServer;
 try {
   PGlite = require('@electric-sql/pglite').PGlite;
+  try {
+    PGLiteSocketServer = require('@electric-sql/pglite-socket').PGLiteSocketServer;
+  } catch (e) {
+    // Socket server is optional - only needed for DBOS
+    PGLiteSocketServer = null;
+  }
 } catch (e) {
   // Try to find it in common locations
   const path = require('path');
@@ -28,6 +35,15 @@ try {
       try {
         PGlite = require(pglitePath).PGlite;
         found = true;
+        // Try to load socket server from same location
+        try {
+          const socketPath = path.join(path.dirname(pglitePath), 'pglite-socket');
+          if (fs.existsSync(path.join(socketPath, 'package.json'))) {
+            PGLiteSocketServer = require(socketPath).PGLiteSocketServer;
+          }
+        } catch (e2) {
+          PGLiteSocketServer = null;
+        }
         break;
       } catch (e2) {
         // Continue trying
@@ -62,6 +78,7 @@ if (!pglitePath) {
 }
 
 let db = null;
+let socketServer = null;
 let isReady = false;
 const initPromise = (async () => {
   try {
@@ -112,6 +129,13 @@ process.stdin.on('data', async (chunk) => {
 });
 
 process.stdin.on('end', async () => {
+  if (socketServer) {
+    try {
+      await socketServer.stop();
+    } catch (error) {
+      // Ignore close errors
+    }
+  }
   if (db) {
     try {
       await db.close();
@@ -124,6 +148,13 @@ process.stdin.on('end', async () => {
 
 // Handle shutdown signals
 process.on('SIGINT', async () => {
+  if (socketServer) {
+    try {
+      await socketServer.stop();
+    } catch (error) {
+      // Ignore close errors
+    }
+  }
   if (db) {
     try {
       await db.close();
@@ -135,6 +166,13 @@ process.on('SIGINT', async () => {
 });
 
 process.on('SIGTERM', async () => {
+  if (socketServer) {
+    try {
+      await socketServer.stop();
+    } catch (error) {
+      // Ignore close errors
+    }
+  }
   if (db) {
     try {
       await db.close();
@@ -203,6 +241,61 @@ async function handleRequest(request) {
         
       case 'ping':
         sendResponse(id, { pong: true, ready: isReady });
+        break;
+        
+      case 'start_socket_server':
+        if (!PGLiteSocketServer) {
+          sendError(id, -32603, 'Not available', '@electric-sql/pglite-socket is not installed. Install it with: npm install -g @electric-sql/pglite-socket');
+          return;
+        }
+        if (socketServer) {
+          sendResponse(id, { 
+            started: true, 
+            port: socketServer.server?.address()?.port || params?.port || 5432,
+            path: socketServer.server?.path || null
+          });
+          return;
+        }
+        try {
+          const port = params?.port || 0; // 0 = auto-assign
+          const host = params?.host || '127.0.0.1';
+          const socketPath = params?.path || null;
+          
+          socketServer = new PGLiteSocketServer({
+            db: db,
+            ...(socketPath ? { path: socketPath } : { port: port, host: host }),
+          });
+          
+          await socketServer.start();
+          
+          const actualPort = socketServer.server?.address()?.port || port;
+          const actualPath = socketServer.server?.path || socketPath;
+          
+          sendResponse(id, { 
+            started: true, 
+            port: actualPort,
+            path: actualPath,
+            connectionString: socketPath 
+              ? `postgresql://postgres:postgres@/postgres?host=${require('path').dirname(actualPath)}&sslmode=disable`
+              : `postgresql://postgres:postgres@${host}:${actualPort}/postgres?sslmode=disable`
+          });
+        } catch (error) {
+          sendError(id, -32000, 'Socket server error', error.message);
+        }
+        break;
+        
+      case 'stop_socket_server':
+        if (socketServer) {
+          try {
+            await socketServer.stop();
+            socketServer = null;
+            sendResponse(id, { stopped: true });
+          } catch (error) {
+            sendError(id, -32000, 'Socket server error', error.message);
+          }
+        } else {
+          sendResponse(id, { stopped: true, wasRunning: false });
+        }
         break;
         
       default:

@@ -103,7 +103,7 @@ async def run_agent_workflow(
         The result from run_agent
     """
     # Ensure DBOS is configured and launched
-    ensure_dbos_launched()
+    await ensure_dbos_launched()
     
     # Set workflow ID if provided
     if workflow_id:
@@ -209,7 +209,7 @@ def queue_agent_workflow(
     Returns:
         WorkflowHandle that can be used to get the result via handle.get_result()
     """
-    ensure_dbos_launched()
+    await ensure_dbos_launched()
     
     # Get queue
     if queue_name:
@@ -283,7 +283,7 @@ def create_scheduled_agent_workflow(
         state_store: Optional RunStateStore instance
         session_id: Optional session ID for state persistence
     """
-    ensure_dbos_launched()
+    await ensure_dbos_launched()
     
     @DBOS.scheduled(crontab)
     @DBOS.workflow()

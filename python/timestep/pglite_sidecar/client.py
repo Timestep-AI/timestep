@@ -363,4 +363,33 @@ class PGliteSidecarClient:
     async def close(self) -> None:
         """Close the sidecar (alias for stop)."""
         await self.stop()
+    
+    async def start_socket_server(self, port: int = 0, host: str = "127.0.0.1", path: str | None = None) -> dict:
+        """
+        Start a PGLite socket server for PostgreSQL connections (e.g., for DBOS).
+        
+        Args:
+            port: TCP port (0 = auto-assign). Ignored if path is provided.
+            host: TCP host. Ignored if path is provided.
+            path: Unix socket path (takes precedence over host:port).
+        
+        Returns:
+            Dictionary with 'started', 'port', 'path', and 'connectionString' keys.
+        """
+        result = await self._send_request("start_socket_server", {
+            "port": port,
+            "host": host,
+            "path": path
+        })
+        return result
+    
+    async def stop_socket_server(self) -> dict:
+        """
+        Stop the PGLite socket server.
+        
+        Returns:
+            Dictionary with 'stopped' key.
+        """
+        result = await self._send_request("stop_socket_server", {})
+        return result
 

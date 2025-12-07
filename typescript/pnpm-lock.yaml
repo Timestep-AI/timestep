@@ -14,6 +14,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.3.14
         version: 0.3.14
+      '@electric-sql/pglite-socket':
+        specifier: ^0.0.7
+        version: 0.0.7(@electric-sql/pglite@0.3.14)
       '@mendable/firecrawl-js':
         specifier: ^1.0.0
         version: 1.29.3
@@ -64,6 +67,12 @@ packages:
     resolution: {integrity: sha512-8HHTMn3pO0QP5XAGvgYHrL33VW3ZyahU5+6Vs6LYzExRZN9sBVsgEBYVuvMaXXEd2TcZKStw7CnF9IK0HnZpIA==}
     engines: {node: '>=20'}
     hasBin: true
+
+  '@electric-sql/pglite-socket@0.0.7':
+    resolution: {integrity: sha512-tQVVivHYTICEaR5lxDoIdKxdmsHwvU+j051Q/CPi4tPkN9AgnaQvJ0wkoG4Q/6nx9K2EhEhJi28iNHsrD97mDg==}
+    hasBin: true
+    peerDependencies:
+      '@electric-sql/pglite': 0.3.2
 
   '@electric-sql/pglite@0.3.14':
     resolution: {integrity: sha512-3DB258dhqdsArOI1fIt7cb9RpUOgcDg5hXWVgVHAeqVQ/qxtFy605QKs4gx6mFq3jWsSPqDN8TgSEsqC3OfV9Q==}
@@ -1349,6 +1358,10 @@ snapshots:
       - bufferutil
       - pg-native
       - utf-8-validate
+
+  '@electric-sql/pglite-socket@0.0.7(@electric-sql/pglite@0.3.14)':
+    dependencies:
+      '@electric-sql/pglite': 0.3.14
 
   '@electric-sql/pglite@0.3.14': {}
 
