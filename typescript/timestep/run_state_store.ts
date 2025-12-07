@@ -17,8 +17,11 @@ export class RunStateStore {
 
   private agent: Agent;
   private sessionId?: string;
-  private db: DatabaseConnection;
+  private db: DatabaseConnection | null = null;
   private connected: boolean = false;
+  private _connectionString?: string;
+  private _pglitePath?: string;
+  private _usePglite?: boolean;
 
   constructor(options: RunStateStoreOptions) {
     if (!options.agent) {
@@ -28,31 +31,44 @@ export class RunStateStore {
     this.agent = options.agent;
     this.sessionId = options.sessionId;
     
+    // Store options for lazy initialization
+    this._connectionString = options.connectionString;
+    this._pglitePath = options.pglitePath;
+    this._usePglite = options.usePglite;
+    this.db = null as any; // Will be initialized in ensureConnected
+  }
+
+  private async _initializeDatabase(): Promise<void> {
+    if (this.db) {
+      return; // Already initialized
+    }
+
     // Get connection string from DBOS if not explicitly provided
-    let connectionString = options.connectionString;
+    let connectionString = this._connectionString;
     if (!connectionString) {
       const { getDBOSConnectionString } = await import('./dbos_config.ts');
       connectionString = getDBOSConnectionString();
     }
     
-    // Use session ID in PGLite path to avoid concurrent access issues
-    // Each session gets its own database file
-    // This must match Python's get_pglite_dir() implementation exactly
-    let pglitePath = options.pglitePath;
-    if (!pglitePath && !connectionString && (options.usePglite !== false)) {
-      const sessionId = options.sessionId || 'default';
-      pglitePath = getPgliteDir({ sessionId });
+    // Configure database connection explicitly
+    if (connectionString) {
+      // Use PostgreSQL connection string
+      this.db = new DatabaseConnection({ connectionString });
+    } else {
+      // Use PGLite - ensure path is set
+      let pglitePath = this._pglitePath;
+      if (!pglitePath) {
+        const sessionId = this.sessionId || 'default';
+        pglitePath = getPgliteDir({ sessionId });
+      }
+      this.db = new DatabaseConnection({ usePglite: true, pglitePath });
     }
-    
-    // Default to PGLite if no connection string provided
-    this.db = new DatabaseConnection({
-      connectionString: connectionString,
-      usePglite: options.usePglite,  // undefined means auto-detect (defaults to PGLite)
-      pglitePath: pglitePath,
-    });
   }
 
   private async ensureConnected(): Promise<void> {
+    if (!this.db) {
+      await this._initializeDatabase();
+    }
     if (!this.connected) {
       const connected = await this.db.connect();
       if (!connected) {

@@ -22,23 +22,25 @@ export class DatabaseConnection {
   private pglitePath: string;
 
   constructor(options: DatabaseConnectionOptions = {}) {
-    // Use process.env for Node.js compatibility (works in both Node.js and Deno)
-    const env = typeof process !== 'undefined' ? process.env : (typeof Deno !== 'undefined' ? Deno.env.toObject() : {});
-    this.connectionString =
-      options.connectionString || env['PG_CONNECTION_URI'];
-    // Default to PGLite if no connection string provided
-    // Only use PostgreSQL if explicitly provided via connection string
-    this.usePglite =
-      options.usePglite !== undefined
-        ? options.usePglite
-        : !this.connectionString;
-    // Use app directory for PGLite storage if path not explicitly provided
-    if (options.pglitePath) {
+    if (options.connectionString) {
+      // PostgreSQL mode
+      this.connectionString = options.connectionString;
+      this.usePglite = false;
+      this.pglitePath = '';
+    } else if (options.usePglite) {
+      // PGLite mode - path is required
+      if (!options.pglitePath) {
+        throw new Error('pglitePath is required when usePglite=true');
+      }
+      this.connectionString = undefined;
+      this.usePglite = true;
       this.pglitePath = options.pglitePath;
     } else {
-      // Default to app directory (matching Click/Typer conventions)
-      // This must match Python's get_app_dir() implementation exactly
-      this.pglitePath = this._getDefaultPglitePath();
+      // No configuration provided
+      throw new Error(
+        'Either connectionString must be provided for PostgreSQL, ' +
+        'or usePglite=true with pglitePath for PGLite'
+      );
     }
   }
 
@@ -50,12 +52,7 @@ export class DatabaseConnection {
   async connect(): Promise<boolean> {
     /**
      * Connect to database.
-     * 
-     * Connection logic:
-     * - If PG_CONNECTION_URI is set → use PostgreSQL
-     * - Otherwise → use PGLite (default)
      */
-    // If connection string is explicitly provided, use PostgreSQL
     if (this.connectionString && !this.usePglite) {
       try {
         return await this.connectPostgreSQL();
@@ -64,12 +61,15 @@ export class DatabaseConnection {
       }
     }
 
-    // Default to PGLite
-    try {
-      return await this.connectPglite();
-    } catch (e) {
-      throw new Error(`Failed to connect to PGLite: ${e}`);
+    if (this.usePglite) {
+      try {
+        return await this.connectPglite();
+      } catch (e) {
+        throw new Error(`Failed to connect to PGLite: ${e}`);
+      }
     }
+
+    throw new Error('No connection configuration provided');
   }
 
   private async connectPostgreSQL(): Promise<boolean> {

@@ -29,20 +29,27 @@ class DatabaseConnection:
         
         Args:
             connection_string: PostgreSQL connection string (e.g., postgresql://user:pass@host/db)
-            use_pglite: Whether to use PGLite (defaults to True if no connection string)
-            pglite_path: Path for PGLite data directory
+            use_pglite: Whether to use PGLite (required if connection_string is None)
+            pglite_path: Path for PGLite data directory (required if use_pglite is True)
         """
-        self.connection_string = connection_string or os.environ.get("PG_CONNECTION_URI")
-        # Default to PGLite if no connection string provided
-        if use_pglite is None:
-            use_pglite = not self.connection_string
-        self.use_pglite = use_pglite
-        # Use app directory for PGLite storage if path not explicitly provided
-        if pglite_path:
+        if connection_string:
+            # PostgreSQL mode
+            self.connection_string = connection_string
+            self.use_pglite = False
+            self.pglite_path = None
+        elif use_pglite:
+            # PGLite mode - path is required
+            if not pglite_path:
+                raise ValueError("pglite_path is required when use_pglite=True")
+            self.connection_string = None
+            self.use_pglite = True
             self.pglite_path = pglite_path
         else:
-            # Default to app directory
-            self.pglite_path = str(get_pglite_dir())
+            # No configuration provided
+            raise ValueError(
+                "Either connection_string must be provided for PostgreSQL, "
+                "or use_pglite=True with pglite_path for PGLite"
+            )
         self._connection: Optional[Any] = None
         self._db_type: DatabaseType = DatabaseType.NONE
         self._pglite_sidecar: Optional[PGliteSidecarClient] = None
@@ -52,25 +59,22 @@ class DatabaseConnection:
         """
         Connect to database. Returns True if successful, False otherwise.
         
-        Connection logic:
-        - If PG_CONNECTION_URI is set → use PostgreSQL
-        - Otherwise → use PGLite (default)
-        
         Returns:
             True if connection successful, False otherwise
         """
-        # If connection string is explicitly provided, use PostgreSQL
         if self.connection_string and not self.use_pglite:
             try:
                 return await self._connect_postgresql()
             except Exception as e:
                 raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
         
-        # Default to PGLite (with sidecar for performance)
-        try:
-            return await self._connect_pglite()
-        except Exception as e:
-            raise ConnectionError(f"Failed to connect to PGLite: {e}")
+        if self.use_pglite:
+            try:
+                return await self._connect_pglite()
+            except Exception as e:
+                raise ConnectionError(f"Failed to connect to PGLite: {e}")
+        
+        raise ValueError("No connection configuration provided")
     
     async def _connect_postgresql(self) -> bool:
         """Connect to PostgreSQL database."""

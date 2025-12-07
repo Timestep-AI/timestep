@@ -47,13 +47,17 @@ class RunStateStore:
             from .dbos_config import get_dbos_connection_string
             connection_string = get_dbos_connection_string()
         
-        # Use the same connection logic as DBOS
-        # If no connection string, will use PGLite via sidecar (same as before)
-        self.db = DatabaseConnection(
-            connection_string=connection_string,
-            use_pglite=use_pglite,  # None means auto-detect (defaults to PGLite)
-            pglite_path=pglite_path
-        )
+        # Configure database connection explicitly
+        if connection_string:
+            # Use PostgreSQL connection string
+            self.db = DatabaseConnection(connection_string=connection_string)
+        else:
+            # Use PGLite - ensure path is set
+            if not pglite_path:
+                from .app_dir import get_pglite_dir
+                session_id_for_path = session_id or 'default'
+                pglite_path = str(get_pglite_dir(session_id_for_path))
+            self.db = DatabaseConnection(use_pglite=True, pglite_path=pglite_path)
         self._connected = False
     
     async def _ensure_connected(self) -> None:
