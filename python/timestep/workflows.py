@@ -172,7 +172,7 @@ async def _execute_agent_with_state_handling(
     return result
 
 
-def queue_agent_workflow(
+async def queue_agent_workflow(
     agent: Agent,
     input_items: list[TResponseInputItem] | RunState,
     session: SessionABC,
@@ -249,7 +249,7 @@ def queue_agent_workflow(
     return handle
 
 
-def create_scheduled_agent_workflow(
+async def create_scheduled_agent_workflow(
     crontab: str,
     agent: Agent,
     input_items: list[TResponseInputItem] | RunState,

@@ -72,10 +72,32 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     
     await pgliteServer.start();
     
+    // Wait a moment for the server to be fully ready
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     // Get the actual port that was assigned
     const actualPort = (pgliteServer as any).server?.address()?.port;
     if (!actualPort) {
       throw new Error('Failed to get port from PGLite socket server');
+    }
+    
+    // Test the connection before using it
+    try {
+      const pg = await import('pg');
+      const { Client } = pg;
+      const testClient = new Client({
+        host: '127.0.0.1',
+        port: actualPort,
+        user: 'postgres',
+        password: 'postgres',
+        database: 'postgres',
+        ssl: false,
+      });
+      await testClient.connect();
+      await testClient.query('SELECT 1');
+      await testClient.end();
+    } catch (e: any) {
+      throw new Error(`PGLite socket server connection test failed: ${e.message}`);
     }
     
     // Construct PostgreSQL connection string pointing to the socket server

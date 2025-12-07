@@ -72,7 +72,7 @@ result = await run_agent_workflow(
 ```python
 from timestep import queue_agent_workflow
 
-handle = queue_agent_workflow(
+handle = await queue_agent_workflow(
     agent=agent,
     input_items=input_items,
     session=session,
@@ -88,7 +88,7 @@ result = await handle.get_result()
 ```python
 from timestep import create_scheduled_agent_workflow
 
-create_scheduled_agent_workflow(
+await create_scheduled_agent_workflow(
     crontab="0 */6 * * *",  # Every 6 hours
     agent=agent,
     input_items=input_items,

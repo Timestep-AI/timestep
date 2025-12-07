@@ -84,7 +84,7 @@ async def test_queue_agent_workflow(setup_dbos):
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Say 'queued' and nothing else."}]}
     ]
     
-    handle = queue_agent_workflow(
+    handle = await queue_agent_workflow(
         agent=agent,
         input_items=input_items,
         session=session,
@@ -115,7 +115,7 @@ async def test_create_scheduled_workflow(setup_dbos):
     ]
     
     # This should not raise an error
-    create_scheduled_agent_workflow(
+    await create_scheduled_agent_workflow(
         crontab="0 * * * *",  # Every hour
         agent=agent,
         input_items=input_items,

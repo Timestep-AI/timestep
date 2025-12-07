@@ -71,7 +71,7 @@ async def example_queued_workflow():
     ]
     
     # Enqueue workflow (returns handle immediately)
-    handle = queue_agent_workflow(
+    handle = await queue_agent_workflow(
         agent=agent,
         input_items=input_items,
         session=session,
@@ -106,7 +106,7 @@ async def example_scheduled_workflow():
     
     # Create scheduled workflow (runs every 5 minutes)
     # Note: In production, you'd typically run this in a long-lived process
-    create_scheduled_agent_workflow(
+    await create_scheduled_agent_workflow(
         crontab="*/5 * * * *",  # Every 5 minutes
         agent=agent,
         input_items=input_items,
