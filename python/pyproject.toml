@@ -7,7 +7,7 @@ allow-direct-references = true
 
 [project]
 name = "timestep"
-version = "2026.0.21"
+version = "2026.0.22"
 description = "Multi-model provider implementations for OpenAI Agents, supporting both OpenAI and Ollama models"
 readme = "README.md"
 license = { text = "MIT" }
