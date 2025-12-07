@@ -23,14 +23,18 @@ class RunStateStore:
         pglite_path: Optional[str] = None
     ):
         """
-        Initialize RunStateStore with PGLite by default.
+        Initialize RunStateStore using DBOS's database connection if available.
+        
+        RunStateStore will use the same database as DBOS:
+        - If PG_CONNECTION_URI is set, both use that PostgreSQL database
+        - Otherwise, both use the same PGLite instance (via DBOS's socket server)
         
         Args:
             agent: Agent instance (required)
             session_id: Session ID to use as identifier (required, will be generated if not provided)
-            connection_string: PostgreSQL connection string (optional, uses PGLite if not provided)
-            use_pglite: Whether to use PGLite (defaults to True if no connection_string)
-            pglite_path: Path for PGLite data directory (defaults to app directory)
+            connection_string: PostgreSQL connection string (optional, uses DBOS's connection if not provided)
+            use_pglite: Deprecated - kept for backwards compatibility but ignored
+            pglite_path: Deprecated - kept for backwards compatibility but ignored
         """
         if agent is None:
             raise ValueError("agent is required")
@@ -38,14 +42,13 @@ class RunStateStore:
         self.agent = agent
         self.session_id = session_id
         
-        # Use session ID in PGLite path to avoid concurrent access issues
-        # Each session gets its own database file
-        if not pglite_path and not connection_string and (use_pglite is not False):
-            from .app_dir import get_pglite_dir
-            session_id_for_path = session_id or 'default'
-            pglite_path = str(get_pglite_dir(session_id_for_path))
+        # Get connection string from DBOS if not explicitly provided
+        if not connection_string:
+            from .dbos_config import get_dbos_connection_string
+            connection_string = get_dbos_connection_string()
         
-        # Default to PGLite if no connection string provided
+        # Use the same connection logic as DBOS
+        # If no connection string, will use PGLite via sidecar (same as before)
         self.db = DatabaseConnection(
             connection_string=connection_string,
             use_pglite=use_pglite,  # None means auto-detect (defaults to PGLite)

@@ -4,10 +4,68 @@ import { DBOS } from '@dbos-inc/dbos-sdk';
 import { getPgliteDir } from './app_dir.ts';
 import * as path from 'path';
 
-let dbosConfigured = false;
-let dbosLaunched = false;
-let pgliteServer: any = null;
-let pgliteDb: any = null;
+class DBOSContext {
+  private config: { name: string; systemDatabaseUrl: string } | null = null;
+  private configured = false;
+  private launched = false;
+  private pgliteServer: any = null;
+  private pgliteDb: any = null;
+
+  getConnectionString(): string | undefined {
+    if (this.config) {
+      return this.config.systemDatabaseUrl;
+    }
+    return undefined;
+  }
+
+  get isConfigured(): boolean {
+    return this.configured;
+  }
+
+  get isLaunched(): boolean {
+    return this.launched;
+  }
+
+  setConfig(config: { name: string; systemDatabaseUrl: string }): void {
+    this.config = config;
+  }
+
+  setConfigured(value: boolean): void {
+    this.configured = value;
+  }
+
+  setLaunched(value: boolean): void {
+    this.launched = value;
+  }
+
+  getPgliteServer(): any {
+    return this.pgliteServer;
+  }
+
+  setPgliteServer(server: any): void {
+    this.pgliteServer = server;
+  }
+
+  getPgliteDb(): any {
+    return this.pgliteDb;
+  }
+
+  setPgliteDb(db: any): void {
+    this.pgliteDb = db;
+  }
+}
+
+// Singleton instance
+const dbosContext = new DBOSContext();
+
+/**
+ * Get the DBOS connection string if configured.
+ * 
+ * @returns Connection string or undefined if not configured
+ */
+export function getDBOSConnectionString(): string | undefined {
+  return dbosContext.getConnectionString();
+}
 
 export interface ConfigureDBOSOptions {
   /** Application name for DBOS (default: "timestep") */
@@ -54,34 +112,43 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     const { uuid_ossp } = await import('@electric-sql/pglite/contrib/uuid_ossp');
     
     // Create PGLite instance with uuid-ossp extension (required by DBOS)
-    pgliteDb = new PGlite(dbPath, { 
+    const pgliteDb = new PGlite(dbPath, { 
       dataDir: dbPath,
       extensions: { uuid_ossp }
     });
     await pgliteDb.waitReady;
+    dbosContext.setPgliteDb(pgliteDb);
     
     // Use TCP connection for simplicity and compatibility
     // Port 0 means let the OS assign an available port
     const port = 0;
     
-    pgliteServer = new PGLiteSocketServer({
+    const pgliteServer = new PGLiteSocketServer({
       db: pgliteDb,
       port: port,
       host: '127.0.0.1',
     });
     
     await pgliteServer.start();
+    dbosContext.setPgliteServer(pgliteServer);
     
-    // Wait a moment for the server to be fully ready
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for server to initialize (PGLite socket server needs a moment)
+    await new Promise(resolve => setTimeout(resolve, 200));
     
     // Get the actual port that was assigned
-    const actualPort = (pgliteServer as any).server?.address()?.port;
+    const server = (dbosContext.getPgliteServer() as any).server;
+    if (!server) {
+      throw new Error('Server object not found after start()');
+    }
+    
+    const actualPort = server.address()?.port;
     if (!actualPort) {
       throw new Error('Failed to get port from PGLite socket server');
     }
     
     // Test the connection before using it
+    // Note: PGLite socket server only supports one connection at a time,
+    // so we test and immediately close to ensure DBOS can connect
     try {
       const pg = await import('pg');
       const { Client } = pg;
@@ -92,10 +159,13 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
         password: 'postgres',
         database: 'postgres',
         ssl: false,
+        connectionTimeoutMillis: 10000,
       });
       await testClient.connect();
       await testClient.query('SELECT 1');
       await testClient.end();
+      // Wait for connection to fully close before DBOS connects
+      await new Promise(resolve => setTimeout(resolve, 100));
     } catch (e: any) {
       throw new Error(`PGLite socket server connection test failed: ${e.message}`);
     }
@@ -105,12 +175,13 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
   }
   
   // DBOS will use the same database but different schema (dbos schema)
-  DBOS.setConfig({
+  const config = {
     name,
     systemDatabaseUrl: dbUrl,
-  });
-  
-  dbosConfigured = true;
+  };
+  DBOS.setConfig(config);
+  dbosContext.setConfig(config);
+  dbosContext.setConfigured(true);
 }
 
 /**
@@ -119,13 +190,20 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
  * This should be called before using any DBOS workflows.
  */
 export async function ensureDBOSLaunched(): Promise<void> {
-  if (!dbosConfigured) {
+  if (!dbosContext.isConfigured) {
     await configureDBOS();
   }
   
-  if (!dbosLaunched) {
-    await DBOS.launch();
-    dbosLaunched = true;
+  if (!dbosContext.isLaunched) {
+    console.log('Calling DBOS.launch()...');
+    try {
+      await DBOS.launch();
+      console.log('DBOS.launch() completed');
+      dbosContext.setLaunched(true);
+    } catch (error: any) {
+      console.error('DBOS.launch() failed:', error);
+      throw error;
+    }
   }
 }
 
@@ -134,15 +212,17 @@ export async function ensureDBOSLaunched(): Promise<void> {
  * Call this when shutting down the application.
  */
 export async function cleanupDBOS(): Promise<void> {
+  const pgliteServer = dbosContext.getPgliteServer();
   if (pgliteServer) {
     await pgliteServer.stop();
-    pgliteServer = null;
+    dbosContext.setPgliteServer(null);
   }
+  const pgliteDb = dbosContext.getPgliteDb();
   if (pgliteDb) {
     await pgliteDb.close();
-    pgliteDb = null;
+    dbosContext.setPgliteDb(null);
   }
-  dbosConfigured = false;
-  dbosLaunched = false;
+  dbosContext.setConfigured(false);
+  dbosContext.setLaunched(false);
 }
 

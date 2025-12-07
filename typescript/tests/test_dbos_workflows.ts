@@ -18,10 +18,18 @@ import type { AgentInputItem } from '@openai/agents-core';
 let dbosAvailable = false;
 
 beforeAll(async () => {
-  await configureDBOS({ name: 'timestep-test' });
-  await ensureDBOSLaunched();
-  dbosAvailable = true;
-});
+  try {
+    console.log('Configuring DBOS...');
+    await configureDBOS({ name: 'timestep-test' });
+    console.log('DBOS configured, launching...');
+    await ensureDBOSLaunched();
+    console.log('DBOS launched successfully');
+    dbosAvailable = true;
+  } catch (error: any) {
+    console.error('DBOS setup failed:', error);
+    throw error;
+  }
+}, 120000); // 120 second timeout
 
 test('test_configure_dbos', () => {
   if (!dbosAvailable) {

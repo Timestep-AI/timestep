@@ -28,18 +28,25 @@ export class RunStateStore {
     this.agent = options.agent;
     this.sessionId = options.sessionId;
     
+    // Get connection string from DBOS if not explicitly provided
+    let connectionString = options.connectionString;
+    if (!connectionString) {
+      const { getDBOSConnectionString } = await import('./dbos_config.ts');
+      connectionString = getDBOSConnectionString();
+    }
+    
     // Use session ID in PGLite path to avoid concurrent access issues
     // Each session gets its own database file
     // This must match Python's get_pglite_dir() implementation exactly
     let pglitePath = options.pglitePath;
-    if (!pglitePath && !options.connectionString && (options.usePglite !== false)) {
+    if (!pglitePath && !connectionString && (options.usePglite !== false)) {
       const sessionId = options.sessionId || 'default';
       pglitePath = getPgliteDir({ sessionId });
     }
     
     // Default to PGLite if no connection string provided
     this.db = new DatabaseConnection({
-      connectionString: options.connectionString,
+      connectionString: connectionString,
       usePglite: options.usePglite,  // undefined means auto-detect (defaults to PGLite)
       pglitePath: pglitePath,
     });

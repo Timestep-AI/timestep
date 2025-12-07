@@ -4,7 +4,7 @@ export { MultiModelProvider, MultiModelProviderMap } from './multi_model_provide
 export { webSearch } from './tools.ts';
 export { RunStateStore } from './run_state_store.ts';
 export { runAgentWorkflow, queueAgentWorkflow, createScheduledAgentWorkflow } from './workflows.ts';
-export { configureDBOS, ensureDBOSLaunched } from './dbos_config.ts';
+export { configureDBOS, ensureDBOSLaunched, getDBOSConnectionString } from './dbos_config.ts';
 
 import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
