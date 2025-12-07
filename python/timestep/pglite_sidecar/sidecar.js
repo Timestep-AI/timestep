@@ -82,7 +82,20 @@ let socketServer = null;
 let isReady = false;
 const initPromise = (async () => {
   try {
-    db = new PGlite(pglitePath);
+    // Try to load uuid-ossp extension if available (needed for DBOS)
+    let uuidOssp = null;
+    try {
+      uuidOssp = require('@electric-sql/pglite/contrib/uuid_ossp').uuid_ossp;
+    } catch (e) {
+      // Extension not available, continue without it
+    }
+    
+    const extensions = {};
+    if (uuidOssp) {
+      extensions.uuid_ossp = uuidOssp;
+    }
+    
+    db = new PGlite(pglitePath, Object.keys(extensions).length > 0 ? { extensions } : {});
     await db.waitReady;
     isReady = true;
     

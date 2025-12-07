@@ -23,10 +23,11 @@ beforeAll(async () => {
     await ensureDBOSLaunched();
     dbosAvailable = true;
   } catch (error: any) {
-    // Fail the test suite if configuration fails
-    // Don't silently skip - configuration errors should be fixed
+    // Fail the test suite immediately if configuration fails
     console.error('DBOS configuration failed:', error);
-    throw error;
+    console.error('Failing test suite immediately due to configuration error');
+    // Force exit to stop all tests immediately
+    process.exit(1);
   }
 });
 

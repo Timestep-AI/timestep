@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.19",
+  "version": "2026.0.20",
   "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "tsup timestep/index.ts --format esm --dts --sourcemap --no-splitting --external openai --external ollama --external @mendable/firecrawl-js --external @electric-sql/pglite --external pg",
-    "test": "vitest run",
+    "test": "vitest run --bail",
     "test:watch": "vitest"
   },
   "keywords": [],

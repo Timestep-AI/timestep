@@ -51,9 +51,13 @@ export async function configureDBOS(options: ConfigureDBOSOptions = {}): Promise
     // Start PGLite socket server
     const { PGlite } = await import('@electric-sql/pglite');
     const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+    const { uuid_ossp } = await import('@electric-sql/pglite/contrib/uuid_ossp');
     
-    // Create PGLite instance
-    pgliteDb = new PGlite(dbPath, { dataDir: dbPath });
+    // Create PGLite instance with uuid-ossp extension (required by DBOS)
+    pgliteDb = new PGlite(dbPath, { 
+      dataDir: dbPath,
+      extensions: { uuid_ossp }
+    });
     await pgliteDb.waitReady;
     
     // Use TCP connection for simplicity and compatibility
