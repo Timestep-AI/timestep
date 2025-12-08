@@ -33,7 +33,7 @@ test-teardown:
 	@echo "Stopping test PostgreSQL database..."
 	docker compose -f docker-compose.test.yml down
 
-test: test-setup test-typescript test-python test-cross-language
+test: test-setup test-typescript test-python
 
 test-all: test
 
@@ -51,10 +51,3 @@ test-typescript:
 	pnpm install && \
 	pnpm test
 
-test-cross-language: test-cross-language-ts-to-py test-cross-language-py-to-ts
-
-test-cross-language-ts-to-py:
-	cd typescript && pnpm exec vitest run --bail=1 tests/test_cross_language_ts_to_py.ts
-
-test-cross-language-py-to-ts:
-	cd python && uv run pytest tests/test_cross_language_py_to_ts.py

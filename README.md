@@ -6,16 +6,14 @@ Durable OpenAI Agents with one API across Python and TypeScript. Pause and resum
 - **Durable runs**: Save and resume `RunState` without changing your agent code.
 - **DBOS workflows**: Run agents in durable workflows that automatically recover from crashes, with queuing and scheduling support.
 - **Cross-language parity**: Same API surface in Python and TypeScript; state stays compatible across languages.
-- **Single storage story**: Use `PG_CONNECTION_URI` for PostgreSQL, or default to PGLite.
+- **Single storage story**: Use `PG_CONNECTION_URI` for PostgreSQL.
 - **Model routing**: Prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
 - **Minimal concepts**: `run_agent` / `runAgent`, `RunStateStore`, `run_agent_workflow` / `runAgentWorkflow`.
 - **Organized architecture**: Clean separation of concerns with `core/`, `config/`, `stores/`, `tools/`, `model_providers/`, and `models/` modules.
 
 ## Prerequisites
 - `OPENAI_API_KEY`
-- **Python storage options**:
-  1. **PostgreSQL** (recommended): Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
-  2. **PGLite** (default): Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
+- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
 
 ## Quick start
 

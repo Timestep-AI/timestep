@@ -12,6 +12,21 @@ jobs:
     permissions:
       contents: read
     
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: timestep_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -67,6 +82,7 @@ jobs:
           uv run pytest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PG_CONNECTION_URI: postgresql://postgres:postgres@localhost:5432/timestep_test?sslmode=disable
       
       - name: Run TypeScript tests
         run: |
@@ -74,20 +90,7 @@ jobs:
           pnpm test
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      
-      - name: Run cross-language tests (TypeScript to Python)
-        run: |
-          cd typescript
-          pnpm test -- tests/test_cross_language_ts_to_py.ts
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      
-      - name: Run cross-language tests (Python to TypeScript)
-        run: |
-          cd python
-          uv run pytest tests/test_cross_language_py_to_ts.py
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PG_CONNECTION_URI: postgresql://postgres:postgres@localhost:5432/timestep_test?sslmode=disable
 
   publish-python:
     name: Publish Python Package to PyPI

@@ -34,7 +34,7 @@ Timestep's durable execution system enables resumable agent workflows with cross
 ┌─────────────────────────────────────────────────────────────┐
 │              State Storage                                  │
 │  - File-based (development)                                 │
-│  - DBOS/PGLite (production)                                │
+│  - PostgreSQL (production)                                │
 │  - PostgreSQL schema for durability                        │
 └──────────────────────┬──────────────────────────────────────┘
                        │
@@ -58,8 +58,7 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 
 ### Storage
 
-- **Default (dev-friendly):** PGLite in a shared app directory (`~/.config/timestep/pglite/` on Linux; platform equivalents elsewhere) via a high-performance sidecar process.
-- **Production/fast path:** Postgres via `PG_CONNECTION_URI` environment variable.
+- **PostgreSQL**: Use `PG_CONNECTION_URI` environment variable to connect to your PostgreSQL database.
 
 ## System Architecture
 
@@ -288,8 +287,7 @@ This structure provides clear separation of concerns and makes the codebase easi
 
 ## Performance Considerations
 
-- Postgres is the recommended production backend.
-- PGLite is great for local/dev; keep a long-lived process if using it from Python to avoid per-query Node startup.
+- PostgreSQL is the recommended backend for all environments.
 - Minimal overhead in routing; provider instances are cached.
 
 ## Security Considerations

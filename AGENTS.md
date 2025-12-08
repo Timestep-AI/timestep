@@ -42,7 +42,6 @@ This document provides guidance for AI coding agents working on the Timestep pro
 ### Database Setup
 
 For testing, you can use:
-- **PGLite** (default): Automatically managed, no setup required
 - **PostgreSQL**: Set `PG_CONNECTION_URI` environment variable
 - **Testcontainers**: Used in tests for isolated PostgreSQL instances
 

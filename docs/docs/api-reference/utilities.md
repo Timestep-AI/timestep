@@ -239,7 +239,7 @@ You can provide a custom result processor to `run_agent`/`runAgent` to handle re
 
 ## RunStateStore
 
-A utility class for persisting and loading agent run state to/from a database (PGLite by default, or PostgreSQL). Useful for saving and resuming agent conversations with cross-language compatibility.
+A utility class for persisting and loading agent run state to/from a PostgreSQL database. Useful for saving and resuming agent conversations with cross-language compatibility.
 
 ### Class Definition
 
@@ -251,9 +251,7 @@ A utility class for persisting and loading agent run state to/from a database (P
             self,
             agent: Agent,
             session_id: Optional[str] = None,
-            connection_string: Optional[str] = None,
-            use_pglite: Optional[bool] = None,
-            pglite_path: Optional[str] = None
+            connection_string: Optional[str] = None
         )
         async def save(self, state: Any) -> None
         async def load(self) -> Any
@@ -269,8 +267,6 @@ A utility class for persisting and loading agent run state to/from a database (P
         agent: Agent;
         sessionId?: string;
         connectionString?: string;
-        usePglite?: boolean;
-        pglitePath?: string;
       })
       async save(state: any): Promise<void>
       async load(): Promise<any>
@@ -288,9 +284,7 @@ A utility class for persisting and loading agent run state to/from a database (P
         self,
         agent: Agent,
         session_id: Optional[str] = None,
-        connection_string: Optional[str] = None,
-        use_pglite: Optional[bool] = None,
-        pglite_path: Optional[str] = None
+        connection_string: Optional[str] = None
     )
     ```
 
@@ -301,8 +295,6 @@ A utility class for persisting and loading agent run state to/from a database (P
       agent: Agent;
       sessionId?: string;
       connectionString?: string;
-      usePglite?: boolean;
-      pglitePath?: string;
     })
     ```
 
@@ -312,9 +304,7 @@ A utility class for persisting and loading agent run state to/from a database (P
 |-----------|------|-------------|
 | `agent` | `Agent` | The agent instance. Required for loading state. |
 | `session_id` / `sessionId` | `string \| undefined` | Session ID to use as identifier. If not provided, will be generated automatically. |
-| `connection_string` / `connectionString` | `string \| undefined` | PostgreSQL connection string. If not provided, uses PGLite (default). |
-| `use_pglite` / `usePglite` | `boolean \| undefined` | Whether to use PGLite. Defaults to `True` if no connection string is provided. |
-| `pglite_path` / `pglitePath` | `string \| undefined` | Path for PGLite data directory. Defaults to platform-specific app directory. |
+| `connection_string` / `connectionString` | `string \| undefined` | PostgreSQL connection string. If not provided, uses DBOS's connection string if configured, otherwise requires `PG_CONNECTION_URI` environment variable. |
 
 ### Methods
 
@@ -615,7 +605,7 @@ Closes the database connection.
 
 ### Cross-Language State Transfer Example
 
-`RunStateStore` enables seamless state transfer between Python and TypeScript using a shared database (PGLite or PostgreSQL):
+`RunStateStore` enables seamless state transfer between Python and TypeScript using a shared PostgreSQL database:
 
 === "Python → TypeScript"
 

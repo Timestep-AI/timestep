@@ -5,9 +5,7 @@ This guide will help you get up and running with Timestep in both Python and Typ
 ## Prerequisites
 
 - `OPENAI_API_KEY`
-- **Python storage options** (in order of preference):
-  1. **PostgreSQL** (recommended): Set `PG_CONNECTION_URI=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
-  2. **PGLite**: Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process.
+- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
 
 ## Installation
 
@@ -95,7 +93,7 @@ The core feature of Timestep is durable execution with cross-language state pers
     # Create agent
     agent = Agent(model="gpt-4.1")
     session = Session()
-    # RunStateStore auto-detects local Postgres or falls back to PGLite (stored in ~/.config/timestep/pglite/)
+    # RunStateStore uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run agent
@@ -125,7 +123,7 @@ The core feature of Timestep is durable execution with cross-language state pers
     // Create agent
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    // RunStateStore uses PGLite by default (stored in ~/.config/timestep/pglite/)
+    // RunStateStore uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
     const stateStore = new RunStateStore({ 
       agent, 
       sessionId: await session.getSessionId() 
@@ -163,7 +161,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    # Uses PGLite in shared app directory (~/.config/timestep)
+    # Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run until interruption
@@ -184,7 +182,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    // Uses PGLite in shared app directory (~/.config/timestep)
+    // Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
     const stateStore = new RunStateStore({ 
       agent, 
       sessionId: await session.getSessionId() 
@@ -211,7 +209,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    // Uses PGLite in shared app directory (~/.config/timestep)
+    // Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
     const stateStore = new RunStateStore({ 
       agent, 
       sessionId: await session.getSessionId() 
@@ -235,7 +233,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    # Uses PGLite in shared app directory (~/.config/timestep)
+    # Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Load state saved from TypeScript
@@ -413,32 +411,21 @@ Here's a summary of the environment variables you might need:
     - **Ollama Cloud**: Set `OLLAMA_API_KEY` - no installation or local setup required, perfect for production
     - **Local Ollama**: Omit `OLLAMA_API_KEY` - requires local Ollama installation, great for development and offline use
 
-## Durable Execution with PGLite
+## Durable Execution with PostgreSQL
 
-Timestep uses **PGLite** (PostgreSQL in WebAssembly) as the default storage backend for durable execution:
+Timestep uses **PostgreSQL** for durable execution:
 
-- **PGLite by Default**: No setup required - works out of the box
-- **Cross-Platform App Directory**: State stored in platform-appropriate directories (shared between Python and TypeScript):
-  - Linux: `~/.config/timestep/pglite/`
-  - macOS: `~/Library/Application Support/timestep/pglite/`
-  - Windows: `%APPDATA%/timestep/pglite/`
-- **PostgreSQL Option**: Use full PostgreSQL by setting `PG_CONNECTION_URI` environment variable
+- **PostgreSQL Required**: Set `PG_CONNECTION_URI` environment variable to your PostgreSQL connection string
 - **State Persistence**: Agent run states are stored in the database
 - **Cross-Language Compatibility**: State format is identical between Python and TypeScript
 - **Resumable Workflows**: Load any saved state and continue execution
 
-### Python PGLite Setup
+### PostgreSQL Setup
 
-For Python, PGLite uses a high-performance sidecar process. You need:
-
-1. **Install Node.js**: Download from [nodejs.org](https://nodejs.org/)
-2. **Install PGLite**:
+1. **Install PostgreSQL**: Download from [postgresql.org](https://www.postgresql.org/download/) or use a managed service
+2. **Set Connection String**: 
    ```bash
-   npm install -g @electric-sql/pglite
-   ```
-   Or install locally in your project:
-   ```bash
-   npm install @electric-sql/pglite
+   export PG_CONNECTION_URI="postgresql://user:pass@host/db"
    ```
 
 The database schema supports:

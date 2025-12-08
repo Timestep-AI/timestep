@@ -9,9 +9,7 @@ pip install timestep
 
 ## Prerequisites (Python)
 - `OPENAI_API_KEY`
-- **Database storage**:
-  1. **PostgreSQL** (recommended): Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
-  2. **PGLite** (default): Install Node.js and `@electric-sql/pglite` (`npm install -g @electric-sql/pglite`). Uses a high-performance sidecar process for optimal performance.
+- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
 
 ## Quick start
 ```python
