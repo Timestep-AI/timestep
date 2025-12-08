@@ -1,6 +1,6 @@
 /** RunStateStore implementation using PostgreSQL. */
 
-import { DatabaseConnection } from './db_connection.ts';
+import { DatabaseConnection } from '../shared/db_connection.ts';
 import { Agent, RunState } from '@openai/agents';
 
 export interface RunStateStoreOptions {
@@ -39,10 +39,10 @@ export class RunStateStore {
     // Get connection string from DBOS if not explicitly provided
     let connectionString = this._connectionString;
     if (!connectionString) {
-      const { getDBOSConnectionString, configureDBOS } = await import('./dbos_config.ts');
+      const { getDBOSConnectionString, configureDBOS } = await import('../../config/dbos_config.ts');
       connectionString = getDBOSConnectionString();
       
-      // If DBOS isn't configured, configure it (will start Testcontainers if needed)
+      // If DBOS isn't configured, configure it (will use PG_CONNECTION_URI if available)
       if (!connectionString) {
         await configureDBOS();
         connectionString = getDBOSConnectionString();

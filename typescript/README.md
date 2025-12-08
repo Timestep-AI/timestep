@@ -101,5 +101,23 @@ createScheduledAgentWorkflow(
 );
 ```
 
+## Package Structure
+
+The TypeScript package is organized into clear modules:
+
+- **`core/`**: Core agent execution functions (`runAgent`, `defaultResultProcessor`)
+- **`core/agent_workflow.ts`**: DBOS workflows for durable agent execution
+- **`config/`**: Configuration utilities (`dbos_config`, `app_dir`)
+- **`stores/`**: Data access layer
+  - **`agent_store/`**: Agent configuration persistence
+  - **`session_store/`**: Session data persistence
+  - **`run_state_store/`**: Run state persistence
+  - **`shared/`**: Shared database utilities (`db_connection`, `schema`)
+  - **`guardrail_registry.ts`**: Guardrail registration
+  - **`tool_registry.ts`**: Tool registration
+- **`tools/`**: Agent tools (e.g., `webSearch`)
+- **`model_providers/`**: Model provider implementations (`OllamaModelProvider`, `MultiModelProvider`)
+- **`models/`**: Model implementations (`OllamaModel`)
+
 ## Documentation
 Full docs: https://timestep-ai.github.io/timestep/

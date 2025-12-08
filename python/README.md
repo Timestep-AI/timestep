@@ -96,5 +96,23 @@ await create_scheduled_agent_workflow(
 )
 ```
 
+## Package Structure
+
+The Python package is organized into clear modules:
+
+- **`core/`**: Core agent execution functions (`run_agent`, `default_result_processor`)
+- **`core/agent_workflow.py`**: DBOS workflows for durable agent execution
+- **`config/`**: Configuration utilities (`dbos_config`, `app_dir`)
+- **`stores/`**: Data access layer
+  - **`agent_store/`**: Agent configuration persistence
+  - **`session_store/`**: Session data persistence
+  - **`run_state_store/`**: Run state persistence
+  - **`shared/`**: Shared database utilities (`db_connection`, `schema`)
+  - **`guardrail_registry.py`**: Guardrail registration
+  - **`tool_registry.py`**: Tool registration
+- **`tools/`**: Agent tools (e.g., `web_search`)
+- **`model_providers/`**: Model provider implementations (`OllamaModelProvider`, `MultiModelProvider`)
+- **`models/`**: Model implementations (`OllamaModel`)
+
 ## Documentation
 Full docs: https://timestep-ai.github.io/timestep/

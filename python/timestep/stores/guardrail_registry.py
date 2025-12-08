@@ -1,7 +1,7 @@
 """Guardrail registry for mapping guardrail identifiers to Guardrail objects."""
 
 from typing import Dict, Optional
-from ._vendored_imports import InputGuardrail, OutputGuardrail
+from .._vendored_imports import InputGuardrail, OutputGuardrail
 
 
 # Global registry mapping guardrail identifiers to Guardrail objects

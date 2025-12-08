@@ -16,25 +16,65 @@ import {
   ModelSettings,
 } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
-import { saveAgent } from '../timestep/agent_store.ts';
-import { saveSession } from '../timestep/session_store.ts';
-import { DatabaseConnection } from '../timestep/db_connection.ts';
-import { getDBOSConnectionString } from '../timestep/dbos_config.ts';
+import { saveAgent } from '../timestep/stores/agent_store/store.ts';
+import { saveSession } from '../timestep/stores/session_store/store.ts';
 
 let dbosAvailable = false;
 
 beforeAll(async () => {
   try {
+    const { DBOS } = await import('@dbos-inc/dbos-sdk');
+    
+    // Step 1: Destroy DBOS (per DBOS testing best practices)
+    // Note: Don't destroy registry - workflows are registered via decorators at import time
+    try {
+      DBOS.destroy({ destroyRegistry: false });
+    } catch (error) {
+      // Ignore if DBOS doesn't exist yet
+    }
+    
+    // Step 2: Configure DBOS
     console.log('Configuring DBOS...');
     await configureDBOS({ name: 'timestep-test' });
-    console.log('DBOS configured (not launched yet - workflows will be registered first)');
+    console.log('DBOS configured');
     
-    // Register generic workflows before DBOS launch (required by DBOS)
-    console.log('Registering generic workflows...');
-    await registerGenericWorkflows();
-    console.log('Generic workflows registered');
+    // Step 3: Drop system database (per DBOS testing best practices)
+    // This ensures a clean state for migrations
+    // First, manually drop the dbos schema to ensure complete cleanup
+    // Then call dropSystemDB which should handle the rest
+    try {
+      const env = typeof process !== 'undefined' ? process.env : {};
+      const dbUrl = env['PG_CONNECTION_URI'];
+      if (dbUrl) {
+        console.log('Manually dropping dbos schema...');
+        const pg = await import('pg');
+        const { Pool } = pg;
+        const pool = new Pool({ connectionString: dbUrl });
+        try {
+          // Drop the dbos schema if it exists (CASCADE to drop all objects)
+          await pool.query('DROP SCHEMA IF EXISTS dbos CASCADE');
+          console.log('dbos schema dropped');
+        } catch (schemaError: any) {
+          // Ignore errors - schema might not exist or might be in use
+          console.log('Schema drop skipped:', schemaError.message);
+        } finally {
+          await pool.end();
+        }
+      }
+      
+      // Now call dropSystemDB to ensure complete cleanup
+      console.log('Dropping DBOS system database...');
+      await DBOS.dropSystemDB();
+      console.log('DBOS system database dropped');
+    } catch (error) {
+      // Ignore if drop fails (e.g., database in use or already clean)
+      console.log('System database drop skipped (may already be clean)');
+    }
     
-    // Launch DBOS after workflow registration
+    // Step 4: Launch DBOS (workflows are already registered via decorators)
+    // DBOS.launch() will automatically run migrations to ensure schema is up-to-date
+    // This allows Python and TypeScript to share the same database schema
+    // The migrations are idempotent and will create missing tables if needed
     console.log('Launching DBOS...');
     await ensureDBOSLaunched();
     console.log('DBOS launched');
@@ -78,22 +118,11 @@ test('test_run_agent_workflow_basic', async () => {
   });
   const session = new OpenAIConversationsSession();
   
-  // Save agent and session to database
-  const connectionString = getDBOSConnectionString();
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
-  }
-  
-  const db = new DatabaseConnection({ connectionString });
-  await db.connect();
+  // Save agent and session to database (stores manage connections internally)
   let agentId: string;
   let sessionId: string;
-  try {
-    agentId = await saveAgent(agent, db);
-    sessionId = await saveSession(session, db);
-  } finally {
-    await db.disconnect();
-  }
+  agentId = await saveAgent(agent);
+  sessionId = await saveSession(session);
   
   const inputItems: AgentInputItem[] = [
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: "Say 'hello' and nothing else." }] }
@@ -166,22 +195,11 @@ test('test_queue_agent_workflow', async () => {
   });
   const session = new OpenAIConversationsSession();
   
-  // Save agent and session to database
-  const connectionString = getDBOSConnectionString();
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
-  }
-  
-  const db = new DatabaseConnection({ connectionString });
-  await db.connect();
+  // Save agent and session to database (stores manage connections internally)
   let agentId: string;
   let sessionId: string;
-  try {
-    agentId = await saveAgent(agent, db);
-    sessionId = await saveSession(session, db);
-  } finally {
-    await db.disconnect();
-  }
+  agentId = await saveAgent(agent);
+  sessionId = await saveSession(session);
   
   const inputItems: AgentInputItem[] = [
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: "Say 'queued' and nothing else." }] }
@@ -300,22 +318,11 @@ test('test_create_scheduled_workflow', async () => {
   });
   const session = new OpenAIConversationsSession();
   
-  // Save agent and session to database
-  const connectionString = getDBOSConnectionString();
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
-  }
-  
-  const db = new DatabaseConnection({ connectionString });
-  await db.connect();
+  // Save agent and session to database (stores manage connections internally)
   let agentId: string;
   let sessionId: string;
-  try {
-    agentId = await saveAgent(agent, db);
-    sessionId = await saveSession(session, db);
-  } finally {
-    await db.disconnect();
-  }
+  agentId = await saveAgent(agent);
+  sessionId = await saveSession(session);
   
   const inputItems: AgentInputItem[] = [
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Hello' }] }

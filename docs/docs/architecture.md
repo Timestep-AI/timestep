@@ -245,12 +245,40 @@ The `OllamaModel` class converts Ollama API responses to OpenAI-compatible forma
 | `done` (streaming) | `choices[0].finish_reason` |
 | Function calls | Tool calls with `function` format |
 
+## Package Structure
+
+Timestep is organized into clear modules for maintainability and clarity:
+
+### Core Modules
+- **`core/`**: Core agent execution functions (`run_agent`/`runAgent`, `default_result_processor`/`defaultResultProcessor`)
+- **`core/agent_workflow.py`/`core/agent_workflow.ts`**: DBOS workflows for durable agent execution
+
+### Configuration
+- **`config/`**: Configuration utilities (`dbos_config`, `app_dir`)
+
+### Data Access Layer
+- **`stores/`**: Data access layer with organized subfolders
+  - **`agent_store/`**: Agent configuration persistence
+  - **`session_store/`**: Session data persistence
+  - **`run_state_store/`**: Run state persistence
+  - **`shared/`**: Shared database utilities (`db_connection`, `schema`)
+  - **`guardrail_registry.py`/`guardrail_registry.ts`**: Guardrail registration (in-memory, future: persistent)
+  - **`tool_registry.py`/`tool_registry.ts`**: Tool registration (in-memory, future: persistent)
+
+### Tools and Models
+- **`tools/`**: Agent tools (e.g., `web_search`/`webSearch`)
+- **`model_providers/`**: Model provider implementations (`OllamaModelProvider`, `MultiModelProvider`)
+- **`models/`**: Model implementations (`OllamaModel`)
+
+This structure provides clear separation of concerns and makes the codebase easier to navigate and maintain.
+
 ## Design Notes
 
 - Durable execution: pause/resume with a single `RunStateStore` call.
 - Cross-language: same state format; same APIs.
 - Prefix-based routing: model names stay self-documenting; defaults stay OpenAI.
 - Lazy initialization: providers are created only when needed; Ollama client comes up on first use.
+- Organized architecture: clear module separation for maintainability.
 
 ## Cross-Language Parity
 

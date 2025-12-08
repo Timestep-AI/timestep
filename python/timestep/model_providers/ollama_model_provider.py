@@ -1,6 +1,6 @@
 from typing import Optional, Any
-from ._vendored_imports import Model, ModelProvider
-from .ollama_model import OllamaModel
+from .._vendored_imports import Model, ModelProvider
+from ..models.ollama_model import OllamaModel
 
 
 class OllamaModelProvider(ModelProvider):

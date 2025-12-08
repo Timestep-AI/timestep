@@ -4,8 +4,8 @@ import json
 import uuid
 from typing import Optional, Any
 
-from .db_connection import DatabaseConnection
-from ._vendored_imports import Agent, RunState
+from ..shared.db_connection import DatabaseConnection
+from ..._vendored_imports import Agent, RunState
 
 
 class RunStateStore:
@@ -24,14 +24,14 @@ class RunStateStore:
         
         Note: If connection_string is not provided and DBOS is not configured,
         the connection will be initialized lazily when needed (which will configure DBOS
-        and start Testcontainers if necessary).
+        and use PG_CONNECTION_URI if available).
         """
         """
         Initialize RunStateStore using DBOS's database connection if available.
         
         RunStateStore will use the same database as DBOS:
         - If PG_CONNECTION_URI is set, both use that PostgreSQL database
-        - Otherwise, both use the same Testcontainers PostgreSQL instance
+        - Otherwise, both use the same PostgreSQL database (via PG_CONNECTION_URI)
         
         Args:
             agent: Agent instance (required)
@@ -52,10 +52,10 @@ class RunStateStore:
         connection_string = self._connection_string
         # Get connection string from DBOS if not explicitly provided
         if not connection_string:
-            from .dbos_config import get_dbos_connection_string, configure_dbos
+            from ...config.dbos_config import get_dbos_connection_string, configure_dbos
             connection_string = get_dbos_connection_string()
             
-            # If DBOS is not configured, auto-configure it (will start Testcontainers if needed)
+            # If DBOS is not configured, auto-configure it (will use PG_CONNECTION_URI if available)
             if not connection_string:
                 await configure_dbos()
                 connection_string = get_dbos_connection_string()

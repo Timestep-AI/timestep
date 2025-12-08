@@ -1,7 +1,7 @@
 """Tool registry for mapping tool identifiers to Tool objects."""
 
 from typing import Dict, Optional, Any
-from ._vendored_imports import Tool
+from .._vendored_imports import Tool
 
 
 # Global registry mapping tool identifiers to Tool objects

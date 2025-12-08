@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from ._vendored_imports import Model, ModelProvider, OpenAIProvider
+from .._vendored_imports import Model, ModelProvider, OpenAIProvider
 
 
 class MultiModelProviderMap:

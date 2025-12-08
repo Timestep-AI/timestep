@@ -3,12 +3,13 @@
 Durable OpenAI Agents with one API across Python and TypeScript. Pause and resume runs (even across languages), keep state in one place, and route models with simple prefixes.
 
 ## What Timestep gives you
-- Durable runs: save and resume `RunState` without changing your agent code.
+- **Durable runs**: Save and resume `RunState` without changing your agent code.
 - **DBOS workflows**: Run agents in durable workflows that automatically recover from crashes, with queuing and scheduling support.
-- Cross-language parity: same surface in Python and TypeScript; state stays compatible.
-- Single storage story: use `PG_CONNECTION_URI` for PostgreSQL, or default to PGLite.
-- Model routing without new APIs: prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
-- Minimal concepts: `run_agent` / `runAgent`, `RunStateStore`, `run_agent_workflow` / `runAgentWorkflow`.
+- **Cross-language parity**: Same API surface in Python and TypeScript; state stays compatible across languages.
+- **Single storage story**: Use `PG_CONNECTION_URI` for PostgreSQL, or default to PGLite.
+- **Model routing**: Prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
+- **Minimal concepts**: `run_agent` / `runAgent`, `RunStateStore`, `run_agent_workflow` / `runAgentWorkflow`.
+- **Organized architecture**: Clean separation of concerns with `core/`, `config/`, `stores/`, `tools/`, `model_providers/`, and `models/` modules.
 
 ## Prerequisites
 - `OPENAI_API_KEY`

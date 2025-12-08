@@ -2,7 +2,7 @@
 
 import os
 from typing import Any, Literal, Optional
-from ._vendored_imports import function_tool
+from .._vendored_imports import function_tool
 from firecrawl import Firecrawl
 
 

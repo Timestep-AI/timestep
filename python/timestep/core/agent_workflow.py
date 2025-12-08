@@ -5,13 +5,12 @@ import json
 import uuid
 from typing import Any, Optional, Callable, Awaitable
 from dbos import DBOS, Queue, SetWorkflowID, SetWorkflowTimeout
-from .dbos_config import configure_dbos, ensure_dbos_launched, _dbos_context, is_dbos_launched, get_dbos_connection_string
-from .run_state_store import RunStateStore
-from ._vendored_imports import Agent, SessionABC, TResponseInputItem, RunState
-from .agent_store import load_agent
-from .session_store import load_session
-from .db_connection import DatabaseConnection
-# Import run_agent and default_result_processor inside functions to avoid circular import
+from ..config.dbos_config import configure_dbos, ensure_dbos_launched, _dbos_context, is_dbos_launched, get_dbos_connection_string
+from ..stores.run_state_store.store import RunStateStore
+from .._vendored_imports import Agent, SessionABC, TResponseInputItem, RunState
+from ..stores.agent_store.store import load_agent
+from ..stores.session_store.store import load_session
+from .agent import run_agent, default_result_processor
 
 
 # Default queue for agent workflows with rate limiting
@@ -38,17 +37,8 @@ async def _load_agent_step(agent_id: str) -> Agent:
     Returns:
         The loaded Agent object
     """
-    connection_string = get_dbos_connection_string()
-    if not connection_string:
-        raise ValueError("DBOS connection string not available")
-    
-    db = DatabaseConnection(connection_string=connection_string)
-    await db.connect()
-    try:
-        agent = await load_agent(agent_id, db)
-        return agent
-    finally:
-        await db.disconnect()
+    # Store manages connection internally
+    return await load_agent(agent_id)
 
 
 @DBOS.step()
@@ -64,19 +54,11 @@ async def _load_session_data_step(session_id: str) -> dict:
     Returns:
         Session data dict
     """
-    connection_string = get_dbos_connection_string()
-    if not connection_string:
-        raise ValueError("DBOS connection string not available")
-    
-    db = DatabaseConnection(connection_string=connection_string)
-    await db.connect()
-    try:
-        session_data = await load_session(session_id, db)
-        if not session_data:
-            raise ValueError(f"Session with id {session_id} not found")
-        return session_data
-    finally:
-        await db.disconnect()
+    # Store manages connection internally
+    session_data = await load_session(session_id)
+    if not session_data:
+        raise ValueError(f"Session with id {session_id} not found")
+    return session_data
 
 
 @DBOS.step()
@@ -93,13 +75,13 @@ async def _run_agent_step(
     internal_session_id = session_data.get('session_id')
     
     if 'OpenAIConversationsSession' in session_type:
-        from ._vendored_imports import OpenAIConversationsSession
+        from .._vendored_imports import OpenAIConversationsSession
         session = OpenAIConversationsSession(conversation_id=internal_session_id)
     else:
         raise ValueError(f"Unsupported session type: {session_type}")
     
     # Import here to avoid circular import
-    from . import run_agent, default_result_processor
+    # run_agent and default_result_processor are already imported at module level
     processor = result_processor or default_result_processor
     
     # Run agent - returns RunResult
@@ -232,16 +214,38 @@ async def run_agent_workflow(
     Returns:
         The result from run_agent
     """
-    # Ensure DBOS is configured (but not launched yet - workflows must be registered before launch)
+    # Ensure DBOS is configured and launched
+    # Note: If DBOS is already configured (e.g., by a test fixture), we don't
+    # call configure_dbos() again as that would destroy the existing instance.
+    # We just ensure it's launched (matching TypeScript pattern).
     if not _dbos_context.is_configured:
         await configure_dbos()
     
-    # Ensure generic workflow is registered
-    register_generic_workflows()
-    
-    # Launch DBOS if not already launched (after workflow registration)
-    if not _dbos_context.is_launched:
-        await ensure_dbos_launched()
+    # Always ensure DBOS is launched (safe to call multiple times)
+    # The workflow decorator checks if DBOS is initialized, so we need to ensure it's launched
+    from dbos import DBOS
+    try:
+        # Check if DBOS is actually initialized by accessing the system database
+        _ = DBOS._sys_db
+        # If we got here, DBOS is initialized and ready
+    except (AttributeError, Exception):
+        # DBOS is not initialized, so we need to launch it
+        try:
+            DBOS.launch()
+            # Verify it's actually ready now
+            _ = DBOS._sys_db
+        except Exception as e:
+            # If launch fails, check if it's because DBOS is already launched
+            error_msg = str(e).lower()
+            if "already" in error_msg or "launched" in error_msg:
+                # DBOS says it's already launched, verify it's actually ready
+                try:
+                    _ = DBOS._sys_db
+                except Exception:
+                    # Still not ready, this is a problem
+                    raise RuntimeError("DBOS reports as launched but system database is not accessible")
+            else:
+                raise
     
     # Serialize input items
     input_items_json = json.dumps(input_items, default=str)
@@ -285,16 +289,21 @@ async def queue_agent_workflow(
     Returns:
         WorkflowHandle that can be used to get the result via handle.get_result()
     """
-    # Ensure DBOS is configured (but not launched yet - workflows must be registered before launch)
+    # Ensure DBOS is configured and launched
+    # Note: If DBOS is already configured (e.g., by a test fixture), we don't
+    # call configure_dbos() again as that would destroy the existing instance.
+    # We just ensure it's launched (matching TypeScript pattern).
     if not _dbos_context.is_configured:
         await configure_dbos()
+        # Register generic workflows before DBOS launch (required by DBOS)
+        register_generic_workflows()
+    else:
+        # If already configured, ensure workflows are registered
+        # (they should be from module import, but double-check)
+        register_generic_workflows()
     
-    # Ensure generic workflow is registered
-    register_generic_workflows()
-    
-    # Launch DBOS if not already launched (after workflow registration)
-    if not _dbos_context.is_launched:
-        await ensure_dbos_launched()
+    # Always ensure DBOS is launched (safe to call multiple times)
+    await ensure_dbos_launched()
     
     # Get queue
     if queue_name:

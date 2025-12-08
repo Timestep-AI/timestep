@@ -20,23 +20,64 @@ from timestep._vendored_imports import (
     ModelSettings,
     TResponseInputItem,
 )
-from timestep.agent_store import save_agent
-from timestep.session_store import save_session
-from timestep.db_connection import DatabaseConnection
-from timestep.dbos_config import get_dbos_connection_string
+from timestep.stores.agent_store.store import save_agent
+from timestep.stores.session_store.store import save_session
 
 
 @pytest_asyncio.fixture(scope="function")
 async def setup_dbos():
-    """Set up DBOS for testing."""
+    """Set up DBOS for testing - follows DBOS recommended pattern."""
+    from dbos import DBOS, DBOSConfig
+    from timestep.config.dbos_config import _dbos_context
     import uuid
-    await configure_dbos(name=f"timestep-test-{uuid.uuid4().hex[:8]}")
-    # Register generic workflows before DBOS launch (required by DBOS)
-    register_generic_workflows()
-    await ensure_dbos_launched()
+    
+    # Step 1: Destroy DBOS (per DBOS testing best practices)
+    # Note: Don't destroy registry - workflows are registered via decorators at import time
+    try:
+        DBOS.destroy(destroy_registry=False)
+    except Exception:
+        pass  # Ignore if DBOS doesn't exist yet
+    
+    # Step 2: Configure DBOS directly (matching DBOS recommended pattern)
+    # Get connection string from environment
+    db_url = os.environ.get("PG_CONNECTION_URI")
+    if not db_url:
+        raise ValueError("PG_CONNECTION_URI not set. Run 'make test-setup' to start the test database.")
+    
+    config: DBOSConfig = {
+        "name": f"timestep-test-{uuid.uuid4().hex[:8]}",
+        "system_database_url": db_url,
+    }
+    DBOS(config=config)
+    
+    # Update our context so get_dbos_connection_string() works
+    _dbos_context.set_config(config)
+    _dbos_context.set_configured(True)
+    
+    # Step 3: Reset system database (per DBOS testing best practices)
+    try:
+        DBOS.reset_system_database()
+    except Exception:
+        pass  # Ignore if reset fails (e.g., database in use)
+    
+    # Step 4: Launch DBOS (workflows are already registered via decorators)
+    DBOS.launch()
+    _dbos_context.set_launched(True)
+    
     yield
-    # Cleanup
-    await cleanup_dbos()
+    
+    # Cleanup: shutdown and destroy
+    try:
+        if hasattr(DBOS, 'shutdown'):
+            DBOS.shutdown()
+        else:
+            DBOS.destroy(destroy_registry=False)
+    except Exception:
+        pass
+    finally:
+        _dbos_context.set_configured(False)
+        _dbos_context.set_launched(False)
+        _dbos_context.set_config(None)
 
 
 @pytest.mark.asyncio
@@ -63,18 +104,9 @@ async def test_run_agent_workflow_basic(setup_dbos):
     )
     session = OpenAIConversationsSession()
     
-    # Save agent and session to database
-    connection_string = get_dbos_connection_string()
-    if not connection_string:
-        pytest.skip("DBOS connection string not available")
-    
-    db = DatabaseConnection(connection_string=connection_string)
-    await db.connect()
-    try:
-        agent_id = await save_agent(agent, db)
-        session_id = await save_session(session, db)
-    finally:
-        await db.disconnect()
+    # Save agent and session to database (stores manage connections internally)
+    agent_id = await save_agent(agent)
+    session_id = await save_session(session)
     
     input_items: list[TResponseInputItem] = [
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Say 'hello' and nothing else."}]}
@@ -124,18 +156,9 @@ async def test_queue_agent_workflow(setup_dbos):
     )
     session = OpenAIConversationsSession()
     
-    # Save agent and session to database
-    connection_string = get_dbos_connection_string()
-    if not connection_string:
-        pytest.skip("DBOS connection string not available")
-    
-    db = DatabaseConnection(connection_string=connection_string)
-    await db.connect()
-    try:
-        agent_id = await save_agent(agent, db)
-        session_id = await save_session(session, db)
-    finally:
-        await db.disconnect()
+    # Save agent and session to database (stores manage connections internally)
+    agent_id = await save_agent(agent)
+    session_id = await save_session(session)
     
     input_items: list[TResponseInputItem] = [
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Say 'queued' and nothing else."}]}
@@ -214,18 +237,9 @@ async def test_create_scheduled_workflow(setup_dbos):
     )
     session = OpenAIConversationsSession()
     
-    # Save agent and session to database
-    connection_string = get_dbos_connection_string()
-    if not connection_string:
-        pytest.skip("DBOS connection string not available")
-    
-    db = DatabaseConnection(connection_string=connection_string)
-    await db.connect()
-    try:
-        agent_id = await save_agent(agent, db)
-        session_id = await save_session(session, db)
-    finally:
-        await db.disconnect()
+    # Save agent and session to database (stores manage connections internally)
+    agent_id = await save_agent(agent)
+    session_id = await save_session(session)
     
     input_items: list[TResponseInputItem] = [
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello"}]}

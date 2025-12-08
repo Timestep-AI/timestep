@@ -1,4 +1,4 @@
-/** Common tools for agents, including web search using Firecrawl. */
+/** Web search tool using Firecrawl. */
 
 import { tool } from '@openai/agents';
 import Firecrawl from '@mendable/firecrawl-js';

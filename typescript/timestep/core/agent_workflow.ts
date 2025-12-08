@@ -1,14 +1,14 @@
 /** DBOS workflows for durable agent execution. */
 
 import { DBOS, WorkflowQueue, WorkflowHandle } from '@dbos-inc/dbos-sdk';
-import { configureDBOS, ensureDBOSLaunched, getDBOSConnectionString, isDBOSLaunched } from './dbos_config.ts';
-import { RunStateStore } from './run_state_store.ts';
-import { runAgent, defaultResultProcessor } from './index.ts';
+import { configureDBOS, ensureDBOSLaunched, getDBOSConnectionString, isDBOSLaunched } from '../config/dbos_config.ts';
+import { RunStateStore } from '../stores/run_state_store/store.ts';
+import { runAgent, defaultResultProcessor } from './agent.ts';
 import { Agent, Session, RunState } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
-import { loadAgent } from './agent_store.ts';
-import { loadSession } from './session_store.ts';
-import { DatabaseConnection } from './db_connection.ts';
+import { loadAgent } from '../stores/agent_store/store.ts';
+import { loadSession } from '../stores/session_store/store.ts';
+import { DatabaseConnection } from '../stores/shared/db_connection.ts';
 
 // Default queue for agent workflows with rate limiting
 let defaultQueue: WorkflowQueue | null = null;
@@ -26,44 +26,23 @@ function getDefaultQueue(): WorkflowQueue {
 async function loadAgentStep(agentId: string): Promise<Agent> {
   /**
    * Step that loads an agent from the database.
+   * Store manages connection internally.
    */
-  const connectionString = getDBOSConnectionString();
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
-  }
-
-  const db = new DatabaseConnection({ connectionString });
-  await db.connect();
-  try {
-    const agent = await loadAgent(agentId, db);
-    return agent;
-  } finally {
-    await db.disconnect();
-  }
+  return await loadAgent(agentId);
 }
 
 async function loadSessionDataStep(sessionId: string): Promise<any> {
   /**
    * Step that loads session data from the database.
+   * Store manages connection internally.
    * 
    * Returns serializable session data object, not the Session object itself.
    */
-  const connectionString = getDBOSConnectionString();
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
+  const sessionData = await loadSession(sessionId);
+  if (!sessionData) {
+    throw new Error(`Session with id ${sessionId} not found`);
   }
-
-  const db = new DatabaseConnection({ connectionString });
-  await db.connect();
-  try {
-    const sessionData = await loadSession(sessionId, db);
-    if (!sessionData) {
-      throw new Error(`Session with id ${sessionId} not found`);
-    }
-    return sessionData;
-  } finally {
-    await db.disconnect();
-  }
+  return sessionData;
 }
 
 const runAgentStep = DBOS.registerStep(async (
@@ -154,22 +133,16 @@ async function saveStateStep(
         throw new Error('DBOS connection string not available');
       }
 
-      const db = new DatabaseConnection({ connectionString });
-      await db.connect();
-      try {
-        const agent = await loadAgent(agentId, db);
-        const stateStore = new RunStateStore({ agent, sessionId });
+      const agent = await loadAgent(agentId);
+      const stateStore = new RunStateStore({ agent, sessionId });
 
-        if (result.state) {
-          await stateStore.save(result.state);
-        } else if (result.toState) {
-          const state = result.toState();
-          await stateStore.save(state);
-        } else {
-          throw new Error('Result does not have state or toState() method');
-        }
-      } finally {
-        await db.disconnect();
+      if (result.state) {
+        await stateStore.save(result.state);
+      } else if (result.toState) {
+        const state = result.toState();
+        await stateStore.save(state);
+      } else {
+        throw new Error('Result does not have state or toState() method');
       }
     },
     { name: 'saveState' }
@@ -306,18 +279,17 @@ export async function runAgentWorkflow(
    * This workflow automatically saves state on interruptions and can be resumed
    * if the process crashes or restarts.
    */
-  // Ensure DBOS is configured (but not launched yet - workflows must be registered before launch)
+  // Ensure DBOS is configured and launched
+  // Note: ensureDBOSLaunched() is safe to call multiple times and will
+  // only launch if not already launched
   if (!getDBOSConnectionString()) {
     await configureDBOS();
+    // Register generic workflows before DBOS launch (required by DBOS)
+    await registerGenericWorkflows();
   }
 
-  // Ensure generic workflow is registered
-  await registerGenericWorkflows();
-
-  // Launch DBOS if not already launched (after workflow registration)
-  if (!isDBOSLaunched()) {
-    await ensureDBOSLaunched();
-  }
+  // Always ensure DBOS is launched (safe to call multiple times)
+  await ensureDBOSLaunched();
 
   // Serialize input items
   const inputItemsJson = JSON.stringify(inputItems);
@@ -352,18 +324,17 @@ export async function queueAgentWorkflow(
    * 
    * @returns WorkflowHandle that can be used to get the result
    */
-  // Ensure DBOS is configured (but not launched yet - workflows must be registered before launch)
+  // Ensure DBOS is configured and launched
+  // Note: ensureDBOSLaunched() is safe to call multiple times and will
+  // only launch if not already launched
   if (!getDBOSConnectionString()) {
     await configureDBOS();
+    // Register generic workflows before DBOS launch (required by DBOS)
+    await registerGenericWorkflows();
   }
 
-  // Ensure generic workflow is registered
-  await registerGenericWorkflows();
-
-  // Launch DBOS if not already launched (after workflow registration)
-  if (!isDBOSLaunched()) {
-    await ensureDBOSLaunched();
-  }
+  // Always ensure DBOS is launched (safe to call multiple times)
+  await ensureDBOSLaunched();
 
   // Get queue
   const queue = queueName ? new WorkflowQueue(queueName) : getDefaultQueue();
@@ -445,3 +416,4 @@ export async function createScheduledAgentWorkflow(
     { crontab }
   );
 }
+

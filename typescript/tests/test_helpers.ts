@@ -188,7 +188,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
         
         // Get the database connection string that was used
         // This ensures Python can connect to the same database
-        const { getDBOSConnectionString } = await import('../timestep/dbos_config.ts');
+        const { getDBOSConnectionString } = await import('../timestep/config/dbos_config.ts');
         const connectionString = getDBOSConnectionString();
         
         // Return session ID and connection string without approving
@@ -221,7 +221,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
   }
 
   // If we got here without interruption, get connection string anyway (may be undefined if DBOS wasn't configured)
-  const { getDBOSConnectionString } = await import('../timestep/dbos_config.ts');
+  const { getDBOSConnectionString } = await import('../timestep/config/dbos_config.ts');
   const connectionString = getDBOSConnectionString();
   return { sessionId: currentSessionId, connectionString };
 }
@@ -229,7 +229,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
 export async function runAgentTestFromPython(runInParallel: boolean = true, stream: boolean = false, sessionId: string, connectionString?: string): Promise<any[]> {
   // Configure DBOS before loading state (only need configuration, not launch, since we're just using the database connection)
   // Use provided connectionString if available (for TS->TS tests), otherwise use PG_CONNECTION_URI from env (for Python->TS tests)
-  const { configureDBOS } = await import('../timestep/dbos_config.ts');
+  const { configureDBOS } = await import('../timestep/config/dbos_config.ts');
   const configOptions: any = { name: 'timestep-test' };
   if (connectionString) {
     configOptions.systemDatabaseUrl = connectionString;

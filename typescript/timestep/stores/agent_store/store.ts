@@ -2,21 +2,50 @@
 
 import { randomUUID } from 'crypto';
 import type { Agent, Tool, InputGuardrail, OutputGuardrail, Handoff, ModelSettings } from '@openai/agents';
-import type { DatabaseConnection } from './db_connection.ts';
-import { registerTool, getTool } from './tool_registry.ts';
+import { DatabaseConnection } from '../shared/db_connection.ts';
+import { getDBOSConnectionString, configureDBOS } from '../../config/dbos_config.ts';
+import { registerTool, getTool } from '../tool_registry.ts';
 import {
   registerInputGuardrail,
   registerOutputGuardrail,
   getInputGuardrail,
   getOutputGuardrail,
-} from './guardrail_registry.ts';
+} from '../guardrail_registry.ts';
 
-export async function saveAgent(agent: Agent, db: DatabaseConnection): Promise<string> {
+export async function saveAgent(agent: Agent): Promise<string> {
   /**
    * Save an agent configuration to the database.
+   * Manages database connection internally.
    *
    * @param agent - The Agent object to save
-   * @param db - DatabaseConnection instance
+   * @returns The agent_id (UUID as string)
+   */
+  // Get connection string
+  let connectionString = getDBOSConnectionString();
+  if (!connectionString) {
+    await configureDBOS();
+    connectionString = getDBOSConnectionString();
+  }
+  if (!connectionString) {
+    throw new Error('DBOS connection string not available');
+  }
+
+  // Create and manage database connection
+  const db = new DatabaseConnection({ connectionString });
+  await db.connect();
+  try {
+    return await saveAgentInternal(agent, db);
+  } finally {
+    await db.disconnect();
+  }
+}
+
+async function saveAgentInternal(agent: Agent, db: DatabaseConnection): Promise<string> {
+  /**
+   * Internal function that saves an agent using an existing database connection.
+   *
+   * @param agent - The Agent object to save
+   * @param db - DatabaseConnection instance (already connected)
    * @returns The agent_id (UUID as string)
    */
   // Extract serializable fields from agent
@@ -287,15 +316,15 @@ async function saveHandoff(
   const metadata: any = {};
 
   if ('name' in handoff && 'tools' in handoff) {
-    // It's an Agent
-    handoffAgentId = await saveAgent(handoff as Agent, db);
+    // It's an Agent (using internal function to reuse connection)
+    handoffAgentId = await saveAgentInternal(handoff as Agent, db);
     toolName = `transfer_to_${(handoff as Agent).name.toLowerCase().replace(/\s+/g, '_')}`;
     toolDescription = `Handoff to the ${(handoff as Agent).name} agent`;
   } else {
     // Handoff object
     const handoffObj = handoff as Handoff;
     if (handoffObj.agent && 'name' in handoffObj.agent) {
-      handoffAgentId = await saveAgent(handoffObj.agent as Agent, db);
+      handoffAgentId = await saveAgentInternal(handoffObj.agent as Agent, db);
     }
 
     toolName = handoffObj.toolName || null;
@@ -386,12 +415,40 @@ async function saveMcpServer(mcpServer: any, db: DatabaseConnection): Promise<st
   return serverId;
 }
 
-export async function loadAgent(agentId: string, db: DatabaseConnection): Promise<Agent> {
+export async function loadAgent(agentId: string): Promise<Agent> {
   /**
    * Load an agent configuration from the database.
+   * Manages database connection internally.
    *
    * @param agentId - The agent ID (UUID as string)
-   * @param db - DatabaseConnection instance
+   * @returns The reconstructed Agent object
+   */
+  // Get connection string
+  let connectionString = getDBOSConnectionString();
+  if (!connectionString) {
+    await configureDBOS();
+    connectionString = getDBOSConnectionString();
+  }
+  if (!connectionString) {
+    throw new Error('DBOS connection string not available');
+  }
+
+  // Create and manage database connection
+  const db = new DatabaseConnection({ connectionString });
+  await db.connect();
+  try {
+    return await loadAgentInternal(agentId, db);
+  } finally {
+    await db.disconnect();
+  }
+}
+
+async function loadAgentInternal(agentId: string, db: DatabaseConnection): Promise<Agent> {
+  /**
+   * Internal function that loads an agent using an existing database connection.
+   *
+   * @param agentId - The agent ID (UUID as string)
+   * @param db - DatabaseConnection instance (already connected)
    * @returns The reconstructed Agent object
    */
   // Load agent record
@@ -567,8 +624,8 @@ export async function loadAgent(agentId: string, db: DatabaseConnection): Promis
   const handoffs: (Agent | Handoff)[] = [];
   for (const handoffRow of handoffResult.rows || []) {
     if (handoffRow.handoff_agent_id) {
-      // Load the handoff agent
-      const handoffAgent = await loadAgent(handoffRow.handoff_agent_id, db);
+      // Load the handoff agent (using internal function to reuse connection)
+      const handoffAgent = await loadAgentInternal(handoffRow.handoff_agent_id, db);
       handoffs.push(handoffAgent);
     }
     // TODO: Handle Handoff objects (not just Agent)

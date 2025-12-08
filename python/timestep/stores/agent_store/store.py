@@ -3,24 +3,53 @@
 import json
 import uuid
 from typing import Optional, Any, Callable
-from .db_connection import DatabaseConnection
-from ._vendored_imports import (
+from ..shared.db_connection import DatabaseConnection
+from ..._vendored_imports import (
     Agent, ModelSettings, Tool, InputGuardrail, OutputGuardrail, Handoff
 )
-from .tool_registry import register_tool, get_tool
-from .guardrail_registry import (
+from ..tool_registry import register_tool, get_tool
+from ..guardrail_registry import (
     register_input_guardrail, register_output_guardrail,
     get_input_guardrail, get_output_guardrail
 )
+from ...config.dbos_config import get_dbos_connection_string, configure_dbos
 
 
-async def save_agent(agent: Agent, db: DatabaseConnection) -> str:
+async def save_agent(agent: Agent) -> str:
     """
     Save an agent configuration to the database.
+    Manages database connection internally.
     
     Args:
         agent: The Agent object to save
-        db: DatabaseConnection instance
+        
+    Returns:
+        The agent_id (UUID as string)
+    """
+    # Get connection string
+    connection_string = get_dbos_connection_string()
+    if not connection_string:
+        await configure_dbos()
+        connection_string = get_dbos_connection_string()
+    if not connection_string:
+        raise ValueError("DBOS connection string not available")
+    
+    # Create and manage database connection
+    db = DatabaseConnection(connection_string=connection_string)
+    await db.connect()
+    try:
+        return await _save_agent_internal(agent, db)
+    finally:
+        await db.disconnect()
+
+
+async def _save_agent_internal(agent: Agent, db: DatabaseConnection) -> str:
+    """
+    Internal function that saves an agent using an existing database connection.
+    
+    Args:
+        agent: The Agent object to save
+        db: DatabaseConnection instance (already connected)
         
     Returns:
         The agent_id (UUID as string)
@@ -225,7 +254,7 @@ async def _save_handoff(handoff: Agent | Handoff, agent_id: str, order_index: in
     """Save a handoff (Agent or Handoff object)."""
     if isinstance(handoff, Agent):
         # Save the handoff agent first
-        handoff_agent_id = await save_agent(handoff, db)
+        handoff_agent_id = await _save_agent_internal(handoff, db)
         tool_name = f"transfer_to_{handoff.name.lower().replace(' ', '_')}"
         tool_description = f"Handoff to the {handoff.name} agent"
         input_schema = {}
@@ -234,7 +263,7 @@ async def _save_handoff(handoff: Agent | Handoff, agent_id: str, order_index: in
         # Handoff object
         handoff_agent_id = None
         if hasattr(handoff, 'agent') and isinstance(handoff.agent, Agent):
-            handoff_agent_id = await save_agent(handoff.agent, db)
+            handoff_agent_id = await _save_agent_internal(handoff.agent, db)
         
         tool_name = handoff.tool_name if hasattr(handoff, 'tool_name') else None
         tool_description = handoff.tool_description if hasattr(handoff, 'tool_description') else None
@@ -298,7 +327,35 @@ async def _save_mcp_server(mcp_server: Any, db: DatabaseConnection) -> str:
     return server_id
 
 
-async def load_agent(agent_id: str, db: DatabaseConnection) -> Agent:
+async def load_agent(agent_id: str) -> Agent:
+    """
+    Load an agent configuration from the database.
+    Manages database connection internally.
+    
+    Args:
+        agent_id: The agent ID (UUID as string)
+        
+    Returns:
+        The reconstructed Agent object
+    """
+    # Get connection string
+    connection_string = get_dbos_connection_string()
+    if not connection_string:
+        await configure_dbos()
+        connection_string = get_dbos_connection_string()
+    if not connection_string:
+        raise ValueError("DBOS connection string not available")
+    
+    # Create and manage database connection
+    db = DatabaseConnection(connection_string=connection_string)
+    await db.connect()
+    try:
+        return await _load_agent_internal(agent_id, db)
+    finally:
+        await db.disconnect()
+
+
+async def _load_agent_internal(agent_id: str, db: DatabaseConnection) -> Agent:
     """
     Load an agent configuration from the database.
     
@@ -411,7 +468,7 @@ async def load_agent(agent_id: str, db: DatabaseConnection) -> Agent:
     for handoff_row in handoff_rows:
         if handoff_row['handoff_agent_id']:
             # Load the handoff agent
-            handoff_agent = await load_agent(handoff_row['handoff_agent_id'], db)
+            handoff_agent = await _load_agent_internal(handoff_row['handoff_agent_id'], db)
             handoffs.append(handoff_agent)
         # TODO: Handle Handoff objects (not just Agent)
     

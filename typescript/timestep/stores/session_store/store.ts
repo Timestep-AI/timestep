@@ -2,14 +2,43 @@
 
 import { randomUUID } from 'crypto';
 import type { Session } from '@openai/agents';
-import type { DatabaseConnection } from './db_connection.ts';
+import { DatabaseConnection } from '../shared/db_connection.ts';
+import { getDBOSConnectionString, configureDBOS } from '../../config/dbos_config.ts';
 
-export async function saveSession(session: Session, db: DatabaseConnection): Promise<string> {
+export async function saveSession(session: Session): Promise<string> {
   /**
    * Save a session configuration to the database.
+   * Manages database connection internally.
    *
    * @param session - The Session object to save
-   * @param db - DatabaseConnection instance
+   * @returns The session_id (UUID as string) - this is the database ID, not the session's internal ID
+   */
+  // Get connection string
+  let connectionString = getDBOSConnectionString();
+  if (!connectionString) {
+    await configureDBOS();
+    connectionString = getDBOSConnectionString();
+  }
+  if (!connectionString) {
+    throw new Error('DBOS connection string not available');
+  }
+
+  // Create and manage database connection
+  const db = new DatabaseConnection({ connectionString });
+  await db.connect();
+  try {
+    return await saveSessionInternal(session, db);
+  } finally {
+    await db.disconnect();
+  }
+}
+
+async function saveSessionInternal(session: Session, db: DatabaseConnection): Promise<string> {
+  /**
+   * Internal function that saves a session using an existing database connection.
+   *
+   * @param session - The Session object to save
+   * @param db - DatabaseConnection instance (already connected)
    * @returns The session_id (UUID as string) - this is the database ID, not the session's internal ID
    */
   // Get the session's internal ID (e.g., conversation_id for OpenAI sessions)
@@ -91,18 +120,48 @@ export async function saveSession(session: Session, db: DatabaseConnection): Pro
 }
 
 export async function loadSession(
-  sessionId: string,
-  db: DatabaseConnection
+  sessionId: string
 ): Promise<{ id: string; session_id: string; session_type: string; config_data: any } | null> {
   /**
    * Load a session configuration from the database.
+   * Manages database connection internally.
    *
    * Note: This function cannot fully reconstruct Session objects as they often require
    * runtime connections (e.g., to OpenAI API). This function returns the session data,
    * but the caller must reconstruct the Session object using the appropriate constructor.
    *
    * @param sessionId - The session ID (can be either the database UUID or the session's internal ID)
-   * @param db - DatabaseConnection instance
+   * @returns A dict with session data, or null if not found
+   */
+  // Get connection string
+  let connectionString = getDBOSConnectionString();
+  if (!connectionString) {
+    await configureDBOS();
+    connectionString = getDBOSConnectionString();
+  }
+  if (!connectionString) {
+    throw new Error('DBOS connection string not available');
+  }
+
+  // Create and manage database connection
+  const db = new DatabaseConnection({ connectionString });
+  await db.connect();
+  try {
+    return await loadSessionInternal(sessionId, db);
+  } finally {
+    await db.disconnect();
+  }
+}
+
+async function loadSessionInternal(
+  sessionId: string,
+  db: DatabaseConnection
+): Promise<{ id: string; session_id: string; session_type: string; config_data: any } | null> {
+  /**
+   * Internal function that loads a session using an existing database connection.
+   *
+   * @param sessionId - The session ID (can be either the database UUID or the session's internal ID)
+   * @param db - DatabaseConnection instance (already connected)
    * @returns A dict with session data, or null if not found
    */
   // Try to load by database ID first

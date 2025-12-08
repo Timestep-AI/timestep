@@ -7,8 +7,8 @@ allow-direct-references = true
 
 [project]
 name = "timestep"
-version = "2026.0.29"
-description = "Multi-model provider implementations for OpenAI Agents, supporting both OpenAI and Ollama models"
+version = "2026.0.31"
+description = "Timestep AI - Durable agent execution framework with DBOS workflows, cross-language state persistence, and multi-model support for OpenAI Agents"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dependencies = [
     "firecrawl-py>=1.0.0",
     "asyncpg>=0.29.0",  # PostgreSQL async driver for database-backed state storage
     "dbos>=2.0.0",  # DBOS for durable workflows
-    "testcontainers>=4.0.0",  # Testcontainers for PostgreSQL in tests
+    "testcontainers>=4.0.0",  # Testcontainers for PostgreSQL in tests (simplified - shared container)
 ]
 [tool.hatch.build.targets.wheel]
 packages = ["timestep"]
@@ -29,4 +29,7 @@ packages = ["timestep"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v -x"
+# Exclude cross-language tests that are orchestrated by TypeScript
+# These tests are still imported/loaded even when skipped, which can interfere with DBOS state
+norecursedirs = []
+addopts = "-v -x --ignore=tests/test_cross_language_ts_to_py.py"
