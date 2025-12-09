@@ -131,7 +131,8 @@ Timestep uses a simple but powerful prefix-based routing system:
 |-------------------|----------|---------|
 | `gpt-4` | OpenAI | `gpt-4`, `gpt-3.5-turbo` |
 | `openai/gpt-4` | OpenAI | `openai/gpt-4` |
-| `ollama/gpt-oss:20b-cloud` | Ollama | `ollama/gpt-oss:20b-cloud`, `ollama/gpt-oss:120b-cloud` |
+| `ollama/gpt-oss:20b` | Ollama (local) | `ollama/gpt-oss:20b` |
+| `ollama/gpt-oss:20b-cloud` | [Ollama Cloud](https://ollama.com/cloud) | `ollama/gpt-oss:20b-cloud`, `ollama/gpt-oss:120b-cloud` (note: `-cloud` suffix determines cloud usage) |
 
 ## Provider Mapping
 
@@ -189,7 +190,7 @@ The `MultiModelProviderMap` class allows you to customize the routing behavior b
 
 ### Local vs Cloud Detection
 
-Timestep automatically detects whether to use local or cloud Ollama based on:
+Timestep automatically detects whether to use local or [Ollama Cloud](https://ollama.com/cloud) based on:
 
 1. **Model Name Suffix**: Models ending with `-cloud` automatically use Ollama Cloud
 2. **API Key Presence**: If `OLLAMA_API_KEY` is set, uses Ollama Cloud

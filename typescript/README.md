@@ -34,7 +34,7 @@ if (result.interruptions?.length) {
 Load state saved in Python with the same `sessionId` and continue the run; state format is compatible.
 
 ## Model routing
-Prefix model names (`ollama/gpt-oss:20b-cloud`) or provide a custom `MultiModelProviderMap` to route to your providers.
+Prefix model names (`ollama/gpt-oss:20b` for local, `ollama/gpt-oss:20b-cloud` for [Ollama Cloud](https://ollama.com/cloud)) or provide a custom `MultiModelProviderMap` to route to your providers. Note: `-cloud` suffix determines cloud usage.
 
 ## DBOS Workflows
 

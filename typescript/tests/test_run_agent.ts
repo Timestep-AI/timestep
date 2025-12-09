@@ -22,7 +22,7 @@ import {
 } from './test_helpers';
 
 
-async function runAgentTest(runInParallel: boolean = true, stream: boolean = false, sessionId?: string): Promise<any[]> {
+async function runAgentTest(runInParallel: boolean = true, stream: boolean = false, sessionId?: string, model: string = "gpt-4.1"): Promise<any[]> {
   // Define guardrails
   const moonGuardrail: InputGuardrail = {
     name: 'Moon Guardrail',
@@ -53,7 +53,7 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
 
   const weatherAssistantAgent = new Agent({
     instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
-    model: "gpt-4.1",
+    model: model,
     modelSettings: { temperature: 0 },
     name: "Weather Assistant",
     tools: [getWeather],
@@ -62,7 +62,7 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
   const personalAssistantAgent = new Agent({
     handoffs: [weatherAssistantAgent],
     instructions: `${RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.`,
-    model: "gpt-4.1",
+    model: model,
     modelSettings: { temperature: 0 },
     name: "Personal Assistant",
     inputGuardrails: [moonGuardrail],
@@ -151,26 +151,26 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
 // Re-export helpers for backward compatibility
 export { runAgentTestPartial, runAgentTestFromPython, cleanItems, assertConversationItems, EXPECTED_ITEMS } from './test_helpers';
 
-test('test_run_agent_blocking_non_streaming', async () => {
-  const items = await runAgentTest(false, false);
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_blocking_non_streaming with %s', async (model) => {
+  const items = await runAgentTest(false, false, undefined, model);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test('test_run_agent_blocking_streaming', async () => {
-  const items = await runAgentTest(false, true);
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_blocking_streaming with %s', async (model) => {
+  const items = await runAgentTest(false, true, undefined, model);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test('test_run_agent_parallel_non_streaming', async () => {
-  const items = await runAgentTest(true, false);
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_parallel_non_streaming with %s', async (model) => {
+  const items = await runAgentTest(true, false, undefined, model);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test('test_run_agent_parallel_streaming', async () => {
-  const items = await runAgentTest(true, true);
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_parallel_streaming with %s', async (model) => {
+  const items = await runAgentTest(true, true, undefined, model);
   const cleaned = cleanItems(items);
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });

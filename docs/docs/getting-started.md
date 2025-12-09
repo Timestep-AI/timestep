@@ -278,7 +278,7 @@ Timestep also provides multi-model provider support for OpenAI and Ollama:
 
     # Create agent with model name
     agent = Agent(model="gpt-4.1")  # Uses OpenAI by default
-    # Or: agent = Agent(model="ollama/gpt-oss:20b-cloud")  # Uses Ollama
+    # Or: agent = Agent(model="ollama/gpt-oss:20b-cloud")  # Uses Ollama Cloud (note: -cloud suffix)
 
     # Run agent with RunConfig
     run_config = RunConfig(model_provider=model_provider)
@@ -314,7 +314,7 @@ Timestep also provides multi-model provider support for OpenAI and Ollama:
 
     // Create agent with model name
     const agent = new Agent({ model: 'gpt-4.1' }); // Uses OpenAI by default
-    // Or: new Agent({ model: 'ollama/gpt-oss:20b-cloud' }) // Uses Ollama
+    // Or: new Agent({ model: 'ollama/gpt-oss:20b-cloud' }) // Uses Ollama Cloud (note: -cloud suffix)
 
     // Run agent with Runner
     const runner = new Runner({ modelProvider });
@@ -369,7 +369,9 @@ Timestep uses model name prefixes to determine which provider to use:
 
 - **No prefix** (e.g., `gpt-4`): Defaults to OpenAI
 - **`openai/` prefix** (e.g., `openai/gpt-4`): Explicitly uses OpenAI
-- **`ollama/` prefix** (e.g., `ollama/gpt-oss:20b-cloud`): Uses Ollama
+- **`ollama/` prefix**: Uses Ollama
+  - `ollama/gpt-oss:20b` → Ollama (local)
+  - `ollama/gpt-oss:20b-cloud` → [Ollama Cloud](https://ollama.com/cloud) (note: `-cloud` suffix determines cloud usage)
 
 ### Examples
 

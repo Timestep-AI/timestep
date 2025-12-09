@@ -8,9 +8,9 @@ from pathlib import Path
 from test_run_agent import run_agent_test_partial
 
 
-async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
+async def run_test(test_name: str, run_in_parallel: bool, stream: bool, model: str = "gpt-4.1"):
     """Run a single cross-language test."""
-    print(f"Running test: {test_name}")
+    print(f"Running test: {test_name} with model: {model}")
     
     # Step 1: Run Python partial test (inputs 0-3) which stops at interruption
     result = await run_agent_test_partial(
@@ -18,7 +18,8 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
         stream=stream,
         session_id=None,
         start_index=0,
-        end_index=4
+        end_index=4,
+        model=model
     )
     
     # Handle both dict return (new format) and string return (old format for backwards compatibility)
@@ -34,7 +35,7 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
     if connection_string:
         print(f"Using connection string: {connection_string}")
     
-    # Step 2: Run TypeScript test that loads the state and continues, passing session ID as parameter
+    # Step 2: Run TypeScript test that loads the state and continues, passing session ID and model as parameters
     ts_test_path = Path(__file__).parent.parent.parent / "typescript" / "tests" / "test_cross_language_py_to_ts.ts"
     ts_dir = ts_test_path.parent.parent
     
@@ -43,9 +44,9 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
     if connection_string:
         env["PG_CONNECTION_URI"] = connection_string
     
-    print(f"Running TypeScript test: {run_in_parallel}, {stream}")
+    print(f"Running TypeScript test: {run_in_parallel}, {stream}, model: {model}")
     result = subprocess.run(
-        ["npx", "tsx", str(ts_test_path), str(run_in_parallel).lower(), str(stream).lower(), session_id],
+        ["npx", "tsx", str(ts_test_path), str(run_in_parallel).lower(), str(stream).lower(), session_id, model],
         cwd=str(ts_dir),
         capture_output=True,
         text=True,
@@ -63,25 +64,29 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool):
 
 
 @pytest.mark.asyncio
-async def test_cross_language_py_to_ts_blocking_non_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_cross_language_py_to_ts_blocking_non_streaming(model):
     """Test Python -> TypeScript: blocking, non-streaming."""
-    await run_test("test_cross_language_py_to_ts_blocking_non_streaming", False, False)
+    await run_test("test_cross_language_py_to_ts_blocking_non_streaming", False, False, model)
 
 
 @pytest.mark.asyncio
-async def test_cross_language_py_to_ts_blocking_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_cross_language_py_to_ts_blocking_streaming(model):
     """Test Python -> TypeScript: blocking, streaming."""
-    await run_test("test_cross_language_py_to_ts_blocking_streaming", False, True)
+    await run_test("test_cross_language_py_to_ts_blocking_streaming", False, True, model)
 
 
 @pytest.mark.asyncio
-async def test_cross_language_py_to_ts_parallel_non_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_cross_language_py_to_ts_parallel_non_streaming(model):
     """Test Python -> TypeScript: parallel, non-streaming."""
-    await run_test("test_cross_language_py_to_ts_parallel_non_streaming", True, False)
+    await run_test("test_cross_language_py_to_ts_parallel_non_streaming", True, False, model)
 
 
 @pytest.mark.asyncio
-async def test_cross_language_py_to_ts_parallel_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_cross_language_py_to_ts_parallel_streaming(model):
     """Test Python -> TypeScript: parallel, streaming."""
-    await run_test("test_cross_language_py_to_ts_parallel_streaming", True, True)
+    await run_test("test_cross_language_py_to_ts_parallel_streaming", True, True, model)
 

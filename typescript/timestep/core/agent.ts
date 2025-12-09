@@ -2,6 +2,7 @@
 
 import { Agent, Runner, Session, RunState, MaxTurnsExceededError, ModelBehaviorError, UserError, AgentsError } from '@openai/agents';
 import type { AgentInputItem } from '@openai/agents-core';
+import { MultiModelProvider } from '../model_providers/multi_model_provider';
 
 export async function defaultResultProcessor(result: any): Promise<any> {
   /**
@@ -25,7 +26,8 @@ export async function runAgent(
   runInput: AgentInputItem[] | RunState<any, any>,
   session: Session,
   stream: boolean,
-  resultProcessor?: (result: any) => Promise<any>
+  resultProcessor?: (result: any) => Promise<any>,
+  modelProvider?: any  // ModelProvider type
 ): Promise<any> {
   /**
    * Run an agent with the given session and stream setting.
@@ -36,10 +38,15 @@ export async function runAgent(
    * @param stream - Whether to stream the results
    * @param resultProcessor - Optional function to process the result. Defaults to defaultResultProcessor
    *   which consumes all streaming events and waits for completion. Pass undefined to skip processing.
+   * @param modelProvider - Optional ModelProvider to use for resolving model names. If not provided,
+   *   defaults to MultiModelProvider which supports both OpenAI and Ollama models.
    * @returns The processed result from the agent run
    */
   const processor = resultProcessor ?? defaultResultProcessor;
-  const runner = new Runner();
+  
+  // Default to MultiModelProvider if no provider is specified
+  const provider = modelProvider ?? new MultiModelProvider();
+  const runner = new Runner({ modelProvider: provider });
 
   const sessionInputCallback = async (existingItems: AgentInputItem[], newInput: AgentInputItem[]): Promise<AgentInputItem[]> => {
     return [...existingItems, ...newInput];

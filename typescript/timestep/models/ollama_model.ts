@@ -28,6 +28,52 @@ function generateCompletionId(): string {
   return generateOpenAIId('chatcmpl-', 29);
 }
 
+function generateMessageId(): string {
+  return generateOpenAIId('msg_', 27);
+}
+
+/**
+ * Recursively remove tool_calls from an object to prevent them from being
+ * included in providerData when saving to Conversations API.
+ * Also removes any objects with type: 'function' that might be extracted as separate items.
+ */
+function removeToolCallsRecursively(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return obj;
+  }
+  
+  // If it's an array, filter out tool_calls and objects with type: 'function'
+  if (Array.isArray(obj)) {
+    return obj
+      .filter((item) => {
+        // Filter out tool_calls arrays and objects with type: 'function'
+        if (item && typeof item === 'object') {
+          return item.type !== 'function' && !('tool_calls' in item && Array.isArray(item.tool_calls));
+        }
+        return true;
+      })
+      .map((item) => removeToolCallsRecursively(item));
+  }
+  
+  // If it's an object with type: 'function', return undefined to exclude it
+  if (obj.type === 'function') {
+    return undefined;
+  }
+  
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === 'tool_calls' || key === 'toolCalls') {
+      continue; // Skip tool_calls
+    }
+    const cleaned = removeToolCallsRecursively(value);
+    // Only include the key if the cleaned value is not undefined
+    if (cleaned !== undefined) {
+      result[key] = cleaned;
+    }
+  }
+  return result;
+}
+
 export class OllamaModel implements Model {
   #client: any; // Will be dynamically imported
   #model: string;
@@ -201,15 +247,60 @@ export class OllamaModel implements Model {
       span.spanData.input = convertedMessages;
     }
 
+    /**
+     * Extract and validate base64 string from a data URL.
+     * The Ollama client's encodeImage function returns strings as-is, so we pass base64 directly.
+     * We validate the base64 is actually valid base64 (similar to Python client's Image class).
+     */
+    function extractBase64FromImage(image: string): string {
+      let base64: string;
+      // If it's a data URL (data:image/...;base64,<base64>), extract the base64 part
+      if (image.startsWith('data:')) {
+        const commaIndex = image.indexOf(',');
+        if (commaIndex !== -1) {
+          base64 = image.substring(commaIndex + 1);
+        } else {
+          base64 = image;
+        }
+      } else {
+        // If it's already base64 (no data: prefix), use as-is
+        base64 = image;
+      }
+      
+      // Validate that it's actually valid base64 (similar to Python client's Image.serialize_model)
+      // This helps catch invalid data before sending to Ollama Cloud
+      try {
+        // Try to decode to validate it's base64
+        Buffer.from(base64, 'base64');
+        return base64;
+      } catch (e) {
+        throw new Error(`Invalid base64 image data: ${e}`);
+      }
+    }
+
     const ollamaMessages = [];
     for (const msg of convertedMessages) {
       let content = '';
+      const images: string[] = [];
+      
       if (typeof msg['content'] === 'string') {
         content = msg['content'];
       } else if (Array.isArray(msg['content'])) {
         for (const part of msg['content']) {
           if (part.type === 'input_text' && part.text) {
             content += part.text;
+          } else if (part.type === 'input_image' && part.image) {
+            // Extract base64 from data URL - pass base64 string directly
+            // The Ollama client's encodeImage returns strings as-is
+            const imageStr = typeof part.image === 'string' 
+              ? part.image 
+              : (part.image as any).id 
+                ? undefined // File ID references not supported by Ollama
+                : undefined;
+            
+            if (imageStr) {
+              images.push(extractBase64FromImage(imageStr));
+            }
           } else if (typeof part === 'string') {
             content += part;
           } else if (part.text) {
@@ -224,6 +315,12 @@ export class OllamaModel implements Model {
         role: msg['role'],
         content: content,
       };
+
+      // Add images array if there are any images
+      // Pass base64 strings directly - the Ollama client's encodeImage returns strings as-is
+      if (images.length > 0) {
+        ollamaMsg.images = images;
+      }
 
       if (msg['role'] === 'tool' && msg['tool_call_id']) {
         ollamaMsg['tool_call_id'] = msg['tool_call_id'];
@@ -400,31 +497,43 @@ export class OllamaModel implements Model {
         // Azure OpenAI returns empty string instead of null for tool calls, causing parser rejection
         !(message.tool_calls && message.content === '')
       ) {
-        const { content, ...rest } = message;
+        // Exclude tool_calls from providerData - they're for Chat Completions API format only,
+        // not for Conversations API which expects function_call items instead
+        // Also recursively remove tool_calls from nested objects to prevent them from being
+        // included via camelOrSnakeToSnakeCase processing
+        // Only include 'role' in providerData if it's different from what we're setting
+        const { content, tool_calls, role, ...rest } = message;
+        const cleanRest = removeToolCallsRecursively(rest);
+        // Only set providerData if there's actually something to include (besides role which we already set)
+        const providerData = Object.keys(cleanRest).length > 0 ? cleanRest : undefined;
         output.push({
-          id: response.id,
+          id: generateMessageId(),
           type: 'message',
           role: 'assistant',
           content: [
             {
               type: 'output_text',
               text: content || '',
-              providerData: rest,
+              ...(providerData ? { providerData } : {}),
             },
           ],
           status: 'completed',
         });
       } else if (message.refusal) {
-        const { refusal, ...rest } = message;
+        // Exclude tool_calls from providerData
+        const { refusal, tool_calls, role, ...rest } = message;
+        const cleanRest = removeToolCallsRecursively(rest);
+        // Only set providerData if there's actually something to include (besides role which we already set)
+        const providerData = Object.keys(cleanRest).length > 0 ? cleanRest : undefined;
         output.push({
-          id: response.id,
+          id: generateMessageId(),
           type: 'message',
           role: 'assistant',
           content: [
             {
               type: 'refusal',
               refusal: refusal || '',
-              providerData: rest,
+              ...(providerData ? { providerData } : {}),
             },
           ],
           status: 'completed',
@@ -432,19 +541,22 @@ export class OllamaModel implements Model {
       } else if (message.tool_calls) {
         for (const tool_call of message.tool_calls) {
           if (tool_call.type === 'function') {
-            const { id: callId, ...remainingToolCallData } = tool_call;
-            const { arguments: args, name, ...remainingFunctionData } = tool_call.function;
+            // Exclude 'type', 'id', and 'function' from tool_call, and 'arguments' and 'name' from function
+            // to prevent Chat Completions API format fields from being included in providerData
+            const { id: callId, type, function: func, ...remainingToolCallData } = tool_call;
+            const { arguments: args, name, ...remainingFunctionData } = func;
+            const cleanProviderData = removeToolCallsRecursively({
+              ...remainingToolCallData,
+              ...remainingFunctionData,
+            });
             output.push({
-              id: response.id,
+              id: generateMessageId(),
               type: 'function_call',
               arguments: args,
               name: name,
               callId: callId,
               status: 'completed',
-              providerData: {
-                ...remainingToolCallData,
-                ...remainingFunctionData,
-              },
+              ...(Object.keys(cleanProviderData).length > 0 ? { providerData: cleanProviderData } : {}),
             });
           }
         }
@@ -557,7 +669,7 @@ export class OllamaModel implements Model {
                 },
                 output: [
                   {
-                    id: responseId,
+                    id: generateMessageId(),
                     type: 'function_call' as const,
                     arguments: JSON.stringify(tool_call.function.arguments),
                     name: tool_call.function.name,
@@ -584,7 +696,7 @@ export class OllamaModel implements Model {
 
         if (accumulatedText) {
           outputs.push({
-            id: responseId,
+            id: generateMessageId(),
             type: 'message',
             role: 'assistant',
             content: [

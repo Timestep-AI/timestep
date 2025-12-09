@@ -1,13 +1,13 @@
 # OllamaModelProvider
 
-The `OllamaModelProvider` class provides access to Ollama models, supporting both local Ollama instances and Ollama Cloud. It implements the `ModelProvider` interface from the OpenAI Agents SDK.
+The `OllamaModelProvider` class provides access to Ollama models, supporting both local Ollama instances and [Ollama Cloud](https://ollama.com/cloud). It implements the `ModelProvider` interface from the OpenAI Agents SDK.
 
 ## Overview
 
 `OllamaModelProvider` handles:
 
 - **Local Ollama**: Connects to local Ollama instances (default: `http://localhost:11434`)
-- **Ollama Cloud**: Connects to Ollama Cloud using API key authentication
+- **[Ollama Cloud](https://ollama.com/cloud)**: Connects to Ollama Cloud using API key authentication
 - **Automatic Detection**: Automatically detects cloud vs local based on model name suffix (`-cloud`) or API key presence
 - **Lazy Initialization**: Only creates the Ollama client when actually needed
 
@@ -37,15 +37,15 @@ The `OllamaModelProvider` class provides access to Ollama models, supporting bot
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `api_key` / `apiKey` | `string \| undefined` | Ollama Cloud API key. If provided, uses Ollama Cloud. |
+| `api_key` / `apiKey` | `string \| undefined` | [Ollama Cloud](https://ollama.com/cloud) API key. If provided, uses Ollama Cloud. |
 | `base_url` / `baseURL` | `string \| undefined` | Base URL for Ollama instance. Defaults to `http://localhost:11434` for local or `https://ollama.com` for cloud. |
 | `ollama_client` / `ollamaClient` | `Any \| undefined` | Custom Ollama client instance. If provided, `api_key` and `base_url` are ignored. |
 
 ### Notes
 
-- If `api_key` is provided, the provider will use Ollama Cloud
+- If `api_key` is provided, the provider will use [Ollama Cloud](https://ollama.com/cloud)
 - If `api_key` is not provided, the provider defaults to local Ollama
-- Models ending with `-cloud` suffix automatically use Ollama Cloud URL
+- Models ending with `-cloud` suffix automatically use [Ollama Cloud](https://ollama.com/cloud) URL
 - The Ollama client is created lazily (only when `get_model()` is called)
 
 ## Methods
@@ -140,7 +140,7 @@ Returns an `OllamaModel` instance for the specified model name. The client is in
     const result = await runner.run(agent, agentInput, { stream: true });
     ```
 
-### Ollama Cloud
+### [Ollama Cloud](https://ollama.com/cloud)
 
 === "Python"
 
@@ -205,7 +205,7 @@ Returns an `OllamaModel` instance for the specified model name. The client is in
 
 ### Automatic Cloud Detection
 
-Models ending with `-cloud` automatically use Ollama Cloud:
+Models ending with `-cloud` automatically use [Ollama Cloud](https://ollama.com/cloud):
 
 === "Python"
 

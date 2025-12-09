@@ -142,7 +142,7 @@ def ensure_session_isolation():
     # Cleanup after test if needed
 
 
-async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None):
+async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None, model: str = "gpt-4.1"):
     """Run the agent test and return conversation items."""
     # Define guardrails
     @input_guardrail(run_in_parallel=run_in_parallel)
@@ -176,7 +176,7 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
 
     weather_assistant_agent = Agent(
         instructions="You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name="Weather Assistant",
         tools=[get_weather],
@@ -185,7 +185,7 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     personal_assistant_agent = Agent(
         handoffs=[weather_assistant_agent],
         instructions=f"{RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name="Personal Assistant",
         input_guardrails=[moon_guardrail],
@@ -272,7 +272,7 @@ async def run_agent_test(run_in_parallel: bool = True, stream: bool = False, ses
     return items_response.data
 
 
-async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None, start_index: int = 0, end_index: int = None):
+async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = False, session_id: str | None = None, start_index: int = 0, end_index: int = None, model: str = "gpt-4.1"):
     """Run partial agent test up to interruption and save state without approving.
     
     Returns a dict with "session_id" and "connection_string" for use in cross-language tests.
@@ -314,7 +314,7 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
 
     weather_assistant_agent = Agent(
         instructions="You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name="Weather Assistant",
         tools=[get_weather],
@@ -323,7 +323,7 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
     personal_assistant_agent = Agent(
         handoffs=[weather_assistant_agent],
         instructions=f"{RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name="Personal Assistant",
         input_guardrails=[moon_guardrail],
@@ -381,7 +381,7 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
     return {"session_id": current_session_id, "connection_string": connection_string}
 
 
-async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool = True, stream: bool = False):
+async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool = True, stream: bool = False, model: str = "gpt-4.1"):
     """Load state saved by TypeScript, approve, and continue execution."""
     # Define guardrails
     @input_guardrail(run_in_parallel=run_in_parallel)
@@ -415,7 +415,7 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
 
     weather_assistant_agent = Agent(
         instructions="You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name="Weather Assistant",
         tools=[get_weather],
@@ -424,7 +424,7 @@ async def run_agent_test_from_typescript(session_id: str, run_in_parallel: bool 
     personal_assistant_agent = Agent(
         handoffs=[weather_assistant_agent],
         instructions=f"{RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name="Personal Assistant",
         input_guardrails=[moon_guardrail],
@@ -688,10 +688,11 @@ def assert_conversation_items(cleaned, expected):
             assert cleaned_item == expected_item, f"Item {i} mismatch: {cleaned_item} != {expected_item}"
 
 @pytest.mark.asyncio
-async def test_run_agent_blocking_non_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_run_agent_blocking_non_streaming(model):
     """Test blocking (run_in_parallel=False) non-streaming execution."""
     # Don't pass session_id to ensure a fresh session is created
-    items = await run_agent_test(run_in_parallel=False, stream=False, session_id=None)
+    items = await run_agent_test(run_in_parallel=False, stream=False, session_id=None, model=model)
     cleaned = clean_items(items)
     
     # Debug: Print all items to identify the extra one
@@ -757,10 +758,11 @@ async def test_run_agent_blocking_non_streaming():
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
-async def test_run_agent_blocking_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_run_agent_blocking_streaming(model):
     """Test blocking (run_in_parallel=False) streaming execution."""
     # Don't pass session_id to ensure a fresh session is created
-    items = await run_agent_test(run_in_parallel=False, stream=True, session_id=None)
+    items = await run_agent_test(run_in_parallel=False, stream=True, session_id=None, model=model)
     cleaned = clean_items(items)
     if len(cleaned) != len(EXPECTED_ITEMS):
         import json
@@ -784,17 +786,19 @@ async def test_run_agent_blocking_streaming():
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
-async def test_run_agent_parallel_non_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_run_agent_parallel_non_streaming(model):
     """Test parallel (run_in_parallel=True) non-streaming execution."""
     # Don't pass session_id to ensure a fresh session is created
-    items = await run_agent_test(run_in_parallel=True, stream=False, session_id=None)
+    items = await run_agent_test(run_in_parallel=True, stream=False, session_id=None, model=model)
     cleaned = clean_items(items)
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
-async def test_run_agent_parallel_streaming():
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_run_agent_parallel_streaming(model):
     """Test parallel (run_in_parallel=True) streaming execution."""
     # Don't pass session_id to ensure a fresh session is created
-    items = await run_agent_test(run_in_parallel=True, stream=True, session_id=None)
+    items = await run_agent_test(run_in_parallel=True, stream=True, session_id=None, model=model)
     cleaned = clean_items(items)
     assert_conversation_items(cleaned, EXPECTED_ITEMS)

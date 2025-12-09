@@ -53,7 +53,10 @@ export class MultiModelProvider implements ModelProvider {
   /** This ModelProvider maps to a Model based on the prefix of the model name. By default, the
     mapping is:
     - "openai/" prefix or no prefix -> OpenAIProvider. e.g. "openai/gpt-4.1", "gpt-4.1"
-    - "ollama/" prefix -> OllamaModelProvider. e.g. "ollama/gpt-oss:20b-cloud"
+    - "ollama/" prefix -> OllamaModelProvider. e.g. "ollama/gpt-oss:20b" (local) or "ollama/gpt-oss:20b-cloud" (cloud)
+    
+    Note: The `-cloud` suffix in the model name (not the prefix) determines whether Ollama Cloud
+    or local Ollama is used. Models without the `-cloud` suffix use local Ollama by default.
 
     You can override or customize this mapping.
     */

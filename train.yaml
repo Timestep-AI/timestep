@@ -1,0 +1,59 @@
+# SkyPilot configuration for fine-tuning SmolVLM2-500M-Video-Instruct for function calling
+# Uses unsloth for efficient fine-tuning with LoRA
+#
+# Usage:
+#   sky launch -c smolvlm2-train train.yaml --env HF_TOKEN=your_token
+#   sky down smolvlm2-train
+
+# Request GPU resources
+resources:
+  accelerators: RTX3070-LAPTOP-GPU:1  # Use local GPU
+
+envs:
+  HF_TOKEN:  # HuggingFace token for model access and publishing
+
+workdir: .
+
+setup: |
+  set -ex
+
+  # Install Python dependencies
+  pip install --upgrade pip
+
+  # Install PyTorch first
+  echo "Installing PyTorch with CUDA 12.1 support..."
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+  # Install unsloth base package (without flash-attn extras)
+  # The cu121-ampere-torch250 extra requires flash-attn which needs NVCC + GPU
+  echo "Installing unsloth base package..."
+  pip install "unsloth @ git+https://github.com/unslothai/unsloth.git"
+
+  # Install xformers separately for attention optimization
+  echo "Installing xformers..."
+  pip install xformers --index-url https://download.pytorch.org/whl/cu121
+
+  # Install additional required packages
+  echo "Installing additional dependencies..."
+  pip install datasets huggingface_hub trl unsloth_zoo
+
+  echo "Setup complete!"
+
+run: |
+  set -ex
+
+  # Change to the synced workdir where train.py should be located
+  cd ~/sky_workdir
+
+  # Verify train.py exists
+  if [ ! -f train.py ]; then
+    echo "ERROR: train.py not found in ~/sky_workdir"
+    echo "Contents of ~/sky_workdir:"
+    ls -la
+    exit 1
+  fi
+
+  # Run training script
+  echo "Starting training..."
+  python3 train.py
+

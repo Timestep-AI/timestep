@@ -211,6 +211,7 @@ One of the most common use cases is switching between different model providers 
     openai_agent = Agent(model="gpt-4.1")
     
     # Use Ollama for simpler tasks or when privacy is important
+    # Note: -cloud suffix uses Ollama Cloud (https://ollama.com/cloud)
     ollama_agent = Agent(model="ollama/gpt-oss:20b-cloud")
     
     # Both use the same provider
@@ -241,6 +242,7 @@ One of the most common use cases is switching between different model providers 
     const openaiAgent = new Agent({ model: 'gpt-4.1' });
     
     // Use Ollama for simpler tasks or when privacy is important
+    // Note: -cloud suffix uses Ollama Cloud (https://ollama.com/cloud)
     const ollamaAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
     
     // Both use the same provider
@@ -417,7 +419,7 @@ Handle errors gracefully when providers are unavailable or models fail.
     except ModelBehaviorError as e:
         # Handle model-specific errors
         print(f"Model error: {e}")
-        # Fallback to different model
+        # Fallback to different model (Ollama Cloud, note: -cloud suffix)
         fallback_agent = Agent(model="ollama/gpt-oss:20b-cloud")
         result = await run_agent(fallback_agent, input_items, session, stream=False)
     except AgentsException as e:
@@ -440,7 +442,7 @@ Handle errors gracefully when providers are unavailable or models fail.
       if (e instanceof ModelBehaviorError) {
         // Handle model-specific errors
         console.error('Model error:', e.message);
-        // Fallback to different model
+        // Fallback to different model (Ollama Cloud, note: -cloud suffix)
         const fallbackAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
         const result = await runAgent(fallbackAgent, inputItems, session, false);
       } else if (e instanceof AgentsError) {

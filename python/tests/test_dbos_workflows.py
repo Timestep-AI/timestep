@@ -92,13 +92,14 @@ async def test_configure_dbos(setup_dbos):
     not os.environ.get("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY not set"
 )
-async def test_run_agent_workflow_basic(setup_dbos):
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_run_agent_workflow_basic(setup_dbos, model):
     """Test basic durable workflow execution."""
     # Create agent and session
     import uuid
     agent = Agent(
         instructions="You are a helpful assistant. Answer concisely.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name=f"Test Assistant Basic {uuid.uuid4().hex[:8]}",
     )
@@ -144,13 +145,14 @@ async def test_run_agent_workflow_basic(setup_dbos):
     not os.environ.get("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY not set"
 )
-async def test_queue_agent_workflow(setup_dbos):
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_queue_agent_workflow(setup_dbos, model):
     """Test queued workflow execution."""
     # Create agent and session
     import uuid
     agent = Agent(
         instructions="You are a helpful assistant. Answer concisely.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name=f"Test Assistant Queue {uuid.uuid4().hex[:8]}",
     )
@@ -224,14 +226,15 @@ async def test_queue_agent_workflow(setup_dbos):
     not os.environ.get("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY not set"
 )
-async def test_create_scheduled_workflow(setup_dbos):
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+async def test_create_scheduled_workflow(setup_dbos, model):
     """Test that scheduled workflows must be created before DBOS launch."""
     # This test verifies that scheduled workflows must be created before DBOS launch.
     # Since DBOS is launched in the fixture, this test should fail with an appropriate error.
     import uuid
     agent = Agent(
         instructions="You are a helpful assistant.",
-        model="gpt-4.1",
+        model=model,
         model_settings=ModelSettings(temperature=0),
         name=f"Test Assistant Scheduled {uuid.uuid4().hex[:8]}",
     )

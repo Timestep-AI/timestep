@@ -8,7 +8,9 @@ The `MultiModelProvider` class automatically routes model requests to the approp
 
 - Models without a prefix (e.g., `gpt-4`) default to OpenAI
 - Models with `openai/` prefix (e.g., `openai/gpt-4`) use OpenAI
-- Models with `ollama/` prefix (e.g., `ollama/gpt-oss:20b-cloud`) use Ollama
+- Models with `ollama/` prefix use Ollama:
+  - `ollama/gpt-oss:20b` → Ollama (local)
+  - `ollama/gpt-oss:20b-cloud` → [Ollama Cloud](https://ollama.com/cloud) (note: `-cloud` suffix determines cloud usage)
 - Custom prefixes can be mapped using `MultiModelProviderMap`
 
 ## Constructor
@@ -143,6 +145,8 @@ The routing logic works as follows:
 3. **Fallback to Default**: If no custom mapping found, use default providers:
    - `openai/` or no prefix → OpenAI
    - `ollama/` → Ollama (creates default OllamaModelProvider if needed)
+     - Models with `-cloud` suffix (e.g., `ollama/gpt-oss:20b-cloud`) use [Ollama Cloud](https://ollama.com/cloud)
+     - Models without `-cloud` suffix (e.g., `ollama/gpt-oss:20b`) use local Ollama
 
 ## Examples
 

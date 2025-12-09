@@ -35,11 +35,11 @@ function logItemDifferences(cleaned: any[], expected: any[], maxItems: number = 
   }
 }
 
-async function runTest(runInParallel: boolean, stream: boolean, sessionId: string): Promise<void> {
+async function runTest(runInParallel: boolean, stream: boolean, sessionId: string, model: string = "gpt-4.1"): Promise<void> {
   const testName = `test_cross_language_py_to_ts_${runInParallel ? 'parallel' : 'blocking'}_${stream ? 'streaming' : 'non_streaming'}`;
   try {
-    console.log(`Running test: ${testName}`);
-    const items = await runAgentTestFromPython(runInParallel, stream, sessionId);
+    console.log(`Running test: ${testName} with model: ${model}`);
+    const items = await runAgentTestFromPython(runInParallel, stream, sessionId, undefined, model);
     const cleaned = cleanItems(items);
     
     if (cleaned.length !== EXPECTED_ITEMS.length) {
@@ -64,16 +64,17 @@ async function runTest(runInParallel: boolean, stream: boolean, sessionId: strin
   }
 }
 
-// Get test variant and session ID from command line args
+// Get test variant, session ID, and model from command line args
 const args = process.argv.slice(2);
 if (args.length >= 3) {
   const runInParallel = args[0] === 'true';
   const stream = args[1] === 'true';
   const sessionId = args[2];
+  const model = args[3] || "gpt-4.1";
   (async () => {
-    await runTest(runInParallel, stream, sessionId);
+    await runTest(runInParallel, stream, sessionId, model);
   })();
 } else {
-  console.error('Usage: npx tsx test_cross_language_py_to_ts.ts <runInParallel> <stream> <sessionId>');
+  console.error('Usage: npx tsx test_cross_language_py_to_ts.ts <runInParallel> <stream> <sessionId> [model]');
   process.exit(1);
 }

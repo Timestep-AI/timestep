@@ -6,6 +6,7 @@ from .._vendored_imports import (
     AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
     SessionABC
 )
+from ..model_providers.multi_model_provider import MultiModelProvider
 
 async def default_result_processor(result: Any) -> Any:
     """
@@ -45,7 +46,8 @@ async def run_agent(
     run_input: list[TResponseInputItem] | RunState,
     session: SessionABC,
     stream: bool,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor
+    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor,
+    model_provider: Optional[Any] = None  # ModelProvider type
 ):
     """
     Run an agent with the given session and stream setting.
@@ -57,6 +59,8 @@ async def run_agent(
         stream: Whether to stream the results
         result_processor: Optional function to process the result. Defaults to default_result_processor
             which consumes all streaming events and waits for completion. Pass None to skip processing.
+        model_provider: Optional ModelProvider to use for resolving model names. If not provided,
+            defaults to MultiModelProvider which supports both OpenAI and Ollama models.
     
     Returns:
         The processed result from the agent run
@@ -65,9 +69,14 @@ async def run_agent(
         """Callback to merge new input with existing session items."""
         return existing_items + new_input
 
+    # Default to MultiModelProvider if no provider is specified
+    if model_provider is None:
+        model_provider = MultiModelProvider()
+
     run_config = RunConfig(
         nest_handoff_history=False, # Match TypeScript: don't nest handoff history
-        session_input_callback=session_input_callback
+        session_input_callback=session_input_callback,
+        model_provider=model_provider
     )
 
     try:

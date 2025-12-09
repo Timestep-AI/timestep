@@ -113,7 +113,7 @@ export function cleanItems(items: any[]): any[] {
   return items.map(removeId);
 }
 
-export async function runAgentTestPartial(runInParallel: boolean = true, stream: boolean = false, sessionId?: string, startIndex: number = 0, endIndex?: number): Promise<{ sessionId: string; connectionString?: string }> {
+export async function runAgentTestPartial(runInParallel: boolean = true, stream: boolean = false, sessionId?: string, startIndex: number = 0, endIndex?: number, model: string = "gpt-4.1"): Promise<{ sessionId: string; connectionString?: string }> {
   if (endIndex === undefined) {
     endIndex = RUN_INPUTS.length;
   }
@@ -148,7 +148,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
 
   const weatherAssistantAgent = new Agent({
     instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
-    model: "gpt-4.1",
+    model: model,
     modelSettings: { temperature: 0 },
     name: "Weather Assistant",
     tools: [getWeather],
@@ -157,7 +157,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
   const personalAssistantAgent = new Agent({
     handoffs: [weatherAssistantAgent],
     instructions: `${RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.`,
-    model: "gpt-4.1",
+    model: model,
     modelSettings: { temperature: 0 },
     name: "Personal Assistant",
     inputGuardrails: [moonGuardrail],
@@ -226,7 +226,7 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
   return { sessionId: currentSessionId, connectionString };
 }
 
-export async function runAgentTestFromPython(runInParallel: boolean = true, stream: boolean = false, sessionId: string, connectionString?: string): Promise<any[]> {
+export async function runAgentTestFromPython(runInParallel: boolean = true, stream: boolean = false, sessionId: string, connectionString?: string, model: string = "gpt-4.1"): Promise<any[]> {
   // Configure DBOS before loading state (only need configuration, not launch, since we're just using the database connection)
   // Use provided connectionString if available (for TS->TS tests), otherwise use PG_CONNECTION_URI from env (for Python->TS tests)
   const { configureDBOS } = await import('../timestep/config/dbos_config.ts');
@@ -275,7 +275,7 @@ export async function runAgentTestFromPython(runInParallel: boolean = true, stre
 
   const weatherAssistantAgent = new Agent({
     instructions: `You are a helpful AI assistant that can answer questions about weather. When asked about weather, you MUST use the get_weather tool to get accurate, real-time weather information.`,
-    model: "gpt-4.1",
+    model: model,
     modelSettings: { temperature: 0 },
     name: "Weather Assistant",
     tools: [getWeather],
@@ -284,7 +284,7 @@ export async function runAgentTestFromPython(runInParallel: boolean = true, stre
   const personalAssistantAgent = new Agent({
     handoffs: [weatherAssistantAgent],
     instructions: `${RECOMMENDED_PROMPT_PREFIX}You are an AI agent acting as a personal assistant.`,
-    model: "gpt-4.1",
+    model: model,
     modelSettings: { temperature: 0 },
     name: "Personal Assistant",
     inputGuardrails: [moonGuardrail],

@@ -24,6 +24,29 @@ def generate_completion_id() -> str:
     return generate_openai_id('chatcmpl-', 29)
 
 
+def generate_message_id() -> str:
+    return generate_openai_id('msg_', 27)
+
+
+def remove_tool_calls_recursively(obj: Any) -> Any:
+    """Recursively remove tool_calls from an object to prevent them from being
+    included in provider_data when saving to Conversations API.
+    """
+    if not obj or not isinstance(obj, dict):
+        return obj
+    result = {}
+    for key, value in obj.items():
+        if key in ('tool_calls', 'toolCalls'):
+            continue  # Skip tool_calls
+        if isinstance(value, dict):
+            result[key] = remove_tool_calls_recursively(value)
+        elif isinstance(value, list):
+            result[key] = [remove_tool_calls_recursively(item) if isinstance(item, dict) else item for item in value]
+        else:
+            result[key] = value
+    return result
+
+
 class OllamaModel(Model):
     """Ollama Model implementation that converts Ollama responses to OpenAI format.
     
@@ -222,10 +245,34 @@ class OllamaModel(Model):
             elif isinstance(msg_content, dict) and msg_content.get('text'):
                 content = msg_content.get('text', '')
 
+            # Extract images from content
+            images = []
+            if isinstance(msg_content, list):
+                for part in msg_content:
+                    if isinstance(part, dict) and part.get('type') == 'input_image' and part.get('image'):
+                        image = part.get('image')
+                        # Extract base64 from data URL or use as-is
+                        if isinstance(image, str):
+                            # If it's a data URL (data:image/...;base64,<base64>), extract the base64 part
+                            if image.startswith('data:'):
+                                comma_index = image.find(',')
+                                if comma_index != -1:
+                                    images.append(image[comma_index + 1:])
+                                else:
+                                    images.append(image)
+                            else:
+                                # If it's already base64 (no data: prefix), use as-is
+                                images.append(image)
+                        # Note: File ID references (dict with 'id') are not supported by Ollama
+
             ollama_msg: dict[str, Any] = {
                 'role': msg.get('role'),
                 'content': content,
             }
+
+            # Add images array if there are any images
+            if images:
+                ollama_msg['images'] = images
 
             if msg.get('role') == 'tool' and msg.get('tool_call_id'):
                 ollama_msg['tool_call_id'] = msg.get('tool_call_id')
@@ -392,57 +439,72 @@ class OllamaModel(Model):
                 and message.get('content') != ''
                 and not (message.get('tool_calls') and message.get('content') == '')
             ):
+                # Exclude tool_calls from provider_data - they're for Chat Completions API format only,
+                # not for Conversations API which expects function_call items instead
+                # Also recursively remove tool_calls from nested objects to prevent them from being
+                # included via camelOrSnakeToSnakeCase processing
+                # Only include fields other than 'role' in providerData (role is already set on the message item)
                 content = message.get('content', '')
-                rest = {k: v for k, v in message.items() if k != 'content'}
+                rest = {k: v for k, v in message.items() if k not in ['content', 'tool_calls', 'role']}
+                clean_rest = remove_tool_calls_recursively(rest)
+                # Only set provider_data if there's actually something to include
+                content_item = {
+                    'type': 'output_text',
+                    'text': content or '',
+                }
+                if clean_rest:
+                    content_item['provider_data'] = clean_rest
                 output.append({
-                    'id': response.get('id'),
+                    'id': generate_message_id(),
                     'type': 'message',
                     'role': 'assistant',
-                    'content': [
-                        {
-                            'type': 'output_text',
-                            'text': content or '',
-                            'provider_data': rest,
-                        }
-                    ],
+                    'content': [content_item],
                     'status': 'completed',
                 })
             elif message.get('refusal'):
+                # Exclude tool_calls from provider_data
                 refusal = message.get('refusal')
-                rest = {k: v for k, v in message.items() if k != 'refusal'}
+                rest = {k: v for k, v in message.items() if k not in ['refusal', 'tool_calls', 'role']}
+                clean_rest = remove_tool_calls_recursively(rest)
+                # Only set provider_data if there's actually something to include
+                content_item = {
+                    'type': 'refusal',
+                    'refusal': refusal or '',
+                }
+                if clean_rest:
+                    content_item['provider_data'] = clean_rest
                 output.append({
-                    'id': response.get('id'),
+                    'id': generate_message_id(),
                     'type': 'message',
                     'role': 'assistant',
-                    'content': [
-                        {
-                            'type': 'refusal',
-                            'refusal': refusal or '',
-                            'provider_data': rest,
-                        }
-                    ],
+                    'content': [content_item],
                     'status': 'completed',
                 })
             elif message.get('tool_calls'):
                 for tool_call in message.get('tool_calls', []):
                     if tool_call.get('type') == 'function':
+                        # Exclude 'type', 'id', and 'function' from tool_call, and 'arguments' and 'name' from function
+                        # to prevent Chat Completions API format fields from being included in provider_data
                         call_id = tool_call.get('id')
-                        remaining_tool_call_data = {k: v for k, v in tool_call.items() if k != 'id'}
+                        remaining_tool_call_data = {k: v for k, v in tool_call.items() if k not in ['id', 'type', 'function']}
                         args = tool_call['function'].get('arguments', '')
                         name = tool_call['function'].get('name')
                         remaining_function_data = {k: v for k, v in tool_call['function'].items() if k not in ['arguments', 'name']}
-                        output.append({
-                            'id': response.get('id'),
+                        provider_data = remove_tool_calls_recursively({
+                            **remaining_tool_call_data,
+                            **remaining_function_data,
+                        })
+                        function_call_item = {
+                            'id': generate_message_id(),
                             'type': 'function_call',
                             'arguments': args,
                             'name': name,
                             'call_id': call_id,
                             'status': 'completed',
-                            'provider_data': {
-                                **remaining_tool_call_data,
-                                **remaining_function_data,
-                            },
-                        })
+                        }
+                        if provider_data:
+                            function_call_item['provider_data'] = provider_data
+                        output.append(function_call_item)
 
         # Build ModelResponse
         usage_obj = Usage(**self._to_response_usage(response.get('usage', {}))) if response.get('usage') else Usage()
@@ -496,8 +558,8 @@ class OllamaModel(Model):
         usage: Optional[dict[str, Any]] = None
         accumulated_text = ''
         response_id = generate_completion_id()
-        # Generate a temporary item_id for streaming events
-        item_id = generate_completion_id()
+        # Generate a message ID for streaming events (must start with 'msg_' for OpenAI Conversations API)
+        item_id = generate_message_id()
 
         async for chunk in stream:
             if chunk.get('eval_count') or chunk.get('prompt_eval_count'):
@@ -531,7 +593,7 @@ class OllamaModel(Model):
 
                         # Create output with tool call - use proper ResponseFunctionToolCall type
                         tool_call_output_item = ResponseFunctionToolCall(
-                            id=response_id,
+                            id=generate_message_id(),
                             type='function_call',
                             call_id=call_id,
                             name=tool_call['function'].get('name'),

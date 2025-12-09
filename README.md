@@ -311,7 +311,8 @@ See the [DBOS Workflows documentation](docs/docs/dbos-workflows.md) for more det
 
 ## Routing models
 - `gpt-4.1` or `openai/gpt-4.1` → OpenAI
-- `ollama/gpt-oss:20b-cloud` → Ollama (local or cloud)
+- `ollama/gpt-oss:20b` → Ollama (local)
+- `ollama/gpt-oss:20b-cloud` → [Ollama Cloud](https://ollama.com/cloud) (note: `-cloud` suffix determines cloud usage)
 - Add your own prefixes via `MultiModelProviderMap`.
 
 ## Docs

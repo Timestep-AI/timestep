@@ -21,6 +21,11 @@ def get_session_id_from_env() -> str:
     return session_id
 
 
+def get_model_from_env() -> str:
+    """Get model from environment variable, default to gpt-4.1."""
+    return os.environ.get('CROSS_LANG_MODEL', 'gpt-4.1')
+
+
 def log_item_differences(cleaned, expected, max_items=None):
     """Log detailed differences between actual and expected items."""
     print(f"\n{'='*80}")
@@ -57,7 +62,8 @@ def log_item_differences(cleaned, expected, max_items=None):
 async def test_cross_language_ts_to_py_blocking_non_streaming():
     """Test TypeScript -> Python: blocking, non-streaming."""
     session_id = get_session_id_from_env()
-    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=False)
+    model = get_model_from_env()
+    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=False, model=model)
     cleaned = clean_items(items)
 
     if len(cleaned) != len(EXPECTED_ITEMS):
@@ -71,7 +77,8 @@ async def test_cross_language_ts_to_py_blocking_non_streaming():
 async def test_cross_language_ts_to_py_blocking_streaming():
     """Test TypeScript -> Python: blocking, streaming."""
     session_id = get_session_id_from_env()
-    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=True)
+    model = get_model_from_env()
+    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=False, stream=True, model=model)
     cleaned = clean_items(items)
 
     if len(cleaned) != len(EXPECTED_ITEMS):
@@ -85,7 +92,8 @@ async def test_cross_language_ts_to_py_blocking_streaming():
 async def test_cross_language_ts_to_py_parallel_non_streaming():
     """Test TypeScript -> Python: parallel, non-streaming."""
     session_id = get_session_id_from_env()
-    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=False)
+    model = get_model_from_env()
+    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=False, model=model)
     cleaned = clean_items(items)
 
     if len(cleaned) != len(EXPECTED_ITEMS):
@@ -99,7 +107,8 @@ async def test_cross_language_ts_to_py_parallel_non_streaming():
 async def test_cross_language_ts_to_py_parallel_streaming():
     """Test TypeScript -> Python: parallel, streaming."""
     session_id = get_session_id_from_env()
-    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=True)
+    model = get_model_from_env()
+    items = await run_agent_test_from_typescript(session_id=session_id, run_in_parallel=True, stream=True, model=model)
     cleaned = clean_items(items)
 
     if len(cleaned) != len(EXPECTED_ITEMS):

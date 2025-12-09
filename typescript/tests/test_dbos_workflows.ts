@@ -102,9 +102,9 @@ test('test_configure_dbos', () => {
   // If we get here, configuration worked
 });
 
-test('test_run_agent_workflow_basic', async () => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_workflow_basic with %s', async (model) => {
   const env = typeof process !== 'undefined' ? process.env : {};
-  if (!env['OPENAI_API_KEY']) {
+  if (!env['OPENAI_API_KEY'] && !env['OLLAMA_API_KEY']) {
     return; // Skip if no API key
   }
 
@@ -112,7 +112,7 @@ test('test_run_agent_workflow_basic', async () => {
   const agentName = `test-assistant-basic-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   const agent = new Agent({
     instructions: 'You are a helpful assistant. Answer concisely.',
-    model: 'gpt-4.1',
+    model: model,
     modelSettings: { temperature: 0 },
     name: agentName,
   });
@@ -179,9 +179,9 @@ test('test_run_agent_workflow_basic', async () => {
   }
 });
 
-test('test_queue_agent_workflow', async () => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_queue_agent_workflow with %s', async (model) => {
   const env = typeof process !== 'undefined' ? process.env : {};
-  if (!env['OPENAI_API_KEY']) {
+  if (!env['OPENAI_API_KEY'] && !env['OLLAMA_API_KEY']) {
     return; // Skip if no API key
   }
 
@@ -189,7 +189,7 @@ test('test_queue_agent_workflow', async () => {
   const agentName = `test-assistant-queue-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   const agent = new Agent({
     instructions: 'You are a helpful assistant. Answer concisely.',
-    model: 'gpt-4.1',
+    model: model,
     modelSettings: { temperature: 0 },
     name: agentName,
   });
@@ -306,13 +306,13 @@ test('test_queue_agent_workflow', async () => {
   }
 });
 
-test('test_create_scheduled_workflow', async () => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_create_scheduled_workflow with %s', async (model) => {
   // This test verifies that scheduled workflows must be created before DBOS launch.
   // Since DBOS is launched in beforeAll, this test should fail with an appropriate error.
   const agentName = `test-assistant-scheduled-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   const agent = new Agent({
     instructions: 'You are a helpful assistant.',
-    model: 'gpt-4.1',
+    model: model,
     modelSettings: { temperature: 0 },
     name: agentName,
   });
