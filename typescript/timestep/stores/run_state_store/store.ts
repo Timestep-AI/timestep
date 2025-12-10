@@ -65,7 +65,8 @@ export class RunStateStore {
       await this._initializeDatabase();
     }
     if (!this.connected) {
-      const connected = await this.db.connect();
+      const db = this.getDb();
+      const connected = await db.connect();
       if (!connected) {
         throw new Error(
           'Failed to connect to database. ' +
@@ -74,6 +75,13 @@ export class RunStateStore {
       }
       this.connected = true;
     }
+  }
+
+  private getDb(): DatabaseConnection {
+    if (!this.db) {
+      throw new Error('Database not initialized. Call ensureConnected() first.');
+    }
+    return this.db;
   }
 
   private async ensureSessionId(): Promise<string> {
@@ -100,7 +108,7 @@ export class RunStateStore {
     const stateType = stateJson.interruptions?.length > 0 ? 'interrupted' : 'checkpoint';
 
     // Mark previous states as inactive
-    await this.db.query(
+    await this.getDb().query(
       `UPDATE run_states
        SET is_active = false
        WHERE run_id = $1 AND is_active = true`,
@@ -108,7 +116,7 @@ export class RunStateStore {
     );
 
     // Insert new state
-    await this.db.query(
+    await this.getDb().query(
       `INSERT INTO run_states (run_id, state_type, schema_version, state_data, is_active)
        VALUES ($1, $2, $3, $4, true)`,
       [sessionId, stateType, RunStateStore.SCHEMA_VERSION, JSON.stringify(stateJson)]
@@ -120,7 +128,7 @@ export class RunStateStore {
     const sessionId = await this.ensureSessionId();
 
     // Fetch active state
-    const result = await this.db.query(
+    const result = await this.getDb().query(
       `SELECT state_data, state_type, created_at
        FROM run_states
        WHERE run_id = $1 AND is_active = true
@@ -139,7 +147,7 @@ export class RunStateStore {
     const row = result.rows[0];
 
     // Update resumed_at timestamp
-    await this.db.query(
+    await this.getDb().query(
       `UPDATE run_states
        SET resumed_at = NOW()
        WHERE run_id = $1 AND is_active = true`,
@@ -164,7 +172,7 @@ export class RunStateStore {
 
     try {
       await this.ensureConnected();
-      await this.db.query(
+      await this.getDb().query(
         `UPDATE run_states
          SET is_active = false
          WHERE run_id = $1`,
