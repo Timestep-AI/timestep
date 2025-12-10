@@ -1336,7 +1336,7 @@ wheels = [
 
 [[package]]
 name = "timestep"
-version = "2026.0.35"
+version = "2026.0.36"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
