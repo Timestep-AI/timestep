@@ -159,9 +159,13 @@ class RunResult(RunResultBase):
     _current_turn_persisted_item_count: int = 0
     """Number of items from new_items already persisted to session for the
     current turn."""
+    _current_turn: int = 0
+    """The current turn number. This is preserved when converting to RunState."""
     _original_input: str | list[TResponseInputItem] | None = field(default=None, repr=False)
     """The original input from the first turn. Unlike `input`, this is never updated during the run.
     Used by to_state() to preserve the correct originalInput when serializing state."""
+    max_turns: int = 10
+    """The maximum number of turns allowed for this run."""
 
     def __post_init__(self) -> None:
         self._last_agent_ref = weakref.ref(self._last_agent)
@@ -218,7 +222,7 @@ class RunResult(RunResultBase):
             if original_input_for_state is not None
             else self.input,
             starting_agent=self.last_agent,
-            max_turns=10,  # This will be overridden by the runner
+            max_turns=self.max_turns,
         )
 
         # Populate the state with data from the result
@@ -227,6 +231,7 @@ class RunResult(RunResultBase):
         state._input_guardrail_results = self.input_guardrail_results
         state._output_guardrail_results = self.output_guardrail_results
         state._last_processed_response = self._last_processed_response
+        state._current_turn = self._current_turn
         state._current_turn_persisted_item_count = self._current_turn_persisted_item_count
         state.set_tool_use_tracker_snapshot(self._tool_use_tracker_snapshot)
 
