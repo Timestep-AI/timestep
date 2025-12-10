@@ -167,7 +167,7 @@ Returns an `OllamaModel` instance for the specified model name. The client is in
 
     // Use Ollama Cloud with API key
     const cloudProvider = new OllamaModelProvider({
-      apiKey: Deno.env.get('OLLAMA_API_KEY'),
+      apiKey: process.env('OLLAMA_API_KEY'),
     });
 
     const agent = new Agent({ model: 'llama3' });

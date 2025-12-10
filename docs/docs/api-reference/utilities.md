@@ -16,7 +16,8 @@ A convenience function for running agents with session management and error hand
         run_input: list[TResponseInputItem] | RunState,
         session: SessionABC,
         stream: bool,
-        result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor
+        result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor,
+        model_provider: Optional[Any] = None
     ) -> Any
     ```
 
@@ -28,7 +29,8 @@ A convenience function for running agents with session management and error hand
       runInput: AgentInputItem[] | RunState<any, any>,
       session: Session,
       stream: boolean,
-      resultProcessor?: (result: any) => Promise<any>
+      resultProcessor?: (result: any) => Promise<any>,
+      modelProvider?: any
     ): Promise<any>
     ```
 
@@ -41,6 +43,7 @@ A convenience function for running agents with session management and error hand
 | `session` | `SessionABC` / `Session` | The session to use for maintaining conversation context. |
 | `stream` | `bool` / `boolean` | Whether to use streaming mode. |
 | `result_processor` / `resultProcessor` | `Optional[Callable[[Any], Awaitable[Any]]]` / `(result: any) => Promise<any> \| undefined` | Optional function to process the result. Defaults to `default_result_processor`/`defaultResultProcessor` which consumes all streaming events and waits for completion. Pass `None`/`undefined` to skip processing. |
+| `model_provider` / `modelProvider` | `Optional[Any]` / `any \| undefined` | Optional ModelProvider to use for resolving model names. If not provided, defaults to `MultiModelProvider` which supports both OpenAI and Ollama models. |
 
 ### Returns
 
@@ -55,6 +58,7 @@ A convenience function for running agents with session management and error hand
 - **Streaming Support**: Supports both streaming and non-streaming modes
 - **Configuration**: Uses default RunConfig settings (nest_handoff_history=False)
 - **Result Processing**: Automatically processes results by default (consumes streaming events, waits for completion). Can be customized via `result_processor`/`resultProcessor` parameter.
+- **Model Provider Support**: Supports custom model providers via `model_provider`/`modelProvider` parameter. Defaults to `MultiModelProvider` which supports both OpenAI and Ollama models.
 
 ### Example
 
@@ -234,6 +238,93 @@ You can provide a custom result processor to `run_agent`/`runAgent` to handle re
       session,
       true,
       undefined
+    );
+    ```
+
+### Custom Model Provider
+
+You can provide a custom model provider to `run_agent`/`runAgent` to use different model backends:
+
+=== "Python"
+
+    ```python
+    from timestep import run_agent, MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
+    from agents import Agent, Session
+    import os
+
+    # Create custom model provider
+    provider_map = MultiModelProviderMap()
+    provider_map.add_provider(
+        "ollama",
+        OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
+    )
+    model_provider = MultiModelProvider(
+        provider_map=provider_map,
+        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+    )
+
+    agent = Agent(model="gpt-4.1")  # Uses OpenAI by default
+    session = Session()
+
+    # Use custom model provider
+    result = await run_agent(
+        agent,
+        [{"role": "user", "content": "Hello"}],
+        session,
+        stream=False,
+        model_provider=model_provider
+    )
+
+    # Or use Ollama model with the same provider
+    ollama_agent = Agent(model="ollama/gpt-oss:20b-cloud")
+    result = await run_agent(
+        ollama_agent,
+        [{"role": "user", "content": "Hello"}],
+        session,
+        stream=False,
+        model_provider=model_provider
+    )
+    ```
+
+=== "TypeScript"
+
+    ```typescript
+    import { runAgent, MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
+
+    // Create custom model provider
+    const providerMap = new MultiModelProviderMap();
+    providerMap.addProvider(
+      'ollama',
+      new OllamaModelProvider({ apiKey: process.env.OLLAMA_API_KEY })
+    );
+    const modelProvider = new MultiModelProvider({
+      provider_map: providerMap,
+      openai_api_key: process.env.OPENAI_API_KEY || '',
+    });
+
+    const agent = new Agent({ model: 'gpt-4.1' }); // Uses OpenAI by default
+    const session = new Session();
+
+    // Use custom model provider
+    const result = await runAgent(
+      agent,
+      [{ role: 'user', content: 'Hello' }],
+      session,
+      false,
+      undefined,
+      modelProvider
+    );
+
+    // Or use Ollama model with the same provider
+    const ollamaAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
+    const result2 = await runAgent(
+      ollamaAgent,
+      [{ role: 'user', content: 'Hello' }],
+      session,
+      false,
+      undefined,
+      modelProvider
     );
     ```
 

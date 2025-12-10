@@ -106,7 +106,7 @@ To use the web search tool, you need:
     });
 
     const modelProvider = new MultiModelProvider({
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env('OPENAI_API_KEY') || '',
     });
 
     const runner = new Runner({ modelProvider });

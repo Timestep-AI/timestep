@@ -288,18 +288,18 @@ Timestep also provides multi-model provider support for OpenAI and Ollama:
 === "TypeScript"
 
     ```typescript
-    import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
-    import { Agent, Runner } from '@openai/agents';
+    import { runAgent, MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
+    import { Agent, Session } from '@openai/agents';
 
     // Create a provider map and add Ollama support (works with both local and cloud)
     const modelProviderMap = new MultiModelProviderMap();
 
     // Add Ollama Cloud support (if API key is set)
-    if (Deno.env.get('OLLAMA_API_KEY')) {
+    if (process.env.OLLAMA_API_KEY) {
       modelProviderMap.addProvider(
         'ollama',
         new OllamaModelProvider({
-          apiKey: Deno.env.get('OLLAMA_API_KEY'),
+          apiKey: process.env.OLLAMA_API_KEY,
         })
       );
     }
@@ -309,16 +309,16 @@ Timestep also provides multi-model provider support for OpenAI and Ollama:
     // Create MultiModelProvider with OpenAI fallback
     const modelProvider = new MultiModelProvider({
       provider_map: modelProviderMap,
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env.OPENAI_API_KEY || '',
     });
 
     // Create agent with model name
     const agent = new Agent({ model: 'gpt-4.1' }); // Uses OpenAI by default
     // Or: new Agent({ model: 'ollama/gpt-oss:20b-cloud' }) // Uses Ollama Cloud (note: -cloud suffix)
 
-    // Run agent with Runner
-    const runner = new Runner({ modelProvider });
-    const result = await runner.run(agent, agentInput, { stream: true });
+    // Run agent with runAgent
+    const session = new Session();
+    const result = await runAgent(agent, agentInput, session, true, undefined, modelProvider);
     ```
 
 ### Using OllamaModelProvider Directly

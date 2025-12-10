@@ -8,7 +8,7 @@ Timestep's durable execution system enables resumable agent workflows with cross
 
 ### State Persistence Flow
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Agent Execution                           │
 │                  (Python or TypeScript)                     │
@@ -62,7 +62,7 @@ Timestep's state format is identical between Python and TypeScript, enabling sea
 
 ## System Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    OpenAI Agents SDK                        │
 │                  (Agent, Runner, etc.)                     │

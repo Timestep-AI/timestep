@@ -75,7 +75,7 @@ Adds a new prefix-to-provider mapping.
     const providerMap = new MultiModelProviderMap();
     providerMap.addProvider(
       'ollama',
-      new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
     );
     ```
 
@@ -363,13 +363,13 @@ Replaces all mappings with a new set of mappings.
     const providerMap = new MultiModelProviderMap();
     providerMap.addProvider(
       'ollama',
-      new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
     );
 
     // Use in MultiModelProvider
     const modelProvider = new MultiModelProvider({
       provider_map: providerMap,
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env('OPENAI_API_KEY') || '',
     });
     ```
 
@@ -423,7 +423,7 @@ Replaces all mappings with a new set of mappings.
     // Ollama Cloud
     providerMap.addProvider(
       'cloud',
-      new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
     );
     ```
 
@@ -460,10 +460,10 @@ Replaces all mappings with a new set of mappings.
     const providerMap = new MultiModelProviderMap();
 
     // Add provider conditionally
-    if (Deno.env.get('OLLAMA_API_KEY')) {
+    if (process.env('OLLAMA_API_KEY')) {
       providerMap.addProvider(
         'ollama',
-        new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+        new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
       );
     }
 

@@ -121,12 +121,12 @@ Returns a `Model` instance based on the model name. The model name can have a pr
     const providerMap = new MultiModelProviderMap();
     providerMap.addProvider(
       'ollama',
-      new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
     );
 
     const modelProvider = new MultiModelProvider({
       provider_map: providerMap,
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env('OPENAI_API_KEY') || '',
     });
 
     // Get OpenAI model
@@ -178,7 +178,7 @@ The routing logic works as follows:
 
     // Simple setup with defaults
     const modelProvider = new MultiModelProvider({
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env('OPENAI_API_KEY') || '',
     });
 
     // Use OpenAI model
@@ -221,12 +221,12 @@ The routing logic works as follows:
     const providerMap = new MultiModelProviderMap();
     providerMap.addProvider(
       'ollama',
-      new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
     );
 
     const modelProvider = new MultiModelProvider({
       provider_map: providerMap,
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env('OPENAI_API_KEY') || '',
     });
 
     // Now you can use both providers

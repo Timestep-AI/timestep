@@ -9,7 +9,8 @@ One of Timestep's core features is durable execution with built-in state persist
 === "Python"
 
     ```python
-    from timestep import run_agent, RunStateStore,     from agents import Agent, Session
+    from timestep import run_agent, RunStateStore
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
     session = Session()
@@ -20,7 +21,6 @@ One of Timestep's core features is durable execution with built-in state persist
 
     # Run agent
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await (result)
 
     # Handle interruptions (e.g., tool calls requiring approval)
     if result.interruptions:
@@ -35,13 +35,12 @@ One of Timestep's core features is durable execution with built-in state persist
         
         # Resume execution
         result = await run_agent(agent, loaded_state, session, stream=False)
-        result = await (result)
     ```
 
 === "TypeScript"
 
     ```typescript
-    import { runAgent, RunStateStore,  } from '@timestep-ai/timestep';
+    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4.1' });
@@ -68,7 +67,6 @@ One of Timestep's core features is durable execution with built-in state persist
       
       // Resume execution
       result = await runAgent(agent, loadedState, session, false);
-      result = await (result);
     }
     ```
 
@@ -95,7 +93,6 @@ Start execution in Python, interrupt for tool approval, and resume in TypeScript
 
     # Run until interruption
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await (result)
 
     if result.interruptions:
         # Save state - can be loaded in TypeScript!
@@ -149,7 +146,6 @@ Start execution in TypeScript, interrupt for tool approval, and resume in Python
 
     // Run until interruption
     let result = await runAgent(agent, inputItems, session, false);
-    result = await (result);
 
     if (result.interruptions?.length) {
       // Save state - can be loaded in Python!
@@ -226,16 +222,16 @@ One of the most common use cases is switching between different model providers 
 
     // Setup provider with both OpenAI and Ollama
     const modelProviderMap = new MultiModelProviderMap();
-    if (Deno.env.get('OLLAMA_API_KEY')) {
+    if (process.env('OLLAMA_API_KEY')) {
       modelProviderMap.addProvider(
         'ollama',
-        new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+        new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
       );
     }
 
     const modelProvider = new MultiModelProvider({
       provider_map: modelProviderMap,
-      openai_api_key: Deno.env.get('OPENAI_API_KEY') || '',
+      openai_api_key: process.env('OPENAI_API_KEY') || '',
     });
 
     // Use OpenAI for complex tasks
@@ -310,7 +306,7 @@ Create custom provider mappings for specialized use cases, such as multiple Olla
     // Ollama Cloud for specific use cases
     providerMap.addProvider(
       'cloud',
-      new OllamaModelProvider({ apiKey: Deno.env.get('OLLAMA_API_KEY') })
+      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
     );
     
     const modelProvider = new MultiModelProvider({ provider_map: providerMap });
@@ -328,11 +324,14 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
 === "Python - Streaming"
 
     ```python
-    from timestep import run_agent,     from agents import Agent, Session
+    from timestep import run_agent
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
     session = Session()
 
+    from timestep import default_result_processor
+    
     # Streaming response
     result = await run_agent(agent, input_items, session, stream=True)
     
@@ -342,20 +341,20 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
         print(event)
     
     # Ensure all events are consumed
-    result = await (result)
+    result = await default_result_processor(result)
     ```
 
 === "Python - Non-Streaming"
 
     ```python
-    from timestep import run_agent,     from agents import Agent, Session
+    from timestep import run_agent
+    from agents import Agent, Session
 
     agent = Agent(model="gpt-4.1")
     session = Session()
 
     # Non-streaming response
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await (result)
     
     # Access final result
     print(result.final_output)
@@ -380,13 +379,13 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
     }
     
     // Ensure all events are consumed
-    await (result);
+    await defaultResultProcessor(result);
     ```
 
 === "TypeScript - Non-Streaming"
 
     ```typescript
-    import { runAgent,  } from '@timestep-ai/timestep';
+    import { runAgent } from '@timestep-ai/timestep';
     import { Agent, Session } from '@openai/agents';
 
     const agent = new Agent({ model: 'gpt-4.1' });
@@ -394,7 +393,6 @@ Timestep supports both streaming and non-streaming responses. Choose based on yo
 
     // Non-streaming response
     let result = await runAgent(agent, inputItems, session, false);
-    result = await (result);
     
     // Access final result
     console.log(result.finalOutput);
@@ -459,7 +457,8 @@ Use sessions to maintain conversation context across multiple agent runs.
 === "Python"
 
     ```python
-    from timestep import run_agent,     from agents import Agent, Session
+    from timestep import run_agent
+    from agents import Agent, Session
 
     # Create agent with model provider
     agent = Agent(model="gpt-4.1")
@@ -474,8 +473,6 @@ Use sessions to maintain conversation context across multiple agent runs.
         session,
         stream=False
     )
-    await (result1)
-    
     # Second message - session maintains context
     result2 = await run_agent(
         agent,
@@ -483,7 +480,6 @@ Use sessions to maintain conversation context across multiple agent runs.
         session,
         stream=False
     )
-    await (result2)
     
     # Agent remembers: "Alice"
     ```
@@ -516,7 +512,6 @@ Use sessions to maintain conversation context across multiple agent runs.
       session,
       false
     );
-    await (result2);
     
     // Agent remembers: "Alice"
     ```
@@ -537,7 +532,6 @@ Timestep includes built-in tools like web search. Here's how to use them:
     session = Session()
 
     result = await run_agent(agent, input_items, session, stream=False)
-    result = await (result)
     ```
 
 === "TypeScript"
@@ -552,7 +546,6 @@ Timestep includes built-in tools like web search. Here's how to use them:
     const session = new Session();
 
     const result = await runAgent(agent, inputItems, session, false);
-    const finalResult = await (result);
     ```
 
 ## Cross-Language Compatibility
@@ -573,12 +566,12 @@ Both implementations support:
 **Python:**
 - Uses `run_agent()` for execution
 - Uses `RunStateStore` for state persistence
-- Uses `()` for result handling
+- Uses `default_result_processor()` for result handling
 
 **TypeScript:**
 - Uses `runAgent()` for execution
 - Uses `RunStateStore` for state persistence
-- Uses `()` for result handling
+- Uses `defaultResultProcessor()` for result handling
 
 ## Best Practices
 
