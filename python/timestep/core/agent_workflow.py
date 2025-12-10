@@ -122,9 +122,28 @@ async def _execute_agent_with_state_handling(
     session_id: str,
     stream: bool,
     result_processor: Optional[Callable[[Any], Awaitable[Any]]],
-    timeout_seconds: Optional[float]
+    timeout_seconds: Optional[float],
+    verify: bool = True  # New parameter for safety checks
 ) -> Any:
     """Execute agent and handle state persistence via RunStateStore."""
+    # Optional safety checks
+    if verify:
+        from ..analysis.safety import CircularDependencyChecker, ToolCompatibilityChecker
+        import warnings
+        
+        # Check for circular handoffs
+        cycle_checker = CircularDependencyChecker()
+        cycle = await cycle_checker.check_circular_handoffs(agent_id)
+        if cycle:
+            raise ValueError(f"Agent {agent_id} has circular handoff dependencies: {' -> '.join(cycle)}")
+        
+        # Check tool compatibility
+        compat_checker = ToolCompatibilityChecker()
+        compat_warnings = await compat_checker.check_compatibility(agent_id)
+        if compat_warnings:
+            for warning in compat_warnings:
+                warnings.warn(warning, UserWarning)
+    
     # Step 1: Load agent from database
     agent = await _load_agent_step(agent_id)
     
@@ -147,7 +166,8 @@ async def _agent_workflow(
     input_items_json: str,  # Serialized input items
     session_id: str,
     stream: bool = False,
-    timeout_seconds: Optional[float] = None
+    timeout_seconds: Optional[float] = None,
+    verify: bool = True  # Safety checks
 ) -> Any:
     """
     Workflow that runs an agent using IDs stored in the database.
@@ -172,11 +192,11 @@ async def _agent_workflow(
     if timeout_seconds:
         with SetWorkflowTimeout(timeout_seconds):
             return await _execute_agent_with_state_handling(
-                agent_id, input_items, session_id, stream, None, timeout_seconds
+                agent_id, input_items, session_id, stream, None, timeout_seconds, verify
             )
     else:
         return await _execute_agent_with_state_handling(
-            agent_id, input_items, session_id, stream, None, timeout_seconds
+            agent_id, input_items, session_id, stream, None, timeout_seconds, verify
         )
 
 
@@ -195,7 +215,8 @@ async def run_agent_workflow(
     session_id: str,
     stream: bool = False,
     workflow_id: Optional[str] = None,
-    timeout_seconds: Optional[float] = None
+    timeout_seconds: Optional[float] = None,
+    verify: bool = True  # Safety checks
 ) -> Any:
     """
     Run an agent in a durable DBOS workflow.
@@ -253,9 +274,9 @@ async def run_agent_workflow(
     # Call the workflow with serializable parameters
     if workflow_id:
         with SetWorkflowID(workflow_id):
-            return await _agent_workflow(agent_id, input_items_json, session_id, stream, timeout_seconds)
+            return await _agent_workflow(agent_id, input_items_json, session_id, stream, timeout_seconds, verify)
     else:
-        return await _agent_workflow(agent_id, input_items_json, session_id, stream, timeout_seconds)
+        return await _agent_workflow(agent_id, input_items_json, session_id, stream, timeout_seconds, verify)
 
 
 async def queue_agent_workflow(

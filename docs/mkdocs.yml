@@ -61,6 +61,13 @@ nav:
   - Architecture: architecture.md
   - Use Cases: use-cases.md
   - DBOS Workflows: dbos-workflows.md
+  - Theory:
+    - category-theory.md
+    - ologs.md
+    - string-diagrams.md
+  - Generated:
+    - ontology.md
+    - agent-diagrams/
   - API Reference:
     - api-reference/multi-model-provider.md
     - api-reference/ollama-model-provider.md

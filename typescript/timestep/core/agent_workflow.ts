@@ -155,9 +155,33 @@ async function executeAgentWithStateHandling(
   sessionId: string,
   stream: boolean,
   resultProcessor: ((result: any) => Promise<any>) | undefined,
-  timeoutSeconds: number | undefined
+  timeoutSeconds: number | undefined,
+  verify: boolean = true  // Safety checks
 ): Promise<any> {
   /** Execute agent. Returns output. State persistence handled by RunStateStore outside workflow. */
+  // Optional safety checks
+  if (verify) {
+    const { CircularDependencyChecker, ToolCompatibilityChecker } = await import('../analysis/safety.ts');
+    
+    // Check for circular handoffs
+    const cycleChecker = new CircularDependencyChecker();
+    const cycle = await cycleChecker.checkCircularHandoffs(agentId);
+    if (cycle) {
+      throw new Error(
+        `Agent ${agentId} has circular handoff dependencies: ${cycle.join(' -> ')}`
+      );
+    }
+    
+    // Check tool compatibility
+    const compatChecker = new ToolCompatibilityChecker();
+    const compatWarnings = await compatChecker.checkCompatibility(agentId);
+    if (compatWarnings.length > 0) {
+      for (const warning of compatWarnings) {
+        console.warn(warning);
+      }
+    }
+  }
+  
   // Step 1: Load agent from database
   const agent = await loadAgentStep(agentId);
 
@@ -189,7 +213,8 @@ const agentWorkflow = DBOS.registerWorkflow(async function agentWorkflow(
   inputItemsJson: string,  // Serialized input items
   sessionId: string,
   stream: boolean = false,
-  timeoutSeconds?: number
+  timeoutSeconds?: number,
+  verify: boolean = true  // Safety checks
 ) {
   /**
    * Workflow that runs an agent using IDs stored in the database.
@@ -205,7 +230,8 @@ const agentWorkflow = DBOS.registerWorkflow(async function agentWorkflow(
     sessionId,
     stream,
     undefined,
-    timeoutSeconds
+    timeoutSeconds,
+    verify
   );
   
   // Ensure we return a proper result object with output
@@ -271,7 +297,8 @@ export async function runAgentWorkflow(
   sessionId: string,
   stream: boolean = false,
   workflowId?: string,
-  timeoutSeconds?: number
+  timeoutSeconds?: number,
+  verify: boolean = true  // Safety checks
 ): Promise<any> {
   /**
    * Run an agent in a durable DBOS workflow.
@@ -297,11 +324,11 @@ export async function runAgentWorkflow(
   // Call the workflow with serializable parameters
   if (workflowId) {
     const handle = await DBOS.startWorkflow(agentWorkflow, { workflowID: workflowId })(
-      agentId, inputItemsJson, sessionId, stream, timeoutSeconds
+      agentId, inputItemsJson, sessionId, stream, timeoutSeconds, verify
     );
     return await handle.getResult();
   } else {
-    return await agentWorkflow(agentId, inputItemsJson, sessionId, stream, timeoutSeconds);
+    return await agentWorkflow(agentId, inputItemsJson, sessionId, stream, timeoutSeconds, verify);
   }
 }
 
@@ -314,7 +341,8 @@ export async function queueAgentWorkflow(
   workflowId?: string,
   timeoutSeconds?: number,
   priority?: number,
-  deduplicationId?: string
+  deduplicationId?: string,
+  verify: boolean = true  // Safety checks
 ): Promise<WorkflowHandle<any>> {
   /**
    * Enqueue an agent run in a DBOS queue with rate limiting support.
@@ -365,7 +393,7 @@ export async function queueAgentWorkflow(
   }
 
   const handle = await DBOS.startWorkflow(agentWorkflow, startParams)(
-    agentId, inputItemsJson, sessionId, stream, timeoutSeconds
+    agentId, inputItemsJson, sessionId, stream, timeoutSeconds, verify
   );
   return handle;
 }
@@ -375,7 +403,8 @@ export async function createScheduledAgentWorkflow(
   agentId: string,
   inputItems: AgentInputItem[] | RunState<any, any>,
   sessionId: string,
-  stream: boolean = false
+  stream: boolean = false,
+  verify: boolean = true  // Safety checks
 ): Promise<void> {
   /**
    * Create a scheduled workflow that runs an agent periodically.
@@ -411,7 +440,7 @@ export async function createScheduledAgentWorkflow(
   // Register a scheduled workflow
   const scheduledWorkflow = DBOS.registerScheduled(
     async (scheduledTime: Date, startTime: Date) => {
-      return await agentWorkflow(agentId, inputItemsJson, sessionId, stream, undefined);
+      return await agentWorkflow(agentId, inputItemsJson, sessionId, stream, undefined, verify);
     },
     { crontab }
   );
