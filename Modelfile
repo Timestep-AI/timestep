@@ -3,14 +3,24 @@ FROM hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M
 PARAMETER temperature 0.7
 PARAMETER num_ctx 4096
 
-TEMPLATE """<|im_start|>{{ if .System }}{{ .System }}
-
-{{ end }}{{ range .Messages }}{{ if eq .Role "user" }}User: {{ .Content }}<end_of_utterance>
-{{ else if eq .Role "assistant" }}{{ if .ToolCalls }}Assistant: <tool_calls>
-{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}{{ if not (last .Function.Name) }}, {{ end }}{{ end }}
-</tool_calls><end_of_utterance>
+TEMPLATE """<|im_start|>{{ range .Messages }}{{ if eq .Role "user" }}User: {{ .Content }}<end_of_utterance>
+{{ else if eq .Role "assistant" }}{{ if .ToolCalls }}Assistant: <tool_call>
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{ end }}</tool_call><end_of_utterance>
 {{ else }}Assistant: {{ .Content }}<end_of_utterance>
 {{ end }}{{ else if eq .Role "tool" }}Tool: {{ .Content }}<end_of_utterance>
-{{ end }}{{ end }}Assistant:"""
+{{ end }}{{ end }}Assistant: """
 
-SYSTEM "You are a helpful assistant."
+SYSTEM """You are a helpful AI assistant. When using tools, structure your responses as follows:
+
+1. First, provide your reasoning in <think></think> tags
+2. Then, make tool calls in <tool_call></tool_call> tags with JSON format
+3. After receiving tool results, provide your final answer
+
+Example:
+<think>
+I need to check the weather in San Francisco to answer this question.
+</think>
+<tool_call>
+{"name": "get_weather", "arguments": {"location": "San Francisco, CA"}}
+</tool_call>"""

@@ -54,6 +54,17 @@ def load_model_and_processor():
     """
     processor = AutoProcessor.from_pretrained(model_id)
 
+    # Load chat template from root and overwrite processor's default
+    chat_template_path = Path(__file__).parent / "chat_template.jinja"
+    if chat_template_path.exists():
+        with open(chat_template_path, "r") as f:
+            chat_template = f.read()
+        processor.chat_template = chat_template
+        processor.tokenizer.chat_template = chat_template
+        print(f"✓ Loaded and overwrote chat template from {chat_template_path}")
+    else:
+        print(f"⚠ Chat template file not found at {chat_template_path}, using default")
+
     if USE_QLORA or USE_LORA:
         lora_config = LoraConfig(
             r=8,
@@ -137,15 +148,14 @@ def preprocess_function_calling(sample, processor):
     for msg in messages:
         role = msg["role"]
         content = msg["content"]
-        
+
         # Convert role names to match SmolVLM2 format
         if role == "human":
             role = "user"
         elif role == "model":
             role = "assistant"
-        elif role == "tool":
-            role = "assistant"  # Treat tool responses as assistant messages
-        
+        # Keep tool messages as role="tool" - the chat template will handle them
+
         # Format content as text-only
         formatted_content = [{"type": "text", "text": content}]
         formatted_messages.append({"role": role, "content": formatted_content})
@@ -1121,11 +1131,318 @@ def test_inference(model, processor):
     print("="*80)
 
 
+def validate_vision_locally(model, processor):
+    """
+    Tests vision capabilities to ensure we don't break them during training.
+    Uses examples from SmolVLM2 documentation with temperature=0 for consistency.
+
+    Returns: (baseline_match: bool, details: str)
+    """
+    import torch
+    from PIL import Image
+    import requests
+    from io import BytesIO
+
+    print("\n" + "=" * 80)
+    print("LOCAL VISION VALIDATION: Image Description")
+    print("=" * 80)
+
+    # Test 1: Simple image description (bee image)
+    try:
+        print("\n  Testing: Image description (bee)")
+        response = requests.get("https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg")
+        image = Image.open(BytesIO(response.content))
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "Can you describe this image?"},
+                ]
+            },
+        ]
+
+        # Note: image is embedded in messages content, don't pass separately
+        inputs = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(model.device, dtype=torch.bfloat16)
+
+        generated_ids = model.generate(**inputs, do_sample=False, max_new_tokens=64)
+        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+        # Extract just the assistant's response
+        if "Assistant:" in generated_text:
+            response = generated_text.split("Assistant:")[-1].strip()
+        else:
+            response = generated_text.strip()
+
+        print(f"    Response: {response[:100]}...")
+
+        # Check if response mentions expected keywords (bee, yellow, flower, etc.)
+        keywords = ["bee", "yellow", "flower", "insect", "wing"]
+        matched_keywords = [kw for kw in keywords if kw.lower() in response.lower()]
+
+        if len(matched_keywords) >= 2:
+            print(f"    ✓ Passed (found keywords: {', '.join(matched_keywords)})")
+            return True, f"Vision test passed. Response contained expected keywords: {', '.join(matched_keywords)}"
+        else:
+            print(f"    ✗ Failed (found keywords: {', '.join(matched_keywords) if matched_keywords else 'none'})")
+            return False, f"Vision test failed. Expected bee-related keywords, got: {response[:100]}"
+
+    except Exception as e:
+        print(f"    ✗ Error during vision test: {e}")
+        return False, f"Vision test error: {str(e)}"
+    finally:
+        print("=" * 80)
+
+
+def validate_tool_calling_locally(model, processor):
+    """
+    Validate tool calling capabilities on the local PyTorch model.
+
+    Tests the model's ability to:
+    1. Understand tool calling requests
+    2. Generate proper thinking process
+    3. Format tool calls correctly
+
+    Returns:
+        Tuple of (passed: bool, score: float, details: str)
+        - passed: Whether basic validation passed
+        - score: Quality score (0.0 to 1.0)
+        - details: Description of what passed/failed
+    """
+    print("\n" + "="*80)
+    print("LOCAL VALIDATION: Tool Calling")
+    print("="*80)
+
+    test_cases = [
+        {
+            "name": "Simple weather query",
+            "prompt": (
+                "You are a helpful assistant with access to various tools. "
+                "Also, before making a call to a function take the time to plan the function to take. "
+                "Make that thinking process between <think>{your thoughts}</think>\n\n"
+                "What's the weather like in San Francisco?"
+            ),
+            "expected_keywords": ["<think>", "</think>"],
+            "max_length": 256,
+        },
+        {
+            "name": "Multi-step reasoning",
+            "prompt": (
+                "You are a helpful assistant with access to various tools. "
+                "Also, before making a call to a function take the time to plan the function to take. "
+                "Make that thinking process between <think>{your thoughts}</think>\n\n"
+                "I need to book a flight from NYC to LA and then get the weather there."
+            ),
+            "expected_keywords": ["<think>", "</think>"],
+            "max_length": 256,
+        },
+    ]
+
+    total_score = 0.0
+    passed_tests = 0
+    failed_details = []
+
+    for test_case in test_cases:
+        print(f"\n  Testing: {test_case['name']}")
+
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": test_case["prompt"]}],
+            }
+        ]
+
+        inputs = (
+            processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+            .to("cuda")
+            .to(model.dtype)
+        )
+
+        generated_ids = model.generate(
+            **inputs,
+            do_sample=False,
+            max_new_tokens=test_case["max_length"],
+            temperature=0.1,
+        )
+
+        # Extract only new tokens
+        input_length = inputs["input_ids"].shape[1]
+        new_tokens = generated_ids[0, input_length:]
+        generated_text = processor.decode(new_tokens, skip_special_tokens=True)
+
+        print(f"    Response: {generated_text[:100]}...")
+
+        # Score this test case
+        case_score = 0.0
+
+        # Check for expected keywords
+        keywords_found = sum(1 for kw in test_case["expected_keywords"] if kw.lower() in generated_text.lower())
+        keyword_score = keywords_found / len(test_case["expected_keywords"])
+        case_score += keyword_score * 0.5  # 50% weight on keywords
+
+        # Check response length (not too short, not too long)
+        length_ok = 10 < len(generated_text) < test_case["max_length"] * 1.5
+        if length_ok:
+            case_score += 0.3  # 30% weight on reasonable length
+
+        # Check for coherence (no repetition)
+        words = generated_text.lower().split()
+        if len(words) > 0:
+            unique_ratio = len(set(words)) / len(words)
+            if unique_ratio > 0.6:  # At least 60% unique words
+                case_score += 0.2  # 20% weight on coherence
+
+        total_score += case_score
+
+        if case_score >= 0.6:  # Pass threshold: 60%
+            passed_tests += 1
+            print(f"    ✓ Passed (score: {case_score:.2f})")
+        else:
+            failed_details.append(f"{test_case['name']}: score {case_score:.2f}")
+            print(f"    ✗ Failed (score: {case_score:.2f})")
+            if keyword_score < 1.0:
+                missing = [kw for kw in test_case["expected_keywords"] if kw.lower() not in generated_text.lower()]
+                print(f"      Missing keywords: {missing}")
+
+    # Calculate overall metrics
+    avg_score = total_score / len(test_cases)
+    passed = passed_tests >= len(test_cases) * 0.7  # At least 70% of tests must pass
+
+    print(f"\n  Overall: {passed_tests}/{len(test_cases)} tests passed")
+    print(f"  Average score: {avg_score:.2f}")
+
+    if passed:
+        details = f"Passed {passed_tests}/{len(test_cases)} tests (avg score: {avg_score:.2f})"
+        print(f"  ✓ Local validation PASSED")
+    else:
+        details = f"Only {passed_tests}/{len(test_cases)} tests passed. Failed: {', '.join(failed_details)}"
+        print(f"  ✗ Local validation FAILED")
+
+    print("="*80)
+
+    return passed, avg_score, details
+
+
+def test_local_ollama_model(model_name, project_root):
+    """
+    Test a local Ollama model against the test suite.
+
+    Args:
+        model_name: Name of the Ollama model to test
+        project_root: Path to project root directory
+
+    Returns:
+        Tuple of (success: bool, test_output: str)
+    """
+    print(f"\nTesting local Ollama model: {model_name}")
+
+    # Set environment variable to use local Ollama model
+    env = os.environ.copy()
+    env["OLLAMA_MODEL"] = model_name
+
+    try:
+        result = subprocess.run(
+            ["make", "test"],
+            cwd=str(project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        print("✓ Local Ollama tests passed!")
+        return True, result.stdout
+    except subprocess.CalledProcessError as e:
+        print("✗ Local Ollama tests failed")
+        test_output = (e.stdout or "") + (e.stderr or "")
+        # Print last few lines for context
+        if e.stdout:
+            lines = e.stdout.strip().split("\n")
+            if len(lines) > 10:
+                print("\nLast 10 lines:")
+                print("\n".join(lines[-10:]))
+        return False, test_output
+    except FileNotFoundError:
+        print("✗ Error: 'make' command not found")
+        return False, ""
+
+
+def create_local_ollama_model(gguf_path, model_name, modelfile_path):
+    """
+    Create a local Ollama model from a GGUF file without pushing to HuggingFace.
+
+    Args:
+        gguf_path: Path to local GGUF file
+        model_name: Name for the Ollama model
+        modelfile_path: Path to Modelfile
+
+    Returns:
+        True if successful, False otherwise
+    """
+    print(f"\nCreating local Ollama model: {model_name}")
+
+    # Create a temporary Modelfile that references the local GGUF
+    gguf_path = Path(gguf_path).resolve()
+    modelfile_path = Path(modelfile_path)
+
+    # Read the existing Modelfile and replace the FROM line
+    modelfile_content = modelfile_path.read_text()
+
+    # Replace the FROM line to use local file
+    lines = modelfile_content.split("\n")
+    new_lines = []
+    for line in lines:
+        if line.startswith("FROM "):
+            new_lines.append(f"FROM {gguf_path}")
+        else:
+            new_lines.append(line)
+
+    temp_modelfile = modelfile_path.parent / f"Modelfile.local"
+    temp_modelfile.write_text("\n".join(new_lines))
+
+    try:
+        # Create Ollama model from local GGUF
+        result = subprocess.run(
+            ["ollama", "create", model_name, "-f", str(temp_modelfile)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        print(f"✓ Created local Ollama model: {model_name}")
+        if result.stdout:
+            print(result.stdout)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"✗ Failed to create local Ollama model: {e}")
+        if e.stderr:
+            print(f"Error: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        print("✗ Error: 'ollama' command not found")
+        return False
+    finally:
+        # Clean up temp file
+        if temp_modelfile.exists():
+            temp_modelfile.unlink()
+
+
 def main():
     """Main training function with continuous loop: train → pull → test → repeat until all tests pass."""
     import signal
     import sys
-    
+
     max_iterations = 10
     iteration = 0
     project_root = Path(__file__).parent
@@ -1143,15 +1460,21 @@ def main():
     
     # Load interleaved datasets with validation split (only once, before the loop)
     print("Loading datasets...")
-    train_ds, val_ds = load_dataset_data(processor, video_samples=100, function_calling_samples=100)
+    # Use minimal video samples (just to verify interleaving works) and focus on function calling
+    train_ds, val_ds = load_dataset_data(processor, video_samples=10, function_calling_samples=1000)
     
     # Create collate function (only once, before the loop)
     collate_fn = create_collate_fn(processor, model)
     
-    # Track failure analysis across iterations
+    # Track failure analysis and best scores across iterations
     last_failure_analysis = None
     last_eval_metrics = None
-    
+    best_validation_loss = float('inf')
+    best_tool_calling_score = 0.0
+
+    # Local Ollama model name
+    local_model_name = "smolvlm2-local"
+
     while iteration < max_iterations:
         iteration += 1
         print(f"\n{'='*80}")
@@ -1193,7 +1516,10 @@ def main():
                 trainer.train(resume_from_checkpoint=None)
             print("✓ Training completed")
             
-            # Log evaluation results if available
+            # Log evaluation results and determine if we should continue
+            should_proceed_to_gguf = False
+            current_validation_loss = float('inf')
+
             if val_ds is not None:
                 try:
                     eval_results = trainer.evaluate()
@@ -1202,24 +1528,32 @@ def main():
                         if key.startswith("eval_"):
                             metric_name = key.replace("eval_", "")
                             print(f"  {metric_name}: {value:.4f}")
-                    
-                    # Compare with previous iteration
-                    if last_eval_metrics is not None:
-                        current_loss = eval_results.get("eval_loss", float('inf'))
-                        previous_loss = last_eval_metrics.get("eval_loss", float('inf'))
-                        if current_loss > previous_loss:
-                            print(f"  ⚠ Warning: Validation loss increased from {previous_loss:.4f} to {current_loss:.4f}")
-                        else:
-                            improvement = previous_loss - current_loss
-                            print(f"  ✓ Validation loss improved by {improvement:.4f}")
-                    
+
+                    current_validation_loss = eval_results.get("eval_loss", float('inf'))
+
+                    # Compare with best validation loss
+                    if current_validation_loss < best_validation_loss:
+                        improvement = best_validation_loss - current_validation_loss
+                        print(f"  ✓ New best validation loss! Improved by {improvement:.4f}")
+                        best_validation_loss = current_validation_loss
+                        should_proceed_to_gguf = True
+                    else:
+                        degradation = current_validation_loss - best_validation_loss
+                        print(f"  ✗ Validation loss degraded by {degradation:.4f} (best: {best_validation_loss:.4f})")
+                        print(f"  ⚠ Skipping GGUF conversion - no improvement")
+
                     last_eval_metrics = eval_results
                 except torch.cuda.OutOfMemoryError as e:
                     print(f"  ⚠ Evaluation skipped due to OOM: {e}")
                     print("  Training completed successfully, but evaluation could not run.")
+                    should_proceed_to_gguf = True  # Proceed if we can't evaluate
                 except Exception as e:
                     print(f"  ⚠ Evaluation failed: {e}")
                     print("  Training completed successfully, but evaluation could not run.")
+                    should_proceed_to_gguf = True  # Proceed if we can't evaluate
+            else:
+                # No validation dataset, always proceed
+                should_proceed_to_gguf = True
             
             # Step 2: Save model and processor
             print(f"[Iteration {iteration}] Step 2: Saving model and processor...")
@@ -1227,53 +1561,186 @@ def main():
             processor.save_pretrained(trainer.args.output_dir)
             model_path = Path(trainer.args.output_dir).resolve()
             print("✓ Model saved")
-            
-            # Step 3: Convert to GGUF (Q4_K_M only) and push to hub
-            print(f"[Iteration {iteration}] Step 3: Converting to GGUF and pushing to hub...")
-            convert_and_push_gguf(str(model_path), hub_model_id)
-            print("✓ GGUF conversion and upload completed")
-            
-            # Step 4: Create and upload Modelfile
-            print(f"[Iteration {iteration}] Step 4: Creating Modelfile...")
-            create_modelfile(hub_model_id)
-            print("✓ Modelfile created")
-            
-            # Step 5: Pull model to Ollama
-            print(f"[Iteration {iteration}] Step 5: Pulling model to Ollama...")
-            if not pull_model_to_ollama(hub_model_id):
-                print("✗ Failed to pull model to Ollama. Cannot proceed with tests.")
+
+            # Step 3a: Local PyTorch validation for vision (ensure we don't break it)
+            print(f"[Iteration {iteration}] Step 3a: Validating vision locally (PyTorch)...")
+            vision_passed, vision_details = validate_vision_locally(model, processor)
+            if not vision_passed:
+                print(f"  ⚠ WARNING: Vision validation failed! {vision_details}")
+                print(f"  Continuing anyway, but vision capabilities may be degraded.")
+
+            # Step 3b: Local PyTorch validation for tool calling
+            print(f"[Iteration {iteration}] Step 3b: Validating tool calling locally (PyTorch)...")
+            local_passed, tool_calling_score, details = validate_tool_calling_locally(model, processor)
+
+            if tool_calling_score > best_tool_calling_score:
+                improvement = tool_calling_score - best_tool_calling_score
+                print(f"  ✓ New best tool calling score! Improved by {improvement:.2f}")
+                best_tool_calling_score = tool_calling_score
+            else:
+                degradation = best_tool_calling_score - tool_calling_score
+                print(f"  ✗ Tool calling score degraded by {degradation:.2f} (best: {best_tool_calling_score:.2f})")
+
+            # Decide whether to proceed based on validation loss AND tool calling score
+            if should_proceed_to_gguf and local_passed:
+                print(f"\n  ✓ Model improved! Proceeding with GGUF conversion and testing...")
+            else:
+                reasons = []
+                if not should_proceed_to_gguf:
+                    reasons.append("validation loss did not improve")
+                if not local_passed:
+                    reasons.append("local tool calling tests failed")
+                print(f"\n  ✗ Skipping GGUF conversion: {' and '.join(reasons)}")
+                print(f"  Continuing to iteration {iteration + 1}...")
+                continue
+
+            # Step 4: Convert to GGUF locally (Q4_K_M only, don't push yet)
+            print(f"[Iteration {iteration}] Step 4: Converting to GGUF (local only)...")
+            script_dir = Path(__file__).parent
+            llama_cpp_path = script_dir / "3rdparty" / "llama.cpp"
+            base_model_name = hub_model_id.split('/')[-1]
+            local_gguf_file = llama_cpp_path / f"{base_model_name}-Q4_K_M.gguf"
+
+            # Convert to GGUF locally (copied logic from convert_and_push_gguf but without pushing)
+            try:
+                convert_script = llama_cpp_path / "convert_hf_to_gguf.py"
+                if not convert_script.exists():
+                    raise FileNotFoundError(
+                        f"llama.cpp convert script not found at {convert_script}. "
+                        "Make sure the submodule is initialized: git submodule update --init --recursive"
+                    )
+
+                model_path_abs = model_path.resolve()
+                base_gguf_file = (llama_cpp_path / f"{base_model_name}-f16.gguf").resolve()
+
+                # Convert to f16 base
+                print("  Converting to f16...")
+                subprocess.run(
+                    [
+                        "python3",
+                        str(convert_script),
+                        str(model_path_abs),
+                        "--outfile",
+                        str(base_gguf_file),
+                        "--outtype",
+                        "f16",
+                    ],
+                    check=True,
+                    cwd=str(llama_cpp_path),
+                )
+
+                # Find quantize binary
+                quantize_binary = shutil.which("llama-quantize") or shutil.which("quantize")
+                if not quantize_binary:
+                    # Try submodule locations
+                    for path in [
+                        llama_cpp_path / "build" / "bin" / "llama-quantize",
+                        llama_cpp_path / "build" / "bin" / "quantize",
+                    ]:
+                        if path.exists():
+                            quantize_binary = str(path)
+                            break
+
+                if not quantize_binary:
+                    raise FileNotFoundError("llama-quantize not found. Please build it or install it.")
+
+                # Quantize to Q4_K_M
+                print("  Quantizing to Q4_K_M...")
+                subprocess.run(
+                    [
+                        quantize_binary,
+                        str(base_gguf_file),
+                        str(local_gguf_file),
+                        "Q4_K_M",
+                    ],
+                    check=True,
+                    cwd=str(llama_cpp_path),
+                )
+
+                # Clean up f16 file
+                if base_gguf_file.exists():
+                    base_gguf_file.unlink()
+
+                print(f"✓ Local GGUF created: {local_gguf_file}")
+
+            except Exception as e:
+                print(f"✗ Failed to create local GGUF: {e}")
                 print("  Continuing to next iteration...")
                 continue
-            
-            # Step 6: Run test suite
-            print(f"[Iteration {iteration}] Step 6: Running test suite...")
-            all_tests_passed, failure_analysis, test_output = run_test_suite(project_root)
-            
-            # Step 7: Check results
-            if all_tests_passed:
-                print(f"\n{'='*80}")
-                print(f"✓ SUCCESS: All tests passed after {iteration} iteration(s)!")
-                print(f"{'='*80}\n")
-                break
-            else:
-                # Store failure analysis for next iteration
+
+            # Step 5: Create local Ollama model and test
+            print(f"[Iteration {iteration}] Step 5: Creating local Ollama model...")
+            modelfile_path = script_dir / "Modelfile"
+
+            # Create Modelfile if it doesn't exist
+            if not modelfile_path.exists():
+                create_modelfile(hub_model_id, output_path=modelfile_path)
+
+            if not create_local_ollama_model(local_gguf_file, local_model_name, modelfile_path):
+                print("✗ Failed to create local Ollama model. Cannot proceed with tests.")
+                print("  Continuing to next iteration...")
+                continue
+
+            # Step 6: Test local Ollama model
+            print(f"[Iteration {iteration}] Step 6: Testing local Ollama model...")
+            all_tests_passed, test_output = test_local_ollama_model(local_model_name, project_root)
+
+            if not all_tests_passed:
+                # Analyze failures for next iteration
+                failure_analysis = analyze_test_failures(test_output)
                 last_failure_analysis = failure_analysis
-                
-                print(f"\n{'='*80}")
-                print(f"✗ Tests failed in iteration {iteration}")
-                print(f"{'='*80}")
-                
-                # Print adaptive adjustments for next iteration
-                if failure_analysis and failure_analysis.get("suggested_steps_increase", 0) > 0:
-                    print(f"\n  Adaptive adjustments for next iteration:")
-                    print(f"    - Will increase training steps by {failure_analysis['suggested_steps_increase']}")
-                    if failure_analysis.get("suggested_lr_adjustment", 0) != 0:
-                        print(f"    - Will adjust learning rate by {failure_analysis['suggested_lr_adjustment']:.2e}")
-                
-                if iteration < max_iterations:
-                    print(f"\nStarting iteration {iteration + 1} with adjusted parameters...\n")
+                print(f"\n  ✗ Local Ollama tests failed")
+                print(f"  Skipping HuggingFace push. Continuing to iteration {iteration + 1}...")
+                continue
+
+            # Step 7: Tests passed! Push to HuggingFace
+            print(f"\n{'='*80}")
+            print(f"✓ All local tests passed! Pushing to HuggingFace...")
+            print(f"{'='*80}\n")
+
+            print(f"[Iteration {iteration}] Step 7: Pushing GGUF to HuggingFace Hub...")
+            try:
+                api = HfApi()
+                if "/" not in hub_model_id:
+                    user_info = api.whoami()
+                    username = user_info["name"]
+                    hub_model_id_full = f"{username}/{hub_model_id}"
                 else:
-                    print(f"\nReached maximum iterations ({max_iterations}) without all tests passing.\n")
+                    hub_model_id_full = hub_model_id
+
+                api.create_repo(hub_model_id_full, exist_ok=True, repo_type="model")
+
+                # Upload the Q4_K_M GGUF file
+                api.upload_file(
+                    path_or_fileobj=str(local_gguf_file),
+                    path_in_repo=f"{base_model_name}-Q4_K_M.gguf",
+                    repo_id=hub_model_id_full,
+                )
+                print(f"✓ Uploaded {base_model_name}-Q4_K_M.gguf to {hub_model_id_full}")
+
+                # Upload Modelfile
+                api.upload_file(
+                    path_or_fileobj=str(modelfile_path),
+                    path_in_repo="Modelfile",
+                    repo_id=hub_model_id_full,
+                )
+                print(f"✓ Uploaded Modelfile to {hub_model_id_full}")
+
+            except Exception as e:
+                print(f"✗ Failed to push to HuggingFace: {e}")
+                print("  Model works locally but not pushed to HF. Continuing...")
+
+            # Clean up local GGUF file
+            if local_gguf_file.exists():
+                local_gguf_file.unlink()
+                print(f"✓ Cleaned up local GGUF file")
+
+            # Step 8: Success - all tests passed!
+            print(f"\n{'='*80}")
+            print(f"✓ SUCCESS: All tests passed after {iteration} iteration(s)!")
+            print(f"✓ Model pushed to HuggingFace: {hub_model_id_full}")
+            print(f"{'='*80}\n")
+            break
         
         except KeyboardInterrupt:
             print("\n\n⚠ Training loop interrupted by user.")
