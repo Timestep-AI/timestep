@@ -21,6 +21,9 @@ from transformers import (
 )
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
+from huggingface_hub import HfApi
+from pathlib import Path
+import subprocess
 import os
 
 
@@ -109,6 +112,9 @@ def load_dataset_data():
     split_ds = ds["train"].train_test_split(test_size=0.5)
     train_ds = split_ds["train"]
 
+    # Use a small subset for fast training (<5 minutes)
+    train_ds = train_ds.select(range(min(100, len(train_ds))))
+
     # Clean up
     del split_ds, ds
 
@@ -116,6 +122,7 @@ def load_dataset_data():
     print(
         f"prompt:  {train_ds[0]['text prompt']}, video: {train_ds[0]['video link']}"
     )
+    print(f"Using {len(train_ds)} samples for training")
 
     return train_ds
 
@@ -242,22 +249,24 @@ def setup_training(model_id, model, collate_fn, train_ds):
     a higher batch size. Note that 4-bit might result in model learning less.
     """
     model_name = model_id.split("/")[-1]
+    hub_model_id = f"{model_name}-GGUF"
+    output_dir = f"data/models/{hub_model_id}"
 
     training_args = TrainingArguments(
-        num_train_epochs=1,
-        per_device_train_batch_size=2,
+        max_steps=50,  # Limit to 50 steps for fast training (<5 minutes)
+        per_device_train_batch_size=4,  # Increased batch size for faster training
         gradient_accumulation_steps=1,
-        warmup_steps=50,
+        warmup_steps=5,  # Reduced warmup for faster training
         learning_rate=1e-4,
         weight_decay=0.01,
-        logging_steps=25,
+        logging_steps=10,  # More frequent logging for short training
         save_strategy="steps",
-        save_steps=250,
+        save_steps=50,  # Save at the end
         save_total_limit=1,
         optim="adamw_torch",  # for 8-bit, use paged_adamw_8bit, else adamw_torch
         bf16=True,
-        output_dir=f"data/models/{model_name}-SFT",
-        hub_model_id=f"{model_name}-SFT",
+        output_dir=output_dir,
+        hub_model_id=hub_model_id,
         remove_unused_columns=False,
         report_to="tensorboard",
         dataloader_pin_memory=False,
@@ -271,6 +280,79 @@ def setup_training(model_id, model, collate_fn, train_ds):
     )
 
     return trainer
+
+
+def convert_and_push_gguf(model_path, hub_model_id, quantization="q8_0"):
+    """
+    Convert model to GGUF format and push to Hugging Face Hub.
+    
+    Uses the llama.cpp submodule at 3rdparty/llama.cpp.
+    
+    Args:
+        model_path: Path to the local model directory
+        hub_model_id: Hugging Face Hub model ID to push to (can be just model name or username/model-name)
+        quantization: Quantization type (e.g., "q8_0", "q4_0", "f16", "f32", "bf16")
+    """
+    api = HfApi()
+    
+    # Ensure hub_model_id includes username
+    if "/" not in hub_model_id:
+        user_info = api.whoami()
+        username = user_info["name"]
+        hub_model_id = f"{username}/{hub_model_id}"
+    
+    # Create repo if it doesn't exist
+    api.create_repo(hub_model_id, exist_ok=True, repo_type="model")
+    
+    # Use the submodule path
+    script_dir = Path(__file__).parent
+    llama_cpp_path = script_dir / "3rdparty" / "llama.cpp"
+    convert_script = llama_cpp_path / "convert_hf_to_gguf.py"
+    
+    if not convert_script.exists():
+        raise FileNotFoundError(
+            f"llama.cpp convert script not found at {convert_script}. "
+            "Make sure the submodule is initialized: git submodule update --init --recursive"
+        )
+    
+    # Convert to GGUF
+    gguf_filename = f"{hub_model_id.split('/')[-1]}.gguf"
+    # Use absolute path for the output file
+    gguf_file = (llama_cpp_path / gguf_filename).resolve()
+    print(f"Converting model to GGUF format ({quantization})...")
+    
+    # Ensure model_path is absolute since we change working directory
+    model_path_abs = Path(model_path).resolve()
+    if not model_path_abs.exists():
+        raise FileNotFoundError(f"Model directory not found: {model_path_abs}")
+    
+    subprocess.run(
+        [
+            "python3",
+            str(convert_script),
+            str(model_path_abs),
+            "--outfile",
+            str(gguf_file),
+            "--outtype",
+            quantization,
+        ],
+        check=True,
+        cwd=str(llama_cpp_path),  # Run from llama.cpp directory for proper imports
+    )
+    
+    # Upload GGUF file to hub
+    print(f"Uploading {gguf_filename} to Hugging Face Hub...")
+    api.upload_file(
+        path_or_fileobj=str(gguf_file),
+        path_in_repo=gguf_filename,
+        repo_id=hub_model_id,
+    )
+    
+    # Clean up local GGUF file
+    if gguf_file.exists():
+        gguf_file.unlink()
+    
+    print(f"Successfully pushed GGUF model to {hub_model_id}")
 
 
 def test_inference(model, processor):
@@ -328,13 +410,23 @@ def main():
     # Setup training
     trainer = setup_training(model_id, model, collate_fn, train_ds)
 
-    # Train
-    print("Starting training...")
-    trainer.train()
+    # Train (will automatically resume from latest checkpoint if available)
+    try:
+        trainer.train(resume_from_checkpoint=True)
+    except ValueError:
+        # No checkpoint found, start from scratch
+        trainer.train(resume_from_checkpoint=None)
 
-    # Push to hub
-    print("Pushing model to hub...")
-    trainer.push_to_hub()
+    # Push to hub as GGUF
+    print("Converting and pushing model as GGUF to hub...")
+    # First save the model and processor locally
+    trainer.save_model()
+    processor.save_pretrained(trainer.args.output_dir)
+    model_path = Path(trainer.args.output_dir).resolve()
+    hub_model_id = trainer.args.hub_model_id
+    
+    # Convert to GGUF and push
+    convert_and_push_gguf(str(model_path), hub_model_id)
 
     # Test inference
     print("Testing inference...")
