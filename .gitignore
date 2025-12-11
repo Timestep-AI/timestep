@@ -1,2 +1,6 @@
 data/agent_state_conv_*.json
 data/models/*
+
+# Generated Modelfile for Ollama (changes per quantization)
+Modelfile
+Modelfile.local
