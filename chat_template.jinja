@@ -1,11 +1,3 @@
-<|im_start|>{% for message in messages -%}
-{%- if message.role == "tool" -%}
-{{- "Tool: " -}}
-{%- for line in message.content -%}
-{%- if line['type'] == 'text' -%}{{line['text']}}{%- endif -%}
-{%- endfor -%}
-<end_of_utterance>
-{% else -%}
-{{message['role'] | capitalize}}{% if message['content'][0]['type'] == 'image' %}{{':'}}{% else %}{{': '}}{% endif %}{% for line in message['content'] %}{% if line['type'] == 'text' %}{{line['text']}}{% elif line['type'] == 'image' %}{{ '<image>' }}{% endif %}{% endfor %}<end_of_utterance>
-{%- endif -%}
-{% endfor %}{% if add_generation_prompt %}{{ 'Assistant: ' }}{% endif %}
+<|im_start|>{% for message in messages %}{% if message['role'] == 'tool' %}Tool: {% for line in message['content'] %}{% if line['type'] == 'text' %}{{line['text']}}{% endif %}{% endfor %}<end_of_utterance>
+{% else %}{{message['role'] | capitalize}}{% if message['content'][0]['type'] == 'image' %}{{':'}}{% else %}{{': '}}{% endif %}{% for line in message['content'] %}{% if line['type'] == 'text' %}{{line['text']}}{% elif line['type'] == 'image' %}{{ '<image>' }}{% endif %}{% endfor %}<end_of_utterance>
+{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}

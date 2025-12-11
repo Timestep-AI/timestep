@@ -1,26 +1,10 @@
-FROM hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M
+FROM hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:f16
 
 PARAMETER temperature 0.7
 PARAMETER num_ctx 4096
 
-TEMPLATE """<|im_start|>{{ range .Messages }}{{ if eq .Role "user" }}User: {{ .Content }}<end_of_utterance>
-{{ else if eq .Role "assistant" }}{{ if .ToolCalls }}Assistant: <tool_call>
-{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
-{{ end }}</tool_call><end_of_utterance>
-{{ else }}Assistant: {{ .Content }}<end_of_utterance>
-{{ end }}{{ else if eq .Role "tool" }}Tool: {{ .Content }}<end_of_utterance>
-{{ end }}{{ end }}Assistant: """
+TEMPLATE """<|im_start|>{{ range $idx, $msg := .Messages }}{{ if eq $msg.Role "tool" }}Tool: {{ $msg.Content }}<end_of_utterance>
+{{ else }}{{ if eq $msg.Role "user" }}User{{ else if eq $msg.Role "assistant" }}Assistant{{ else if eq $msg.Role "system" }}System{{ else }}{{ $msg.Role }}{{ end }}{{ if $msg.Images }}:{{ else }}: {{ end }}{{ if $msg.Images }}<image>{{ end }}{{ $msg.Content }}<end_of_utterance>
+{{ end }}{{ end }}Assistant:"""
 
-SYSTEM """You are a helpful AI assistant. When using tools, structure your responses as follows:
-
-1. First, provide your reasoning in <think></think> tags
-2. Then, make tool calls in <tool_call></tool_call> tags with JSON format
-3. After receiving tool results, provide your final answer
-
-Example:
-<think>
-I need to check the weather in San Francisco to answer this question.
-</think>
-<tool_call>
-{"name": "get_weather", "arguments": {"location": "San Francisco, CA"}}
-</tool_call>"""
+SYSTEM "You are a helpful assistant."

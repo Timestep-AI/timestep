@@ -25,12 +25,21 @@ from transformers import (
 )
 from datasets import load_dataset, interleave_datasets
 from torch.nn.utils.rnn import pad_sequence
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
 from pathlib import Path
 import subprocess
 import os
 import copy
 import shutil
+import requests
+from io import BytesIO
+from PIL import Image
+import base64
+
+try:
+    import ollama
+except ImportError:
+    ollama = None
 
 
 # Configuration
@@ -612,12 +621,15 @@ def convert_and_push_gguf(model_path, hub_model_id, quantizations=None):
     if not model_path_abs.exists():
         raise FileNotFoundError(f"Model directory not found: {model_path_abs}")
     
-    base_model_name = hub_model_id.split('/')[-1]
+    # Extract base model name from hub_model_id and remove -GGUF suffix for filenames
+    # Repository name keeps -GGUF, but filenames should not have it
+    base_model_name_full = hub_model_id.split('/')[-1]
+    base_model_name = base_model_name_full.replace("-GGUF", "")
     
     # Step 1: Convert to f16 base format first
-    print("\n[Step 1/2] Converting model to GGUF f16 base format...")
+    print("\n[Step 1/3] Converting model to GGUF f16 base format...")
     base_gguf_file = (llama_cpp_path / f"{base_model_name}-f16.gguf").resolve()
-    
+
     try:
         subprocess.run(
             [
@@ -635,6 +647,29 @@ def convert_and_push_gguf(model_path, hub_model_id, quantizations=None):
         print(f"✓ Base f16 model created: {base_gguf_file.name}")
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to create base f16 model: {e}")
+
+    # Step 1b: Convert multimodal projector (mmproj) for vision support
+    print("\n[Step 2/3] Converting multimodal projector (mmproj) to GGUF f16...")
+    mmproj_f16_file = (llama_cpp_path / f"mmproj-{base_model_name}-f16.gguf").resolve()
+
+    try:
+        subprocess.run(
+            [
+                "python3",
+                str(convert_script),
+                str(model_path_abs),
+                "--outfile",
+                str(mmproj_f16_file),
+                "--outtype",
+                "f16",
+                "--mmproj",  # This flag converts the vision encoder/projector
+            ],
+            check=True,
+            cwd=str(llama_cpp_path),
+        )
+        print(f"✓ Multimodal projector created: {mmproj_f16_file.name}")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to create mmproj file: {e}")
     
     # Step 2: Find llama-quantize binary (system-installed or build it)
     quantize_binary = None
@@ -720,27 +755,43 @@ def convert_and_push_gguf(model_path, hub_model_id, quantizations=None):
         raise RuntimeError(f"Quantize binary not found at {quantize_binary}")
     
     print(f"Using quantize tool: {quantize_binary}")
-    
+
     # Step 3: Generate and upload each quantization variant
     # Separate f16 from other quantizations
     other_quants = [q for q in quantizations if q.upper() != "F16"]
     f16_in_list = any(q.upper() == "F16" for q in quantizations)
-    
+
     uploaded_count = 0
-    
+
     # Upload f16 base if requested
     if f16_in_list:
-        print(f"\n[Uploading] {base_model_name}-f16.gguf...")
+        # Upload main model
+        f16_filename = f"{base_model_name}-f16.gguf"
+        print(f"\n[Uploading] {f16_filename}...")
         try:
             api.upload_file(
                 path_or_fileobj=str(base_gguf_file),
-                path_in_repo=f"{base_model_name}-f16.gguf",
+                path_in_repo=f16_filename,
                 repo_id=hub_model_id,
             )
-            print(f"✓ Successfully uploaded {base_model_name}-f16.gguf")
+            print(f"✓ Successfully uploaded {f16_filename}")
             uploaded_count += 1
         except Exception as e:
             print(f"✗ Failed to upload f16: {e}")
+
+        # Upload mmproj (multimodal projector) - required for vision!
+        mmproj_f16_filename = f"mmproj-{base_model_name}-f16.gguf"
+        print(f"\n[Uploading] {mmproj_f16_filename}...")
+        try:
+            api.upload_file(
+                path_or_fileobj=str(mmproj_f16_file),
+                path_in_repo=mmproj_f16_filename,
+                repo_id=hub_model_id,
+            )
+            print(f"✓ Successfully uploaded {mmproj_f16_filename}")
+            uploaded_count += 1
+        except Exception as e:
+            print(f"✗ Failed to upload mmproj f16: {e}")
     
     # Quantize and upload other variants
     for i, quantization in enumerate(other_quants, 1):
@@ -785,14 +836,16 @@ def convert_and_push_gguf(model_path, hub_model_id, quantizations=None):
             if gguf_file.exists() and gguf_file != base_gguf_file:
                 gguf_file.unlink()
     
-    # Clean up base f16 file
+    # Clean up base f16 files
     if base_gguf_file.exists():
         base_gguf_file.unlink()
-    
+    if mmproj_f16_file.exists():
+        mmproj_f16_file.unlink()
+
     print(f"\n✓ Completed uploading {uploaded_count} GGUF variants to {hub_model_id}")
 
 
-def create_modelfile(hub_model_id, output_path=None):
+def create_modelfile(hub_model_id, output_path=None, include_tool_calling=True, quantization="Q4_K_M"):
     """
     Create a Modelfile for Ollama with SmolVLM2's custom chat template.
     
@@ -806,6 +859,9 @@ def create_modelfile(hub_model_id, output_path=None):
     Args:
         hub_model_id: Hugging Face Hub model ID (e.g., "username/model-name")
         output_path: Optional path to save Modelfile. If None, saves to current directory.
+        include_tool_calling: If True, includes tool calling support in template. 
+                             If False, uses GGUF's built-in template (better for images).
+        quantization: Quantization type to use in FROM clause (default: "Q4_K_M", use "f16" for baseline)
     
     Returns:
         Path to the created Modelfile
@@ -820,20 +876,50 @@ def create_modelfile(hub_model_id, output_path=None):
     # Extract model name from hub_model_id
     model_name = hub_model_id.split("/")[-1]
     
-    # SmolVLM2 chat template in Go template format (for Ollama)
-    # Based on LLM_CHAT_TEMPLATE_SMOLVLM from llama.cpp
-    # Extended to support tool calls and tool messages
-    template_content = """<|im_start|>{{ if .System }}{{ .System }}
-
-{{ end }}{{ range .Messages }}{{ if eq .Role "user" }}User: {{ .Content }}<end_of_utterance>
-{{ else if eq .Role "assistant" }}{{ if .ToolCalls }}Assistant: <tool_calls>
-{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}{{ if not (last .Function.Name) }}, {{ end }}{{ end }}
-</tool_calls><end_of_utterance>
-{{ else }}Assistant: {{ .Content }}<end_of_utterance>
-{{ end }}{{ else if eq .Role "tool" }}Tool: {{ .Content }}<end_of_utterance>
+    # The GGUF file already contains the chat template from the original model
+    # For baseline validation, we don't need tool calling, so we can use the built-in template
+    # which should handle images correctly. For training, we'll add tool calling support.
+    if include_tool_calling:
+        # SmolVLM2 chat template in Go template format (for Ollama)
+        # Based on the Jinja2 chat_template.jinja format
+        # For images: SmolVLM2 expects "User:" (no space after colon) followed by <image> token
+        # For text only: "User: " (with space after colon)
+        # Ollama provides .Images field when images are present in the message
+        template_content = """<|im_start|>{{ if .System }}{{ .System }}<|im_end|>
+{{ end }}{{ range $idx, $msg := .Messages }}{{ if eq $msg.Role "user" }}User:{{ if $msg.Images }}:{{ else }} {{ end }}{{ if $msg.Images }}<image>{{ end }}{{ $msg.Content }}<end_of_utterance>
+{{ else if eq $msg.Role "assistant" }}{{ if $msg.ToolCalls }}Assistant: <tool_calls>
+{{ range $tool := $msg.ToolCalls }}{"name": "{{ $tool.Function.Name }}", "arguments": {{ $tool.Function.Arguments }}}
+{{ end }}</tool_calls><end_of_utterance>
+{{ else }}Assistant: {{ $msg.Content }}<end_of_utterance>
+{{ end }}{{ else if eq $msg.Role "tool" }}Tool: {{ $msg.Content }}<end_of_utterance>
 {{ end }}{{ end }}Assistant:"""
-    
-    modelfile_content = f"""FROM hf.co/{hub_model_id}:Q4_K_M
+        
+        modelfile_content = f"""FROM hf.co/{hub_model_id}:{quantization}
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 4096
+
+TEMPLATE \"\"\"{template_content}\"\"\"
+
+SYSTEM "You are a helpful assistant."
+"""
+    else:
+        # Convert the Jinja2 template from GGUF to Go template format for Ollama
+        # SmolVLM2 format matches chat_template.jinja exactly:
+        # - Tool messages: "Tool: {content}<end_of_utterance>"
+        # - User/Assistant with images: "{Role}:<image>{content}<end_of_utterance>" (no space after colon)
+        # - User/Assistant without images: "{Role}: {content}<end_of_utterance>" (space after colon)
+        # - System: "{system}<|im_end|>"
+        # - Generation prompt: "Assistant:"
+        # Note: Go templates don't have a "title" function, so we handle capitalization manually
+        # The Jinja2 template checks if first content is image to determine colon format,
+        # then loops through content inserting <image> for images and text for text.
+        # In Ollama, images are passed via .Images field, so we check that to determine format.
+        template_content = """<|im_start|>{{ range $idx, $msg := .Messages }}{{ if eq $msg.Role "tool" }}Tool: {{ $msg.Content }}<end_of_utterance>
+{{ else }}{{ if eq $msg.Role "user" }}User{{ else if eq $msg.Role "assistant" }}Assistant{{ else if eq $msg.Role "system" }}System{{ else }}{{ $msg.Role }}{{ end }}{{ if $msg.Images }}:{{ else }}: {{ end }}{{ if $msg.Images }}<image>{{ end }}{{ $msg.Content }}<end_of_utterance>
+{{ end }}{{ end }}Assistant:"""
+        
+        modelfile_content = f"""FROM hf.co/{hub_model_id}:{quantization}
 
 PARAMETER temperature 0.7
 PARAMETER num_ctx 4096
@@ -887,7 +973,8 @@ def pull_model_to_ollama(hub_model_id):
         hub_model_id = f"{username}/{hub_model_id}"
     
     # Model identifier for Ollama
-    model_ref = f"hf.co/{hub_model_id}:Q4_K_M"
+    # For baseline validation, use f16; for training, use Q4_K_M
+    model_ref = f"hf.co/{hub_model_id}:f16"
     
     print(f"\nPulling model to Ollama: {model_ref}")
     
@@ -1131,39 +1218,42 @@ def test_inference(model, processor):
     print("="*80)
 
 
-def validate_vision_locally(model, processor):
+def validate_vision_locally(model, processor, temperature=0):
     """
     Tests vision capabilities to ensure we don't break them during training.
     Uses examples from SmolVLM2 documentation with temperature=0 for consistency.
 
-    Returns: (baseline_match: bool, details: str)
+    Args:
+        model: The model to test
+        processor: The processor to use
+        temperature: Temperature for generation (default 0 for deterministic)
+
+    Returns: (baseline_match: bool, details: str, response: str)
     """
     import torch
-    from PIL import Image
-    import requests
-    from io import BytesIO
 
     print("\n" + "=" * 80)
     print("LOCAL VISION VALIDATION: Image Description")
     print("=" * 80)
 
     # Test 1: Simple image description (bee image)
+    # Follow the exact pattern from SmolVLM2 documentation
+    # Use the processor with our extended chat template (based on default + tool support)
     try:
         print("\n  Testing: Image description (bee)")
-        response = requests.get("https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg")
-        image = Image.open(BytesIO(response.content))
-
+        
+        # Use URL format as shown in documentation (not PIL Image object)
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image"},
+                    {"type": "image", "url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg"},
                     {"type": "text", "text": "Can you describe this image?"},
                 ]
             },
         ]
 
-        # Note: image is embedded in messages content, don't pass separately
+        # Process exactly as shown in documentation using our extended template
         inputs = processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -1172,36 +1262,41 @@ def validate_vision_locally(model, processor):
             return_tensors="pt",
         ).to(model.device, dtype=torch.bfloat16)
 
+        # Generate exactly as shown in documentation
         generated_ids = model.generate(**inputs, do_sample=False, max_new_tokens=64)
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        
+        # Decode exactly as shown in documentation
+        generated_texts = processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+        )
+        response_text = generated_texts[0]
+        
+        # Extract just the assistant's response (remove the prompt part)
+        if "Assistant:" in response_text:
+            response_text = response_text.split("Assistant:")[-1].strip()
 
-        # Extract just the assistant's response
-        if "Assistant:" in generated_text:
-            response = generated_text.split("Assistant:")[-1].strip()
-        else:
-            response = generated_text.strip()
-
-        print(f"    Response: {response[:100]}...")
+        print(f"    Response: {response_text[:100]}...")
 
         # Check if response mentions expected keywords (bee, yellow, flower, etc.)
         keywords = ["bee", "yellow", "flower", "insect", "wing"]
-        matched_keywords = [kw for kw in keywords if kw.lower() in response.lower()]
+        matched_keywords = [kw for kw in keywords if kw.lower() in response_text.lower()]
 
         if len(matched_keywords) >= 2:
             print(f"    ✓ Passed (found keywords: {', '.join(matched_keywords)})")
-            return True, f"Vision test passed. Response contained expected keywords: {', '.join(matched_keywords)}"
+            return True, f"Vision test passed. Response contained expected keywords: {', '.join(matched_keywords)}", response_text
         else:
             print(f"    ✗ Failed (found keywords: {', '.join(matched_keywords) if matched_keywords else 'none'})")
-            return False, f"Vision test failed. Expected bee-related keywords, got: {response[:100]}"
+            return False, f"Vision test failed. Expected bee-related keywords, got: {response_text[:100]}", response_text
 
     except Exception as e:
         print(f"    ✗ Error during vision test: {e}")
-        return False, f"Vision test error: {str(e)}"
+        return False, f"Vision test error: {str(e)}", ""
     finally:
         print("=" * 80)
 
 
-def validate_tool_calling_locally(model, processor):
+def validate_tool_calling_locally(model, processor, temperature=0):
     """
     Validate tool calling capabilities on the local PyTorch model.
 
@@ -1210,11 +1305,17 @@ def validate_tool_calling_locally(model, processor):
     2. Generate proper thinking process
     3. Format tool calls correctly
 
+    Args:
+        model: The model to test
+        processor: The processor to use
+        temperature: Temperature for generation (default 0 for deterministic)
+
     Returns:
-        Tuple of (passed: bool, score: float, details: str)
+        Tuple of (passed: bool, score: float, details: str, responses: list)
         - passed: Whether basic validation passed
         - score: Quality score (0.0 to 1.0)
         - details: Description of what passed/failed
+        - responses: List of response texts for each test case
     """
     print("\n" + "="*80)
     print("LOCAL VALIDATION: Tool Calling")
@@ -1248,6 +1349,7 @@ def validate_tool_calling_locally(model, processor):
     total_score = 0.0
     passed_tests = 0
     failed_details = []
+    responses = []
 
     for test_case in test_cases:
         print(f"\n  Testing: {test_case['name']}")
@@ -1273,15 +1375,16 @@ def validate_tool_calling_locally(model, processor):
 
         generated_ids = model.generate(
             **inputs,
-            do_sample=False,
+            do_sample=(temperature > 0),
+            temperature=temperature,
             max_new_tokens=test_case["max_length"],
-            temperature=0.1,
         )
 
         # Extract only new tokens
         input_length = inputs["input_ids"].shape[1]
         new_tokens = generated_ids[0, input_length:]
         generated_text = processor.decode(new_tokens, skip_special_tokens=True)
+        responses.append(generated_text)
 
         print(f"    Response: {generated_text[:100]}...")
 
@@ -1333,7 +1436,303 @@ def validate_tool_calling_locally(model, processor):
 
     print("="*80)
 
-    return passed, avg_score, details
+    return passed, avg_score, details, responses
+
+
+def validate_vision_ollama(model_name, temperature=0):
+    """
+    Validate vision capabilities using Ollama model.
+    
+    Args:
+        model_name: Name of the Ollama model to test
+        temperature: Temperature for generation (default 0 for deterministic)
+    
+    Returns:
+        Tuple of (passed: bool, details: str, response: str)
+    """
+    if ollama is None:
+        raise ImportError("ollama package is required. Install with: pip install ollama")
+    
+    print("\n" + "=" * 80)
+    print("OLLAMA VISION VALIDATION: Image Description")
+    print("=" * 80)
+    
+    try:
+        print("\n  Testing: Image description (bee)")
+        # Download the same bee image
+        response = requests.get("https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg")
+        image_data = response.content
+        
+        # Convert image to base64 for Ollama API
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Use Ollama API to generate response (using REST API format with base64)
+        # Note: Ollama Python client may not support images directly, so we use the REST API
+        import json
+        ollama_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        api_url = f"{ollama_url}/api/chat"
+        
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Can you describe this image?",
+                    "images": [image_base64]
+                }
+            ],
+            "options": {
+                "temperature": temperature,
+                "num_predict": 64
+            },
+            "stream": False  # Disable streaming for simpler response handling
+        }
+        
+        api_response = requests.post(api_url, json=payload)
+        api_response.raise_for_status()
+        
+        # Ollama may return streaming responses or multiple JSON objects
+        # Try to parse as single JSON first
+        try:
+            ollama_response = api_response.json()
+            generated_text = ollama_response["message"]["content"]
+        except json.JSONDecodeError as e:
+            # If JSON parsing fails, try to extract content from response text
+            response_text_raw = api_response.text
+            print(f"    Warning: JSON parse error: {e}")
+            print(f"    Response text (first 500 chars): {response_text_raw[:500]}")
+            # Try to parse as streaming response (multiple JSON lines)
+            lines = response_text_raw.strip().split('\n')
+            generated_text = ""
+            for line in lines:
+                if line.strip():
+                    try:
+                        line_json = json.loads(line)
+                        if "message" in line_json and "content" in line_json["message"]:
+                            generated_text += line_json["message"]["content"]
+                    except json.JSONDecodeError:
+                        continue
+            if not generated_text:
+                raise ValueError(f"Could not extract content from Ollama response: {response_text_raw[:200]}")
+        
+        response_text = generated_text.strip()
+        
+        print(f"    Response: {response_text[:100]}...")
+        
+        # Check if response mentions expected keywords (bee, yellow, flower, etc.)
+        keywords = ["bee", "yellow", "flower", "insect", "wing"]
+        matched_keywords = [kw for kw in keywords if kw.lower() in response_text.lower()]
+        
+        if len(matched_keywords) >= 2:
+            print(f"    ✓ Passed (found keywords: {', '.join(matched_keywords)})")
+            return True, f"Vision test passed. Response contained expected keywords: {', '.join(matched_keywords)}", response_text
+        else:
+            print(f"    ✗ Failed (found keywords: {', '.join(matched_keywords) if matched_keywords else 'none'})")
+            return False, f"Vision test failed. Expected bee-related keywords, got: {response_text[:100]}", response_text
+    
+    except Exception as e:
+        print(f"    ✗ Error during vision test: {e}")
+        return False, f"Vision test error: {str(e)}", ""
+    finally:
+        print("=" * 80)
+
+
+def validate_tool_calling_ollama(model_name, temperature=0):
+    """
+    Validate tool calling capabilities using Ollama model.
+    
+    Args:
+        model_name: Name of the Ollama model to test
+        temperature: Temperature for generation (default 0 for deterministic)
+    
+    Returns:
+        Tuple of (passed: bool, score: float, details: str, responses: list)
+    """
+    if ollama is None:
+        raise ImportError("ollama package is required. Install with: pip install ollama")
+    
+    print("\n" + "="*80)
+    print("OLLAMA VALIDATION: Tool Calling")
+    print("="*80)
+    
+    test_cases = [
+        {
+            "name": "Simple weather query",
+            "prompt": (
+                "You are a helpful assistant with access to various tools. "
+                "Also, before making a call to a function take the time to plan the function to take. "
+                "Make that thinking process between <think>{your thoughts}</think>\n\n"
+                "What's the weather like in San Francisco?"
+            ),
+            "expected_keywords": ["<think>", "</think>"],
+            "max_length": 256,
+        },
+        {
+            "name": "Multi-step reasoning",
+            "prompt": (
+                "You are a helpful assistant with access to various tools. "
+                "Also, before making a call to a function take the time to plan the function to take. "
+                "Make that thinking process between <think>{your thoughts}</think>\n\n"
+                "I need to book a flight from NYC to LA and then get the weather there."
+            ),
+            "expected_keywords": ["<think>", "</think>"],
+            "max_length": 256,
+        },
+    ]
+    
+    total_score = 0.0
+    passed_tests = 0
+    failed_details = []
+    responses = []
+    
+    for test_case in test_cases:
+        print(f"\n  Testing: {test_case['name']}")
+        
+        try:
+            ollama_response = ollama.chat(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": test_case["prompt"]
+                    }
+                ],
+                options={
+                    "temperature": temperature,
+                    "num_predict": test_case["max_length"]
+                }
+            )
+            
+            generated_text = ollama_response["message"]["content"]
+            response_text = generated_text.strip()
+            responses.append(response_text)
+            
+            print(f"    Response: {response_text[:100]}...")
+            
+            # Score this test case
+            case_score = 0.0
+            
+            # Check for expected keywords
+            keywords_found = sum(1 for kw in test_case["expected_keywords"] if kw.lower() in response_text.lower())
+            keyword_score = keywords_found / len(test_case["expected_keywords"])
+            case_score += keyword_score * 0.5  # 50% weight on keywords
+            
+            # Check response length (not too short, not too long)
+            length_ok = 10 < len(response_text) < test_case["max_length"] * 1.5
+            if length_ok:
+                case_score += 0.3  # 30% weight on reasonable length
+            
+            # Check for coherence (no repetition)
+            words = response_text.lower().split()
+            if len(words) > 0:
+                unique_ratio = len(set(words)) / len(words)
+                if unique_ratio > 0.6:  # At least 60% unique words
+                    case_score += 0.2  # 20% weight on coherence
+            
+            total_score += case_score
+            
+            if case_score >= 0.6:  # Pass threshold: 60%
+                passed_tests += 1
+                print(f"    ✓ Passed (score: {case_score:.2f})")
+            else:
+                failed_details.append(f"{test_case['name']}: score {case_score:.2f}")
+                print(f"    ✗ Failed (score: {case_score:.2f})")
+                if keyword_score < 1.0:
+                    missing = [kw for kw in test_case["expected_keywords"] if kw.lower() not in response_text.lower()]
+                    print(f"      Missing keywords: {missing}")
+        
+        except Exception as e:
+            print(f"    ✗ Error during test: {e}")
+            responses.append("")
+            failed_details.append(f"{test_case['name']}: error - {str(e)}")
+    
+    # Calculate overall metrics
+    avg_score = total_score / len(test_cases) if test_cases else 0.0
+    passed = passed_tests >= len(test_cases) * 0.7  # At least 70% of tests must pass
+    
+    print(f"\n  Overall: {passed_tests}/{len(test_cases)} tests passed")
+    print(f"  Average score: {avg_score:.2f}")
+    
+    if passed:
+        details = f"Passed {passed_tests}/{len(test_cases)} tests (avg score: {avg_score:.2f})"
+        print(f"  ✓ Ollama validation PASSED")
+    else:
+        details = f"Only {passed_tests}/{len(test_cases)} tests passed. Failed: {', '.join(failed_details)}"
+        print(f"  ✗ Ollama validation FAILED")
+    
+    print("="*80)
+    
+    return passed, avg_score, details, responses
+
+
+def compare_baseline_results(pytorch_results, ollama_results, test_type):
+    """
+    Compare PyTorch baseline results to Ollama results.
+    
+    Args:
+        pytorch_results: Results from PyTorch validation (dict with 'response' or 'responses')
+        ollama_results: Results from Ollama validation (dict with 'response' or 'responses')
+        test_type: 'vision' or 'tool_calling'
+    
+    Returns:
+        Tuple of (match: bool, differences: str)
+    """
+    if test_type == "vision":
+        pytorch_response = pytorch_results.get("response", "").strip()
+        ollama_response = ollama_results.get("response", "").strip()
+        
+        match = pytorch_response == ollama_response
+        if match:
+            return True, "Responses match exactly"
+        else:
+            differences = f"PyTorch: {pytorch_response[:200]}...\nOllama: {ollama_response[:200]}..."
+            return False, differences
+    
+    elif test_type == "tool_calling":
+        pytorch_responses = pytorch_results.get("responses", [])
+        ollama_responses = ollama_results.get("responses", [])
+        
+        if len(pytorch_responses) != len(ollama_responses):
+            return False, f"Different number of test cases: PyTorch={len(pytorch_responses)}, Ollama={len(ollama_responses)}"
+        
+        all_match = True
+        differences = []
+        for i, (pt_resp, ol_resp) in enumerate(zip(pytorch_responses, ollama_responses)):
+            pt_resp = pt_resp.strip()
+            ol_resp = ol_resp.strip()
+            if pt_resp != ol_resp:
+                all_match = False
+                differences.append(f"Test case {i+1}: PyTorch={pt_resp[:100]}... vs Ollama={ol_resp[:100]}...")
+        
+        if all_match:
+            return True, "All responses match exactly"
+        else:
+            return False, "\n".join(differences)
+    
+    return False, f"Unknown test type: {test_type}"
+
+
+def save_original_model(model, processor, output_dir):
+    """
+    Save the original (unfine-tuned) model and processor to disk.
+    
+    Args:
+        model: The model to save
+        processor: The processor to save
+        output_dir: Directory to save the model to
+    
+    Returns:
+        Path to the saved model directory
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Saving original model to {output_path}...")
+    model.save_pretrained(output_path)
+    processor.save_pretrained(output_path)
+    print(f"✓ Original model saved to {output_path}")
+    
+    return output_path
 
 
 def test_local_ollama_model(model_name, project_root):
@@ -1439,7 +1838,7 @@ def create_local_ollama_model(gguf_path, model_name, modelfile_path):
 
 
 def main():
-    """Main training function with continuous loop: train → pull → test → repeat until all tests pass."""
+    """Main training function with baseline validation workflow."""
     import signal
     import sys
 
@@ -1454,12 +1853,243 @@ def main():
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Load model and processor (only once, before the loop)
-    print("Loading model and processor...")
+    # ========================================================================
+    # PHASE 1: Baseline Validation (Before Training)
+    # ========================================================================
+    print("\n" + "="*80)
+    print("PHASE 1: BASELINE VALIDATION")
+    print("="*80)
+    
+    # Load model and processor
+    print("\nLoading original model and processor...")
     model, processor = load_model_and_processor()
     
+    # Run baseline vision validation (temperature=0)
+    print("\n[Baseline] Validating vision capabilities (temperature=0)...")
+    vision_passed, vision_details, vision_response = validate_vision_locally(model, processor, temperature=0)
+    if not vision_passed:
+        print(f"\n✗ FATAL: Base model vision validation failed! {vision_details}")
+        print("  Cannot proceed. Please check the model and processor setup.")
+        sys.exit(1)
+    print("✓ Base model vision validation passed")
+    
+    # Run baseline tool calling validation (temperature=0)
+    # Note: Base model won't pass this yet - we're just recording baseline for comparison
+    print("\n[Baseline] Validating tool calling capabilities (temperature=0)...")
+    print("  Note: Base model is not expected to pass tool calling yet (will be fine-tuned for this)")
+    tool_calling_passed, tool_calling_score, tool_calling_details, tool_calling_responses = validate_tool_calling_locally(model, processor, temperature=0)
+    if tool_calling_passed:
+        print("✓ Base model tool calling validation passed (unexpected but good!)")
+    else:
+        print(f"  Base model tool calling baseline: {tool_calling_score:.2f} (expected to improve with fine-tuning)")
+    
+    # Store baseline results
+    baseline_results = {
+        "vision": {
+            "passed": vision_passed,
+            "details": vision_details,
+            "response": vision_response
+        },
+        "tool_calling": {
+            "passed": tool_calling_passed,
+            "score": tool_calling_score,
+            "details": tool_calling_details,
+            "responses": tool_calling_responses
+        }
+    }
+    
+    print("\n" + "="*80)
+    print("✓ Phase 1 complete: Baseline validation passed")
+    print("="*80)
+    
+    # ========================================================================
+    # PHASE 2: Original Model Conversion & Validation
+    # ========================================================================
+    print("\n" + "="*80)
+    print("PHASE 2: ORIGINAL MODEL CONVERSION & VALIDATION")
+    print("="*80)
+    
+    # Determine hub model ID
+    api = HfApi()
+    user_info = api.whoami()
+    username = user_info["name"]
+    # Extract model name (last part after /) and add username prefix
+    model_name = model_id.split('/')[-1]
+    hub_model_id = f"{username}/{model_name}-GGUF"
+    
+    # Step 1: Save original model
+    print("\n[Phase 2] Step 1: Saving original model...")
+    script_dir = Path(__file__).parent
+    original_model_dir = script_dir / "data" / "models" / "original-base-model"
+    original_model_path = save_original_model(model, processor, original_model_dir)
+    
+    # Step 2: Convert to GGUF f16 (for baseline validation - we'll test Q4_K_M later)
+    print("\n[Phase 2] Step 2: Converting original model to GGUF f16...")
+    try:
+        # Ensure hub_model_id has username (it should already from line 1820, but double-check)
+        if "/" not in hub_model_id:
+            user_info = api.whoami()
+            username = user_info["name"]
+            hub_model_id = f"{username}/{hub_model_id}"
+        
+        # Convert and push - this will create local GGUF files temporarily
+        # Note: convert_and_push_gguf also ensures username is present internally
+        # Use f16 for baseline validation to ensure template correctness before testing quantization
+        convert_and_push_gguf(str(original_model_path), hub_model_id, quantizations=["f16"])
+        print("✓ GGUF conversion and upload complete")
+        
+        # The convert_and_push_gguf function deletes local files after upload
+        # So we need to download from HuggingFace (hub_model_id already has username)
+    except Exception as e:
+        print(f"\n✗ FATAL: Failed to convert/push GGUF: {e}")
+        print("  Cannot proceed. Please check conversion setup.")
+        sys.exit(1)
+    
+    # Step 3: Create and push Modelfile
+    print("\n[Phase 2] Step 3: Creating and pushing Modelfile...")
+    modelfile_path = script_dir / "Modelfile"
+    try:
+        # For baseline validation, don't include tool calling - use built-in template for better image handling
+        # Use f16 quantization for baseline validation
+        create_modelfile(hub_model_id, output_path=modelfile_path, include_tool_calling=False, quantization="f16")
+        print("✓ Modelfile created and pushed")
+    except Exception as e:
+        print(f"\n✗ FATAL: Failed to create/push Modelfile: {e}")
+        print("  Cannot proceed. Please check Modelfile creation.")
+        sys.exit(1)
+    
+    # Step 4: Get GGUF file for local Ollama model
+    print("\n[Phase 2] Step 4: Preparing GGUF file for local Ollama model...")
+    local_model_name = "smolvlm2-baseline"
+    
+    llama_cpp_path = script_dir / "3rdparty" / "llama.cpp"
+    # Remove -GGUF from base_model_name for filenames (repo name keeps it)
+    base_model_name_full = hub_model_id.split('/')[-1]
+    base_model_name = base_model_name_full.replace("-GGUF", "")
+    # Use f16 for baseline validation
+    local_gguf_file = llama_cpp_path / f"{base_model_name}-f16.gguf"
+    
+    # Check if file exists locally first (might still be there from conversion before cleanup)
+    if local_gguf_file.exists():
+        print(f"  ✓ Found local GGUF file: {local_gguf_file.name}")
+    else:
+        # Try alternative local locations
+        possible_paths = [
+            llama_cpp_path / f"{base_model_name}-f16.gguf",
+            script_dir / f"{base_model_name}-f16.gguf",
+        ]
+        for path in possible_paths:
+            if path.exists():
+                local_gguf_file = path
+                print(f"  ✓ Found local GGUF at {path}")
+                break
+    
+    # If not found locally, download from HuggingFace
+    if not local_gguf_file.exists():
+        print(f"  Downloading GGUF from HuggingFace (repo: {hub_model_id})...")
+        try:
+            # Download the GGUF file from HuggingFace (filename without -GGUF)
+            gguf_filename = f"{base_model_name}-f16.gguf"
+            local_gguf_file = Path(hf_hub_download(
+                repo_id=hub_model_id,
+                filename=gguf_filename,
+                local_dir=str(llama_cpp_path)
+            ))
+            print(f"  ✓ Downloaded {gguf_filename} from HuggingFace")
+        except Exception as e:
+            print(f"  ⚠ Could not download from HF: {e}")
+            # Try alternative locations
+            possible_paths = [
+                llama_cpp_path / f"{base_model_name}-f16.gguf",
+                script_dir / f"{base_model_name}-f16.gguf",
+            ]
+            for path in possible_paths:
+                if path.exists():
+                    local_gguf_file = path
+                    print(f"  ✓ Found local GGUF at {path}")
+                    break
+    
+    if not local_gguf_file.exists():
+        print(f"\n✗ FATAL: Could not find or download GGUF file")
+        print("  Please ensure conversion and upload completed successfully.")
+        sys.exit(1)
+    
+    # Step 5: Create local Ollama model
+    print("\n[Phase 2] Step 5: Creating local Ollama model...")
+    
+    if not create_local_ollama_model(local_gguf_file, local_model_name, modelfile_path):
+        print(f"\n✗ FATAL: Failed to create local Ollama model")
+        print("  Cannot proceed with validation.")
+        sys.exit(1)
+    
+    # Step 6: Validate Ollama model with same tests
+    print("\n[Phase 2] Step 6: Validating Ollama model (temperature=0)...")
+    
+    print("\n  Testing vision...")
+    ollama_vision_passed, ollama_vision_details, ollama_vision_response = validate_vision_ollama(local_model_name, temperature=0)
+    
+    print("\n  Testing tool calling...")
+    ollama_tool_calling_passed, ollama_tool_calling_score, ollama_tool_calling_details, ollama_tool_calling_responses = validate_tool_calling_ollama(local_model_name, temperature=0)
+    
+    ollama_results = {
+        "vision": {
+            "passed": ollama_vision_passed,
+            "details": ollama_vision_details,
+            "response": ollama_vision_response
+        },
+        "tool_calling": {
+            "passed": ollama_tool_calling_passed,
+            "score": ollama_tool_calling_score,
+            "details": ollama_tool_calling_details,
+            "responses": ollama_tool_calling_responses
+        }
+    }
+    
+    # Step 7: Compare results
+    print("\n[Phase 2] Step 7: Comparing Ollama results to PyTorch baseline...")
+    
+    vision_match, vision_diff = compare_baseline_results(
+        baseline_results["vision"],
+        ollama_results["vision"],
+        "vision"
+    )
+    
+    tool_calling_match, tool_calling_diff = compare_baseline_results(
+        baseline_results["tool_calling"],
+        ollama_results["tool_calling"],
+        "tool_calling"
+    )
+    
+    if vision_match and tool_calling_match:
+        print("\n✓ All Ollama results match PyTorch baseline!")
+        print("  chat_template.jinja and Modelfile are correctly configured.")
+    else:
+        print("\n✗ FATAL: Ollama results do not match PyTorch baseline!")
+        if not vision_match:
+            print(f"\n  Vision mismatch:")
+            print(f"  {vision_diff}")
+        if not tool_calling_match:
+            print(f"\n  Tool calling mismatch:")
+            print(f"  {tool_calling_diff}")
+        print("\n  Please review and update:")
+        print("  - chat_template.jinja")
+        print("  - Modelfile")
+        print("\n  After fixing, re-run this script to verify.")
+        sys.exit(1)
+    
+    print("\n" + "="*80)
+    print("✓ Phase 2 complete: Original model validated in Ollama")
+    print("="*80)
+    
+    # ========================================================================
+    # PHASE 3: Training (Only After Validation Passes)
+    # ========================================================================
+    print("\n" + "="*80)
+    print("PHASE 3: FINE-TUNING")
+    print("="*80)
+    
     # Load interleaved datasets with validation split (only once, before the loop)
-    print("Loading datasets...")
+    print("\nLoading datasets...")
     # Use minimal video samples (just to verify interleaving works) and focus on function calling
     train_ds, val_ds = load_dataset_data(processor, video_samples=10, function_calling_samples=1000)
     
@@ -1470,9 +2100,9 @@ def main():
     last_failure_analysis = None
     last_eval_metrics = None
     best_validation_loss = float('inf')
-    best_tool_calling_score = 0.0
+    best_tool_calling_score = tool_calling_score  # Initialize with baseline score
 
-    # Local Ollama model name
+    # Local Ollama model name for fine-tuned model
     local_model_name = "smolvlm2-local"
 
     while iteration < max_iterations:
@@ -1564,14 +2194,13 @@ def main():
 
             # Step 3a: Local PyTorch validation for vision (ensure we don't break it)
             print(f"[Iteration {iteration}] Step 3a: Validating vision locally (PyTorch)...")
-            vision_passed, vision_details = validate_vision_locally(model, processor)
+            vision_passed, vision_details, _ = validate_vision_locally(model, processor, temperature=0)
             if not vision_passed:
-                print(f"  ⚠ WARNING: Vision validation failed! {vision_details}")
-                print(f"  Continuing anyway, but vision capabilities may be degraded.")
+                print(f"  ✗ Vision validation failed! {vision_details}")
 
             # Step 3b: Local PyTorch validation for tool calling
             print(f"[Iteration {iteration}] Step 3b: Validating tool calling locally (PyTorch)...")
-            local_passed, tool_calling_score, details = validate_tool_calling_locally(model, processor)
+            local_passed, tool_calling_score, details, _ = validate_tool_calling_locally(model, processor, temperature=0)
 
             if tool_calling_score > best_tool_calling_score:
                 improvement = tool_calling_score - best_tool_calling_score
@@ -1581,13 +2210,15 @@ def main():
                 degradation = best_tool_calling_score - tool_calling_score
                 print(f"  ✗ Tool calling score degraded by {degradation:.2f} (best: {best_tool_calling_score:.2f})")
 
-            # Decide whether to proceed based on validation loss AND tool calling score
-            if should_proceed_to_gguf and local_passed:
+            # Decide whether to proceed based on validation loss, vision validation, AND tool calling score
+            if should_proceed_to_gguf and vision_passed and local_passed:
                 print(f"\n  ✓ Model improved! Proceeding with GGUF conversion and testing...")
             else:
                 reasons = []
                 if not should_proceed_to_gguf:
                     reasons.append("validation loss did not improve")
+                if not vision_passed:
+                    reasons.append("vision validation failed")
                 if not local_passed:
                     reasons.append("local tool calling tests failed")
                 print(f"\n  ✗ Skipping GGUF conversion: {' and '.join(reasons)}")
@@ -1598,7 +2229,9 @@ def main():
             print(f"[Iteration {iteration}] Step 4: Converting to GGUF (local only)...")
             script_dir = Path(__file__).parent
             llama_cpp_path = script_dir / "3rdparty" / "llama.cpp"
-            base_model_name = hub_model_id.split('/')[-1]
+            # Remove -GGUF from base_model_name for filenames (repo name keeps it)
+            base_model_name_full = hub_model_id.split('/')[-1]
+            base_model_name = base_model_name_full.replace("-GGUF", "")
             local_gguf_file = llama_cpp_path / f"{base_model_name}-Q4_K_M.gguf"
 
             # Convert to GGUF locally (copied logic from convert_and_push_gguf but without pushing)
@@ -1710,13 +2343,14 @@ def main():
 
                 api.create_repo(hub_model_id_full, exist_ok=True, repo_type="model")
 
-                # Upload the Q4_K_M GGUF file
+                # Upload the Q4_K_M GGUF file (filename without -GGUF)
+                gguf_filename = f"{base_model_name}-Q4_K_M.gguf"
                 api.upload_file(
                     path_or_fileobj=str(local_gguf_file),
-                    path_in_repo=f"{base_model_name}-Q4_K_M.gguf",
+                    path_in_repo=gguf_filename,
                     repo_id=hub_model_id_full,
                 )
-                print(f"✓ Uploaded {base_model_name}-Q4_K_M.gguf to {hub_model_id_full}")
+                print(f"✓ Uploaded {gguf_filename} to {hub_model_id_full}")
 
                 # Upload Modelfile
                 api.upload_file(
