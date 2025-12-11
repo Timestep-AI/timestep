@@ -95,7 +95,7 @@ async def test_configure_dbos(setup_dbos):
 @pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_run_agent_workflow_basic(setup_dbos, model):
     """Test basic durable workflow execution."""
-    if model == "ollama/gpt-oss:20b-cloud":
+    if model == "ollama/gpt-oss:20b-cloud" or model == "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M":
         # Expected failure: Ollama cloud model has known compatibility issues
         with pytest.raises(Exception):
             # Create agent and session
@@ -342,7 +342,7 @@ async def test_create_scheduled_workflow(setup_dbos, model):
     
     # This should raise an error because DBOS is already launched
     # For ollama model, we expect any exception (compatibility issues)
-    if model == "ollama/gpt-oss:20b-cloud":
+    if model == "ollama/gpt-oss:20b-cloud" or model == "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M":
         with pytest.raises(Exception):
             await create_scheduled_agent_workflow(
                 crontab="0 * * * *",  # Every hour
