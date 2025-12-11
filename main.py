@@ -1,7 +1,10 @@
 """
-Fine-tune SmolVLM2 on Video Captioning
+Fine-tune SmolVLM2 on Video Captioning and Function Calling
 
-This script fine-tunes SmolVLM2-500M-Video-Instruct on Video Feedback dataset.
+This script fine-tunes SmolVLM2-500M-Video-Instruct on an interleaved dataset containing:
+- Video Feedback dataset: Video captioning examples
+- Function Calling dataset: Text-only function calling examples with thinking steps
+
 It is designed to run on a Colab A100 for full fine-tuning, but can be squeezed to L4 with QLoRA.
 
 Dependencies:
@@ -19,12 +22,14 @@ from transformers import (
     TrainingArguments,
     Trainer,
 )
-from datasets import load_dataset
+from datasets import load_dataset, interleave_datasets
 from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import HfApi
 from pathlib import Path
 import subprocess
 import os
+import copy
+import shutil
 
 
 # Configuration
@@ -101,19 +106,123 @@ def load_model_and_processor():
     return model, processor
 
 
-def load_dataset_data():
+def preprocess_function_calling(sample, processor):
     """
-    Load the dataset and preprocess it.
+    Preprocess function calling dataset examples.
     
-    We will load a dataset that contains generated videos and their super short captions
-    of 4k examples. We are loading small chunk of it for training and smaller one for test.
+    Adapted from the notebook approach:
+    - Handles system messages by merging into first user message with thinking prompt
+    - Formats messages using chat template
+    - Returns text-only format (no video)
+    """
+    messages = copy.deepcopy(sample["messages"])
+    first_message = messages[0]
+
+    # Instead of adding a system message, we merge the content into the first user message
+    if first_message["role"] == "system":
+        system_message_content = first_message["content"]
+        # Merge system content with the first user message
+        if len(messages) > 1:
+            messages[1]["content"] = (
+                system_message_content
+                + " Also, before making a call to a function take the time to plan the function to take. Make that thinking process between <think>{your thoughts}</think>\n\n"
+                + messages[1]["content"]
+            )
+        # Remove the system message from the conversation
+        messages.pop(0)
+
+    # Convert messages to SmolVLM2 format (text-only, no video)
+    formatted_messages = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+        
+        # Convert role names to match SmolVLM2 format
+        if role == "human":
+            role = "user"
+        elif role == "model":
+            role = "assistant"
+        elif role == "tool":
+            role = "assistant"  # Treat tool responses as assistant messages
+        
+        # Format content as text-only
+        formatted_content = [{"type": "text", "text": content}]
+        formatted_messages.append({"role": role, "content": formatted_content})
+
+    return {
+        "messages": formatted_messages,
+        "dataset_type": "function_calling",  # Mark as function calling example
+    }
+
+
+def load_function_calling_dataset(processor, max_samples=100):
+    """
+    Load and preprocess the function calling dataset.
+    
+    Args:
+        processor: The processor to use for formatting
+        max_samples: Maximum number of samples to use
+    
+    Returns:
+        Preprocessed dataset
+    """
+    dataset_name = "Jofthomas/hermes-function-calling-thinking-V1"
+    print(f"Loading function calling dataset: {dataset_name}")
+    
+    dataset = load_dataset(dataset_name)
+    
+    # Rename conversations to messages if needed
+    if "conversations" in dataset["train"].column_names:
+        dataset = dataset.rename_column("conversations", "messages")
+    
+    # Preprocess the dataset
+    def preprocess_fn(sample):
+        return preprocess_function_calling(sample, processor)
+    
+    # Apply preprocessing - remove old messages column since we're replacing it with formatted version
+    # Get all column names except messages (we'll replace it)
+    old_columns = dataset["train"].column_names
+    dataset = dataset.map(preprocess_fn, remove_columns=old_columns)
+    
+    # Split and select subset
+    if "train" in dataset:
+        split_ds = dataset["train"].train_test_split(0.1)
+        train_ds = split_ds["train"]
+    else:
+        # If no train split, use the whole dataset
+        train_ds = dataset[list(dataset.keys())[0]]
+    
+    # Use a small subset for fast training
+    train_ds = train_ds.select(range(min(max_samples, len(train_ds))))
+    
+    print(f"Loaded {len(train_ds)} function calling samples")
+    
+    return train_ds
+
+
+def load_video_feedback_dataset(max_samples=100):
+    """
+    Load the video feedback dataset.
+    
+    Args:
+        max_samples: Maximum number of samples to use
+    
+    Returns:
+        Dataset with added dataset_type marker
     """
     ds = load_dataset("TIGER-Lab/VideoFeedback", "real")
     split_ds = ds["train"].train_test_split(test_size=0.5)
     train_ds = split_ds["train"]
 
     # Use a small subset for fast training (<5 minutes)
-    train_ds = train_ds.select(range(min(100, len(train_ds))))
+    train_ds = train_ds.select(range(min(max_samples, len(train_ds))))
+
+    # Add dataset type marker
+    def add_type(example):
+        example["dataset_type"] = "video_feedback"
+        return example
+    
+    train_ds = train_ds.map(add_type)
 
     # Clean up
     del split_ds, ds
@@ -122,17 +231,50 @@ def load_dataset_data():
     print(
         f"prompt:  {train_ds[0]['text prompt']}, video: {train_ds[0]['video link']}"
     )
-    print(f"Using {len(train_ds)} samples for training")
+    print(f"Loaded {len(train_ds)} video feedback samples")
 
     return train_ds
+
+
+def load_dataset_data(processor, video_samples=100, function_calling_samples=100):
+    """
+    Load both datasets and interleave them.
+    
+    Args:
+        processor: The processor to use for preprocessing
+        video_samples: Number of video feedback samples to use
+        function_calling_samples: Number of function calling samples to use
+    
+    Returns:
+        Interleaved dataset
+    """
+    # Load video feedback dataset
+    video_ds = load_video_feedback_dataset(max_samples=video_samples)
+    
+    # Load function calling dataset
+    fc_ds = load_function_calling_dataset(processor, max_samples=function_calling_samples)
+    
+    # Interleave datasets with equal probability
+    interleaved_ds = interleave_datasets(
+        [video_ds, fc_ds],
+        probabilities=[0.5, 0.5],  # 50/50 split
+        seed=42,
+    )
+    
+    print(f"Interleaved dataset created with {len(interleaved_ds)} total samples")
+    print(f"  - Video feedback: {len(video_ds)} samples")
+    print(f"  - Function calling: {len(fc_ds)} samples")
+    
+    return interleaved_ds
 
 
 def create_collate_fn(processor, model):
     """
     Create data collating function.
     
-    We will apply prompt template to have videos and captions together so model can learn
-    to caption. Then we pass the formatted prompts and videos to the processor which processes both.
+    Handles both video feedback examples and function calling examples.
+    - Video examples: Apply prompt template with videos and captions
+    - Function calling examples: Apply prompt template with text-only messages
     """
     image_token_id = processor.tokenizer.additional_special_tokens_ids[
         processor.tokenizer.additional_special_tokens.index("<image>")
@@ -141,30 +283,53 @@ def create_collate_fn(processor, model):
     def collate_fn(examples):
         instances = []
         for example in examples:
-            prompt = example["text prompt"]
-
-            user_content = [{"type": "text", "text": "Caption the video."}]
-            user_content.append({"type": "video", "path": example["video link"]})
-
-            messages = [
-                {"role": "user", "content": user_content},
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": f"{prompt}"}],
-                },
-            ]
-
-            instance = (
-                processor.apply_chat_template(
-                    messages,
-                    add_generation_prompt=False,
-                    tokenize=True,
-                    return_dict=True,
-                    return_tensors="pt",
+            dataset_type = example.get("dataset_type", "video_feedback")
+            
+            if dataset_type == "function_calling":
+                # Handle function calling examples (text-only)
+                messages = example["messages"]
+                
+                instance = (
+                    processor.apply_chat_template(
+                        messages,
+                        add_generation_prompt=False,
+                        tokenize=True,
+                        return_dict=True,
+                        return_tensors="pt",
+                    )
+                    .to("cuda")
+                    .to(model.dtype)
                 )
-                .to("cuda")
-                .to(model.dtype)
-            )
+                # Mark as text-only (no pixel_values)
+                instance["is_text_only"] = True
+            else:
+                # Handle video feedback examples
+                prompt = example["text prompt"]
+
+                user_content = [{"type": "text", "text": "Caption the video."}]
+                user_content.append({"type": "video", "path": example["video link"]})
+
+                messages = [
+                    {"role": "user", "content": user_content},
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"{prompt}"}],
+                    },
+                ]
+
+                instance = (
+                    processor.apply_chat_template(
+                        messages,
+                        add_generation_prompt=False,
+                        tokenize=True,
+                        return_dict=True,
+                        return_tensors="pt",
+                    )
+                    .to("cuda")
+                    .to(model.dtype)
+                )
+                instance["is_text_only"] = False
+            
             instances.append(instance)
 
         input_ids = pad_sequence(
@@ -192,28 +357,36 @@ def create_collate_fn(processor, model):
         }
 
         # Step 1: figure out maximum frames, height, width across the batch
-        pvs = [
-            inst["pixel_values"].squeeze(0)
-            for inst in instances
-            if "pixel_values" in inst
-        ]
-        if pvs:  # there is at least one non-None pixel_values
+        # Only consider video examples (not text-only function calling examples)
+        pvs = []
+        for inst in instances:
+            if not inst.get("is_text_only", False) and "pixel_values" in inst:
+                pv = inst["pixel_values"]
+                if pv is not None:
+                    pvs.append(pv.squeeze(0) if pv.dim() > 4 else pv)
+        
+        if pvs:  # there is at least one non-None pixel_values from video examples
             max_frames = max(pv.shape[0] for pv in pvs)
             max_h = max(pv.shape[-2] for pv in pvs)
             max_w = max(pv.shape[-1] for pv in pvs)
         else:
-            max_h = max_w = processor.video_size["longest_edge"]
+            # Default values when no video examples in batch
+            # SmolVLM typically uses 448x448 for images/videos
+            max_h = max_w = 448
             max_frames = 1
 
         padded_pixel_values_list = []
         for ex in instances:
-            pv = ex.get("pixel_values", None).squeeze(0)
-
-            if pv is None:
-                # text-only => fill pixel data + mask with zeros
+            is_text_only = ex.get("is_text_only", False)
+            pv = ex.get("pixel_values", None)
+            
+            if is_text_only or pv is None:
+                # text-only => fill pixel data with zeros (minimal size)
                 shape_pv = (max_frames, 3, max_h, max_w)
-                padded_pv = torch.zeros(shape_pv, dtype=torch.float32)
+                padded_pv = torch.zeros(shape_pv, dtype=torch.float32, device="cuda")
             else:
+                if pv.dim() > 4:
+                    pv = pv.squeeze(0)
                 f, c, h, w = pv.shape
                 # Prepare final storage
                 padded_pv = torch.zeros(
@@ -251,11 +424,16 @@ def setup_training(model_id, model, collate_fn, train_ds):
     model_name = model_id.split("/")[-1]
     hub_model_id = f"{model_name}-GGUF"
     output_dir = f"data/models/{hub_model_id}"
+    
+    # Enable gradient checkpointing on the model to save memory
+    if hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
 
     training_args = TrainingArguments(
         max_steps=50,  # Limit to 50 steps for fast training (<5 minutes)
-        per_device_train_batch_size=4,  # Increased batch size for faster training
-        gradient_accumulation_steps=1,
+        per_device_train_batch_size=2,  # Reduced for smaller GPUs (increase if you have more memory)
+        gradient_accumulation_steps=2,  # Effective batch size = 2 * 2 = 4
+        gradient_checkpointing=True,  # Save memory by trading compute for memory
         warmup_steps=5,  # Reduced warmup for faster training
         learning_rate=1e-4,
         weight_decay=0.01,
@@ -282,16 +460,18 @@ def setup_training(model_id, model, collate_fn, train_ds):
     return trainer
 
 
-def convert_and_push_gguf(model_path, hub_model_id, quantization="q8_0"):
+def convert_and_push_gguf(model_path, hub_model_id, quantizations=None):
     """
-    Convert model to GGUF format and push to Hugging Face Hub.
+    Convert model to GGUF format with multiple quantization variants and push to Hugging Face Hub.
     
     Uses the llama.cpp submodule at 3rdparty/llama.cpp.
+    First converts to f16 base format, then quantizes to all variants using llama-quantize.
     
     Args:
         model_path: Path to the local model directory
         hub_model_id: Hugging Face Hub model ID to push to (can be just model name or username/model-name)
-        quantization: Quantization type (e.g., "q8_0", "q4_0", "f16", "f32", "bf16")
+        quantizations: List of quantization types to generate, or a single string. 
+                      If None, generates all common variants.
     """
     api = HfApi()
     
@@ -315,54 +495,230 @@ def convert_and_push_gguf(model_path, hub_model_id, quantization="q8_0"):
             "Make sure the submodule is initialized: git submodule update --init --recursive"
         )
     
-    # Convert to GGUF
-    gguf_filename = f"{hub_model_id.split('/')[-1]}.gguf"
-    # Use absolute path for the output file
-    gguf_file = (llama_cpp_path / gguf_filename).resolve()
-    print(f"Converting model to GGUF format ({quantization})...")
+    # Handle single string (backward compatibility) or list
+    if isinstance(quantizations, str):
+        quantizations = [quantizations]
+    
+    # Default quantization variants (similar to bartowski/Llama-3.2-1B-Instruct-GGUF)
+    # Note: f16 is the base format, others are quantized from it using llama-quantize
+    if quantizations is None:
+        quantizations = [
+            "IQ3_M",
+            "IQ4_XS",
+            "Q3_K_L",
+            "Q3_K_XL",  # May not exist in all versions, will fail gracefully
+            "Q4_0",
+            "Q4_K_S",
+            "Q4_K_M",
+            "Q4_K_L",
+            "Q5_K_S",
+            "Q5_K_M",
+            "Q5_K_L",
+            "Q6_K",
+            "Q6_K_L",  # May not exist in all versions, will fail gracefully
+            "Q8_0",
+            "f16",
+        ]
     
     # Ensure model_path is absolute since we change working directory
     model_path_abs = Path(model_path).resolve()
     if not model_path_abs.exists():
         raise FileNotFoundError(f"Model directory not found: {model_path_abs}")
     
-    subprocess.run(
-        [
-            "python3",
-            str(convert_script),
-            str(model_path_abs),
-            "--outfile",
-            str(gguf_file),
-            "--outtype",
-            quantization,
-        ],
-        check=True,
-        cwd=str(llama_cpp_path),  # Run from llama.cpp directory for proper imports
-    )
+    base_model_name = hub_model_id.split('/')[-1]
     
-    # Upload GGUF file to hub
-    print(f"Uploading {gguf_filename} to Hugging Face Hub...")
-    api.upload_file(
-        path_or_fileobj=str(gguf_file),
-        path_in_repo=gguf_filename,
-        repo_id=hub_model_id,
-    )
+    # Step 1: Convert to f16 base format first
+    print("\n[Step 1/2] Converting model to GGUF f16 base format...")
+    base_gguf_file = (llama_cpp_path / f"{base_model_name}-f16.gguf").resolve()
     
-    # Clean up local GGUF file
-    if gguf_file.exists():
-        gguf_file.unlink()
+    try:
+        subprocess.run(
+            [
+                "python3",
+                str(convert_script),
+                str(model_path_abs),
+                "--outfile",
+                str(base_gguf_file),
+                "--outtype",
+                "f16",
+            ],
+            check=True,
+            cwd=str(llama_cpp_path),
+        )
+        print(f"✓ Base f16 model created: {base_gguf_file.name}")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to create base f16 model: {e}")
     
-    print(f"Successfully pushed GGUF model to {hub_model_id}")
+    # Step 2: Find llama-quantize binary (system-installed or build it)
+    quantize_binary = None
+    
+    # First, try to find system-installed llama-quantize
+    system_quantize = shutil.which("llama-quantize") or shutil.which("quantize")
+    if system_quantize:
+        quantize_binary = Path(system_quantize)
+        print(f"Found system-installed quantize tool: {quantize_binary}")
+    
+    # Try common locations for the quantize binary in the submodule
+    if quantize_binary is None:
+        possible_paths = [
+            llama_cpp_path / "build" / "bin" / "llama-quantize",
+            llama_cpp_path / "build" / "bin" / "quantize",
+            llama_cpp_path / "bin" / "llama-quantize",
+            llama_cpp_path / "bin" / "quantize",
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                quantize_binary = path
+                break
+    
+    # If still not found, try to build it
+    if quantize_binary is None:
+        print("Building llama-quantize tool...")
+        build_dir = llama_cpp_path / "build"
+        build_dir.mkdir(exist_ok=True)
+        
+        # Try cmake build
+        try:
+            subprocess.run(
+                ["cmake", "-B", str(build_dir), "-S", str(llama_cpp_path)],
+                check=True,
+                cwd=str(llama_cpp_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["cmake", "--build", str(build_dir), "--target", "llama-quantize", "-j"],
+                check=True,
+                cwd=str(llama_cpp_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            quantize_binary = build_dir / "bin" / "llama-quantize"
+            if not quantize_binary.exists():
+                # Try alternative name
+                quantize_binary = build_dir / "bin" / "quantize"
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            # If cmake is not available, provide helpful error
+            if isinstance(e, FileNotFoundError) and "cmake" in str(e).lower():
+                raise RuntimeError(
+                    "llama-quantize tool not found and cmake is not installed.\n"
+                    "Please either:\n"
+                    "  1. Install cmake: sudo apt-get install cmake (or equivalent for your system)\n"
+                    "  2. Build llama-quantize manually: cd 3rdparty/llama.cpp && cmake -B build && cmake --build build --target llama-quantize\n"
+                    "  3. Install llama-quantize system-wide and ensure it's in your PATH"
+                )
+            # Try make build (legacy, but might work)
+            try:
+                subprocess.run(
+                    ["make", "llama-quantize", "-j"],
+                    check=True,
+                    cwd=str(llama_cpp_path),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                quantize_binary = llama_cpp_path / "llama-quantize"
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                raise RuntimeError(
+                    "Could not find or build llama-quantize.\n"
+                    "Please build it manually:\n"
+                    "  cd 3rdparty/llama.cpp\n"
+                    "  cmake -B build\n"
+                    "  cmake --build build --target llama-quantize\n"
+                    "\n"
+                    "Or install cmake and run this script again."
+                )
+    
+    if not quantize_binary or not quantize_binary.exists():
+        raise RuntimeError(f"Quantize binary not found at {quantize_binary}")
+    
+    print(f"Using quantize tool: {quantize_binary}")
+    
+    # Step 3: Generate and upload each quantization variant
+    # Separate f16 from other quantizations
+    other_quants = [q for q in quantizations if q.upper() != "F16"]
+    f16_in_list = any(q.upper() == "F16" for q in quantizations)
+    
+    uploaded_count = 0
+    
+    # Upload f16 base if requested
+    if f16_in_list:
+        print(f"\n[Uploading] {base_model_name}-f16.gguf...")
+        try:
+            api.upload_file(
+                path_or_fileobj=str(base_gguf_file),
+                path_in_repo=f"{base_model_name}-f16.gguf",
+                repo_id=hub_model_id,
+            )
+            print(f"✓ Successfully uploaded {base_model_name}-f16.gguf")
+            uploaded_count += 1
+        except Exception as e:
+            print(f"✗ Failed to upload f16: {e}")
+    
+    # Quantize and upload other variants
+    for i, quantization in enumerate(other_quants, 1):
+        print(f"\n[{i}/{len(other_quants)}] Quantizing to {quantization}...")
+        
+        # Create filename with quantization suffix
+        gguf_filename = f"{base_model_name}-{quantization}.gguf"
+        gguf_file = (llama_cpp_path / gguf_filename).resolve()
+        
+        try:
+            # Quantize from f16 base
+            subprocess.run(
+                [
+                    str(quantize_binary),
+                    str(base_gguf_file),
+                    str(gguf_file),
+                    quantization.upper(),
+                ],
+                check=True,
+                cwd=str(llama_cpp_path),
+            )
+            
+            # Upload GGUF file to hub
+            print(f"Uploading {gguf_filename} to Hugging Face Hub...")
+            api.upload_file(
+                path_or_fileobj=str(gguf_file),
+                path_in_repo=gguf_filename,
+                repo_id=hub_model_id,
+            )
+            
+            print(f"✓ Successfully uploaded {gguf_filename}")
+            uploaded_count += 1
+            
+        except subprocess.CalledProcessError as e:
+            print(f"✗ Failed to quantize {quantization}: {e}")
+            continue
+        except Exception as e:
+            print(f"✗ Failed to upload {quantization}: {e}")
+            continue
+        finally:
+            # Clean up local quantized GGUF file (keep base f16)
+            if gguf_file.exists() and gguf_file != base_gguf_file:
+                gguf_file.unlink()
+    
+    # Clean up base f16 file
+    if base_gguf_file.exists():
+        base_gguf_file.unlink()
+    
+    print(f"\n✓ Completed uploading {uploaded_count} GGUF variants to {hub_model_id}")
 
 
 def test_inference(model, processor):
     """
-    Test inference on a sample video.
+    Test inference on both video captioning and function calling examples.
     
-    The test example is a video of a woman walking by, you can download and check from:
-    https://huggingface.co/datasets/hexuan21/VideoFeedback-videos-mp4/blob/main/p/p000304.mp4
+    Tests:
+    1. Video captioning - tests the model's ability to caption videos
+    2. Function calling - tests the model's ability to handle function calls with thinking
     """
-    messages = [
+    print("\n" + "="*80)
+    print("TEST 1: Video Captioning")
+    print("="*80)
+    
+    # Test video captioning
+    video_messages = [
         {
             "role": "user",
             "content": [
@@ -375,9 +731,9 @@ def test_inference(model, processor):
         }
     ]
 
-    inputs = (
+    video_inputs = (
         processor.apply_chat_template(
-            messages,
+            video_messages,
             add_generation_prompt=True,
             tokenize=True,
             return_dict=True,
@@ -387,13 +743,64 @@ def test_inference(model, processor):
         .to(model.dtype)
     )
 
-    generated_ids = model.generate(**inputs, do_sample=False, max_new_tokens=64)
-    generated_texts = processor.batch_decode(
-        generated_ids,
-        skip_special_tokens=True,
+    video_generated_ids = model.generate(**video_inputs, do_sample=False, max_new_tokens=64)
+    
+    # Extract only the newly generated tokens
+    input_length = video_inputs["input_ids"].shape[1]
+    video_new_tokens = video_generated_ids[0, input_length:]
+    video_generated_text = processor.decode(video_new_tokens, skip_special_tokens=True)
+
+    print("User: Caption the video.")
+    print(f"Assistant: {video_generated_text}")
+    
+    print("\n" + "="*80)
+    print("TEST 2: Function Calling")
+    print("="*80)
+    
+    # Test function calling with thinking
+    # This simulates a function calling scenario where the model should think before calling a function
+    function_calling_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "You are a helpful assistant with access to various tools. "
+                        "Also, before making a call to a function take the time to plan the function to take. "
+                        "Make that thinking process between <think>{your thoughts}</think>\n\n"
+                        "What's the weather like in San Francisco?"
+                    ),
+                }
+            ],
+        }
+    ]
+
+    fc_inputs = (
+        processor.apply_chat_template(
+            function_calling_messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+        .to("cuda")
+        .to(model.dtype)
     )
 
-    print(generated_texts[0])
+    fc_generated_ids = model.generate(**fc_inputs, do_sample=False, max_new_tokens=128)
+    
+    # Extract only the newly generated tokens
+    input_length = fc_inputs["input_ids"].shape[1]
+    fc_new_tokens = fc_generated_ids[0, input_length:]
+    fc_generated_text = processor.decode(fc_new_tokens, skip_special_tokens=True)
+
+    print("User: What's the weather like in San Francisco?")
+    print(f"Assistant: {fc_generated_text}")
+    
+    print("\n" + "="*80)
+    print("Inference tests completed!")
+    print("="*80)
 
 
 def main():
@@ -401,8 +808,8 @@ def main():
     # Load model and processor
     model, processor = load_model_and_processor()
 
-    # Load dataset
-    train_ds = load_dataset_data()
+    # Load interleaved dataset (video feedback + function calling)
+    train_ds = load_dataset_data(processor, video_samples=100, function_calling_samples=100)
 
     # Create collate function
     collate_fn = create_collate_fn(processor, model)
