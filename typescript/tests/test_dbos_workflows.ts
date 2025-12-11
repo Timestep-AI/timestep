@@ -102,7 +102,7 @@ test('test_configure_dbos', () => {
   // If we get here, configuration worked
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_run_agent_workflow_basic with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"], ["openai/gpt-5.2"]])('test_run_agent_workflow_basic with %s', async (model) => {
   const env = typeof process !== 'undefined' ? process.env : {};
   if (!env['OPENAI_API_KEY'] && !env['OLLAMA_API_KEY']) {
     return; // Skip if no API key
@@ -223,7 +223,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_queue_agent_workflow with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"], ["openai/gpt-5.2"]])('test_queue_agent_workflow with %s', async (model) => {
   const env = typeof process !== 'undefined' ? process.env : {};
   if (!env['OPENAI_API_KEY'] && !env['OLLAMA_API_KEY']) {
     return; // Skip if no API key
