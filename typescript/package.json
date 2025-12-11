@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.38",
+  "version": "2026.0.39",
   "description": "Timestep AI - Durable agent execution framework with DBOS workflows, cross-language state persistence, and multi-model support for OpenAI Agents",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
