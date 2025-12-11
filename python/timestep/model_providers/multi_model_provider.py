@@ -112,8 +112,11 @@ class MultiModelProvider(ModelProvider):
         if prefix == "ollama":
             # Import OllamaModelProvider only when needed
             from .ollama_model_provider import OllamaModelProvider
+            import os
 
-            return OllamaModelProvider()
+            # Read OLLAMA_API_KEY from environment if available
+            api_key = os.environ.get("OLLAMA_API_KEY")
+            return OllamaModelProvider(api_key=api_key) if api_key else OllamaModelProvider()
         else:
             raise ValueError(f"Unknown prefix: {prefix}")
 

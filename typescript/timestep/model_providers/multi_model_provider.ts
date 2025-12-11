@@ -120,7 +120,10 @@ export class MultiModelProvider implements ModelProvider {
     if (prefix === 'ollama') {
       // Import OllamaModelProvider only when needed
       const { OllamaModelProvider } = await import('./ollama_model_provider.ts');
-      return new OllamaModelProvider();
+      // Read OLLAMA_API_KEY from environment if available
+      const env = typeof process !== 'undefined' ? process.env : {};
+      const apiKey = env['OLLAMA_API_KEY'];
+      return new OllamaModelProvider(apiKey ? { apiKey } : {});
     } else {
       throw new Error(`Unknown prefix: ${prefix}`);
     }
