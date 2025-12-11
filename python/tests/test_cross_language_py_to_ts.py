@@ -64,7 +64,7 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool, model: s
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_cross_language_py_to_ts_blocking_non_streaming(model):
     """Test Python -> TypeScript: blocking, non-streaming."""
     if model == "ollama/gpt-oss:20b-cloud":
@@ -76,7 +76,7 @@ async def test_cross_language_py_to_ts_blocking_non_streaming(model):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_cross_language_py_to_ts_blocking_streaming(model):
     """Test Python -> TypeScript: blocking, streaming."""
     if model == "ollama/gpt-oss:20b-cloud":
@@ -88,7 +88,7 @@ async def test_cross_language_py_to_ts_blocking_streaming(model):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_cross_language_py_to_ts_parallel_non_streaming(model):
     """Test Python -> TypeScript: parallel, non-streaming."""
     if model == "ollama/gpt-oss:20b-cloud":
@@ -100,7 +100,7 @@ async def test_cross_language_py_to_ts_parallel_non_streaming(model):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_cross_language_py_to_ts_parallel_streaming(model):
     """Test Python -> TypeScript: parallel, streaming."""
     if model == "ollama/gpt-oss:20b-cloud":

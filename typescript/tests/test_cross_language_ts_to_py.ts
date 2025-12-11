@@ -11,7 +11,7 @@ const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_to_py_blocking_non_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_cross_language_ts_to_py_blocking_non_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues (may timeout or throw)
     const timeoutPromise = new Promise((_, reject) => 
@@ -63,7 +63,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_t
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_to_py_blocking_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_cross_language_ts_to_py_blocking_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     try {
@@ -107,7 +107,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_t
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_to_py_parallel_non_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_cross_language_ts_to_py_parallel_non_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     try {
@@ -151,7 +151,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_t
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_cross_language_ts_to_py_parallel_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_cross_language_ts_to_py_parallel_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     try {

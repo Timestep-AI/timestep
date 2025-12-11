@@ -102,7 +102,7 @@ test('test_configure_dbos', () => {
   // If we get here, configuration worked
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_workflow_basic with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_run_agent_workflow_basic with %s', async (model) => {
   const env = typeof process !== 'undefined' ? process.env : {};
   if (!env['OPENAI_API_KEY'] && !env['OLLAMA_API_KEY']) {
     return; // Skip if no API key
@@ -179,7 +179,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_workflow_
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_queue_agent_workflow with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_queue_agent_workflow with %s', async (model) => {
   const env = typeof process !== 'undefined' ? process.env : {};
   if (!env['OPENAI_API_KEY'] && !env['OLLAMA_API_KEY']) {
     return; // Skip if no API key
@@ -306,7 +306,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_queue_agent_workflo
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_create_scheduled_workflow with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_create_scheduled_workflow with %s', async (model) => {
   // This test verifies that scheduled workflows must be created before DBOS launch.
   // Since DBOS is launched in beforeAll, this test should fail with an appropriate error.
   const agentName = `test-assistant-scheduled-${Date.now()}-${Math.random().toString(36).substring(7)}`;

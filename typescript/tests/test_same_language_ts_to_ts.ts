@@ -5,7 +5,7 @@
 import { test, expect } from 'vitest';
 import { runAgentTestPartial, runAgentTestFromPython, cleanItems, assertConversationItems, EXPECTED_ITEMS } from './test_helpers';
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to_ts_blocking_non_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_same_language_ts_to_ts_blocking_non_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     await expect(async () => {
@@ -20,7 +20,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to_ts_blocking_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_same_language_ts_to_ts_blocking_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     await expect(async () => {
@@ -35,7 +35,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to_ts_parallel_non_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_same_language_ts_to_ts_parallel_non_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues (may timeout or throw)
     const timeoutPromise = new Promise((_, reject) => 
@@ -61,7 +61,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_same_language_ts_to_ts_parallel_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_same_language_ts_to_ts_parallel_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     await expect(async () => {

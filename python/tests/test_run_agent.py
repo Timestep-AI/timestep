@@ -688,7 +688,7 @@ def assert_conversation_items(cleaned, expected):
             assert cleaned_item == expected_item, f"Item {i} mismatch: {cleaned_item} != {expected_item}"
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_run_agent_blocking_non_streaming(model):
     """Test blocking (run_in_parallel=False) non-streaming execution."""
     if model == "ollama/gpt-oss:20b-cloud":
@@ -763,7 +763,7 @@ async def test_run_agent_blocking_non_streaming(model):
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_run_agent_blocking_streaming(model):
     """Test blocking (run_in_parallel=False) streaming execution."""
     if model == "ollama/gpt-oss:20b-cloud":
@@ -796,7 +796,7 @@ async def test_run_agent_blocking_streaming(model):
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_run_agent_parallel_non_streaming(model):
     """Test parallel (run_in_parallel=True) non-streaming execution."""
     if model == "ollama/gpt-oss:20b-cloud":
@@ -810,7 +810,7 @@ async def test_run_agent_parallel_non_streaming(model):
     assert_conversation_items(cleaned, EXPECTED_ITEMS)
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
 async def test_run_agent_parallel_streaming(model):
     """Test parallel (run_in_parallel=True) streaming execution."""
     if model == "ollama/gpt-oss:20b-cloud":

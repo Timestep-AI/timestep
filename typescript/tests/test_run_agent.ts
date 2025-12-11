@@ -151,7 +151,7 @@ async function runAgentTest(runInParallel: boolean = true, stream: boolean = fal
 // Re-export helpers for backward compatibility
 export { runAgentTestPartial, runAgentTestFromPython, cleanItems, assertConversationItems, EXPECTED_ITEMS } from './test_helpers';
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_blocking_non_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_run_agent_blocking_non_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues (may timeout or throw)
     const timeoutPromise = new Promise((_, reject) => 
@@ -174,7 +174,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_blocking_
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_blocking_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_run_agent_blocking_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     await expect(runAgentTest(false, true, undefined, model)).rejects.toThrow();
@@ -185,7 +185,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_blocking_
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_parallel_non_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_run_agent_parallel_non_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues (may timeout or throw)
     const timeoutPromise = new Promise((_, reject) => 
@@ -207,7 +207,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_parallel_
   assertConversationItems(cleaned, EXPECTED_ITEMS);
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"]])('test_run_agent_parallel_streaming with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_run_agent_parallel_streaming with %s', async (model) => {
   if (model === "ollama/gpt-oss:20b-cloud") {
     // Expected failure: Ollama cloud model has known compatibility issues
     await expect(runAgentTest(true, true, undefined, model)).rejects.toThrow();
