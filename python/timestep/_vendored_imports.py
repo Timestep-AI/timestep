@@ -45,17 +45,28 @@ try:
     if _finder not in sys.meta_path:
         sys.meta_path.insert(0, _finder)
     
-    # Pre-import model_settings to avoid circular imports during main package initialization
+    # Pre-import model_settings first since it's needed early in the import chain
     # This must happen before importing the main agents module
     try:
         import timestep._vendored.agents.model_settings as _model_settings_module
         sys.modules['agents.model_settings'] = _model_settings_module
-        # Create a temporary 'agents' module to hold it
-        _temp_agents = types.ModuleType('agents')
-        _temp_agents.model_settings = _model_settings_module
-        sys.modules['agents'] = _temp_agents
     except ImportError:
         pass
+    
+    # Create a temporary 'agents' package (not just a module) to hold submodules
+    # This ensures Python's import system knows it can have submodules
+    _temp_agents = types.ModuleType('agents')
+    # Make it a package by setting __path__ to the vendored agents path
+    try:
+        vendored_agents_path = importlib.util.find_spec('timestep._vendored.agents').submodule_search_locations
+        if vendored_agents_path:
+            _temp_agents.__path__ = vendored_agents_path
+    except (AttributeError, ImportError):
+        pass
+    # Set model_settings if we imported it
+    if 'agents.model_settings' in sys.modules:
+        _temp_agents.model_settings = sys.modules['agents.model_settings']
+    sys.modules['agents'] = _temp_agents
     
     # Now import the main vendored module - the finder will redirect 'agents.*' imports
     import timestep._vendored.agents as _vendored_agents_module

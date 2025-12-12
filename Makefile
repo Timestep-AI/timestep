@@ -33,21 +33,23 @@ test-teardown:
 	@echo "Stopping test PostgreSQL database..."
 	docker compose -f docker-compose.test.yml down
 
-test: test-setup test-typescript test-python
+test: test-setup test-python-setup test-typescript test-python
 
 test-all: test
 
-test-python:
+test-python-setup:
 	cd python && \
 	uv pip install --force-reinstall ../3rdparty/openai-agents-python && \
-	uv run python vendor_openai_agents.py && \
+	uv run python vendor_openai_agents.py
+
+test-python: test-python-setup
+	cd python && \
 	uv run pytest
 
-test-typescript:
+test-typescript: test-python-setup
 	cd 3rdparty/openai-agents-js && \
 	pnpm install && \
 	pnpm build && cd - && \
 	cd typescript && \
 	pnpm install && \
 	pnpm test
-
