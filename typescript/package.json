@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.44",
+  "version": "2026.0.45",
   "description": "Timestep AI - Durable agent execution framework with DBOS workflows, cross-language state persistence, and multi-model support for OpenAI Agents",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,20 +24,24 @@
   "author": "",
   "license": "MIT",
   "packageManager": "pnpm@10.17.1",
+  "pnpm": {
+    "overrides": {
+      "@openai/agents": "link:../3rdparty/openai-agents-js/packages/agents",
+      "@openai/agents-core": "link:../3rdparty/openai-agents-js/packages/agents-core",
+      "@openai/agents-openai": "link:../3rdparty/openai-agents-js/packages/agents-openai"
+    }
+  },
   "dependencies": {
     "@mendable/firecrawl-js": "^1.0.0",
     "ollama": "^0.6.3",
     "openai": "^6.0.0",
     "pg": "^8.11.3",
     "@dbos-inc/dbos-sdk": "^4.4.9",
-    "@openai/agents": "^0.3.3",
-    "@openai/agents-core": "^0.3.3",
-    "@openai/agents-openai": "^0.3.3"
-  },
-  "devDependencies": {
     "@openai/agents": "link:../3rdparty/openai-agents-js/packages/agents",
     "@openai/agents-core": "link:../3rdparty/openai-agents-js/packages/agents-core",
-    "@openai/agents-openai": "link:../3rdparty/openai-agents-js/packages/agents-openai",
+    "@openai/agents-openai": "link:../3rdparty/openai-agents-js/packages/agents-openai"
+  },
+  "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/pg": "^8.10.9",
     "tsup": "^8.5.0",
