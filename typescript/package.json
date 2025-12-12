@@ -1,6 +1,6 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.43",
+  "version": "2026.0.44",
   "description": "Timestep AI - Durable agent execution framework with DBOS workflows, cross-language state persistence, and multi-model support for OpenAI Agents",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsup timestep/index.ts --format esm --dts --sourcemap --no-splitting --external openai --external ollama --external @mendable/firecrawl-js --external pg",
+    "build": "tsup timestep/index.ts --format esm --dts --sourcemap --no-splitting --external openai --external ollama --external @mendable/firecrawl-js --external pg --external @openai/agents --external @openai/agents-core --external @openai/agents-openai",
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "visualize": "tsx timestep/cli/visualize.ts"
@@ -29,7 +29,10 @@
     "ollama": "^0.6.3",
     "openai": "^6.0.0",
     "pg": "^8.11.3",
-    "@dbos-inc/dbos-sdk": "^4.4.9"
+    "@dbos-inc/dbos-sdk": "^4.4.9",
+    "@openai/agents": "^0.3.3",
+    "@openai/agents-core": "^0.3.3",
+    "@openai/agents-openai": "^0.3.3"
   },
   "devDependencies": {
     "@openai/agents": "link:../3rdparty/openai-agents-js/packages/agents",
