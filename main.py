@@ -1820,16 +1820,23 @@ def main():
     """Main training function with baseline validation workflow."""
     import signal
     import sys
+    import argparse
+
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Fine-tune SmolVLM2 with validation')
+    parser.add_argument('-y', '--yes', action='store_true',
+                       help='Skip confirmation prompt and proceed to training automatically')
+    args = parser.parse_args()
 
     max_iterations = 10
     iteration = 0
     project_root = Path(__file__).parent
-    
+
     # Handle Ctrl+C gracefully
     def signal_handler(sig, frame):
         print("\n\n⚠ Training loop interrupted by user.")
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     
     # ========================================================================
@@ -2193,17 +2200,22 @@ def main():
     print("\n" + "="*80)
     print("Ready to proceed to Phase 3: Fine-tuning")
     print("="*80)
-    print(f"\nTarget: Train PyTorch model on {function_calling_samples} tool calling examples")
+    print(f"\nTarget: Train PyTorch model on 1000 tool calling examples")
     print(f"Goal: Improve tool calling score from {tool_calling_score:.2f} to 1.00")
     print(f"Note: This will use GPU memory for training")
 
-    # Ask user to confirm before proceeding
-    print("\n" + "="*80)
-    response = input("\nProceed with fine-tuning? (y/n): ").strip().lower()
-    if response != 'y':
-        print("\n✓ Validation complete. Exiting without training.")
-        print(f"  Base model and GGUF files available at: {hub_model_id}")
-        sys.exit(0)
+    # Ask user to confirm before proceeding (unless --yes flag provided)
+    if not args.yes:
+        print("\n" + "="*80)
+        response = input("\nProceed with fine-tuning? (y/n): ").strip().lower()
+        if response != 'y':
+            print("\n✓ Validation complete. Exiting without training.")
+            print(f"  Base model and GGUF files available at: {hub_model_id}")
+            sys.exit(0)
+    else:
+        print("\n" + "="*80)
+        print("Auto-proceeding to fine-tuning (--yes flag provided)")
+        print("="*80)
 
     # ========================================================================
     # PHASE 3: Training (Only After Validation Passes)
