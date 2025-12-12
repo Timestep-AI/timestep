@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timestep Chat</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar sidebar-left" id="sidebar">
+            <div class="sidebar-header">
+                <h2>Chats</h2>
+                <button class="new-chat-btn" id="newChatButton" title="New Chat">
+                    <span>+</span>
+                </button>
+            </div>
+            <div class="contexts-list" id="contextsList">
+                <div class="context-item loading">Loading contexts...</div>
+            </div>
+        </aside>
+        
+        <main class="main-content">
+            <header>
+                <div class="header-left">
+                    <h1>Timestep AI Agent Chat</h1>
+                    <div class="agent-selector-container">
+                        <label for="agentSelect">Agent:</label>
+                        <select id="agentSelect" class="agent-select">
+                            <option value="">Loading agents...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="status" id="status">
+                    <span class="status-indicator" id="statusIndicator"></span>
+                    <span class="status-text" id="statusText">Ready</span>
+                </div>
+            </header>
+        </main>
+        
+        <aside class="sidebar sidebar-right chat-panel" id="chatPanel">
+            <div class="chat-header">
+                <button class="copy-chat-btn" id="copyChatButton" title="Copy entire chat">
+                    <span>📋 Copy Chat</span>
+                </button>
+            </div>
+            <div class="agent-card-container" id="agentCardContainer">
+                <!-- Agent card will be displayed here -->
+            </div>
+            <div class="chat-container" id="chatContainer">
+                <div class="messages" id="messages">
+                    <div class="message agent">
+                        <div class="message-content">
+                            <p>Hello! I'm the Timestep agent. Select a chat or create a new one to get started.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <form class="input-form" id="inputForm">
+                <textarea 
+                    id="messageInput" 
+                    placeholder="Type your message here..." 
+                    rows="1"
+                    autofocus
+                ></textarea>
+                <button type="submit" id="sendButton" disabled>
+                    <span>Send</span>
+                </button>
+            </form>
+        </aside>
+    </div>
+    
+    <script src="index.js"></script>
+</body>
+</html>
+

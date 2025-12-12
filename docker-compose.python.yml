@@ -1,0 +1,60 @@
+services:
+  a2a-server:
+    image: python:3.11-slim
+    container_name: timestep-a2a-python
+    working_dir: /app/python
+    volumes:
+      - ./python:/app/python
+      - python-venv:/app/python/.venv
+    command: sh -c "pip install uv && uv sync && uv run timestep-a2a --host 0.0.0.0 --port 8080"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+      - HOST=0.0.0.0
+      - PORT=8080
+      - MODEL=${MODEL:-gpt-4.1}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-timestep}
+      - POSTGRES_USER=${POSTGRES_USER:-timestep}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-timestep}
+      - MCP_SERVER_URL=http://mcp-server:3000/mcp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+    networks:
+      - timestep-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  mcp-server:
+    image: python:3.11-slim
+    container_name: timestep-mcp-python
+    working_dir: /app/python
+    volumes:
+      - ./python:/app/python
+      - python-venv:/app/python/.venv
+    command: sh -c "pip install uv && uv sync && uv run timestep-mcp --host 0.0.0.0 --port 3000"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3000
+    networks:
+      - timestep-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/mcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  python-venv:
+

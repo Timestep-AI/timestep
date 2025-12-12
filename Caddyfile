@@ -1,0 +1,58 @@
+:80
+
+root * /app
+
+# Disable buffering for SSE streams (most specific first)
+handle_path /api/tasks/*/stream {
+    reverse_proxy http://a2a-server:8080 {
+        header_up Host {host}
+        flush_interval -1
+    }
+    
+    header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Allow-Methods "GET, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type"
+        Cache-Control "no-cache"
+        Connection "keep-alive"
+    }
+}
+
+# Proxy API requests to A2A server (strip /api prefix)
+handle_path /api/* {
+    reverse_proxy http://a2a-server:8080 {
+        header_up Host {host}
+    }
+    
+    # Enable CORS for development
+    header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type"
+    }
+    
+    # Handle OPTIONS preflight requests
+    @options {
+        method OPTIONS
+    }
+    handle @options {
+        respond 204
+    }
+}
+
+# Handle root API endpoint (JSON-RPC) - strip /api prefix for this one
+handle_path /api {
+    reverse_proxy http://a2a-server:8080 {
+        header_up Host {host}
+    }
+    
+    header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type"
+    }
+}
+
+# Serve static files from app directory (last, as fallback)
+file_server
+

@@ -1,0 +1,65 @@
+services:
+  a2a-server:
+    image: node:20-alpine
+    container_name: timestep-a2a-typescript
+    working_dir: /app/typescript
+    volumes:
+      - ./typescript:/app/typescript
+      - typescript-node-modules:/app/typescript/node_modules
+    command: sh -c "corepack enable && corepack prepare pnpm@10.17.1 --activate && pnpm install && pnpm a2a --host 0.0.0.0 --port 8080"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+      - HOST=0.0.0.0
+      - PORT=8080
+      - MODEL=${MODEL:-gpt-4.1}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-timestep}
+      - POSTGRES_USER=${POSTGRES_USER:-timestep}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-timestep}
+      - MCP_SERVER_URL=http://mcp-server:3000/mcp
+      - A2A_PUBLIC_HOST=a2a-server
+      - A2A_PUBLIC_PORT=8080
+      - A2A_SERVER_URL=http://a2a-server:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+    networks:
+      - timestep-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  mcp-server:
+    image: node:20-alpine
+    container_name: timestep-mcp-typescript
+    working_dir: /app/typescript
+    volumes:
+      - ./typescript:/app/typescript
+      - typescript-node-modules:/app/typescript/node_modules
+    command: sh -c "corepack enable && corepack prepare pnpm@10.17.1 --activate && pnpm install && pnpm mcp --host 0.0.0.0 --port 3000"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3000
+      - MCP_ALLOWED_HOSTS=localhost,127.0.0.1,mcp-server,a2a-server,[::1]
+      - A2A_SERVER_URL=http://a2a-server:8080
+    networks:
+      - timestep-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/mcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  typescript-node-modules:
+

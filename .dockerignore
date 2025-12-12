@@ -1,0 +1,22 @@
+# Python
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/dist/
+**/build/
+**/*.egg-info/
+
+# TypeScript
+**/node_modules/
+**/.pnpm-store/
+**/dist/
+
+# IDE
+**/.vscode/
+**/.idea/
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+

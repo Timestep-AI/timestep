@@ -1,7 +1,7 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.43",
-  "description": "Timestep AI - Durable agent execution framework with DBOS workflows, cross-language state persistence, and multi-model support for OpenAI Agents",
+  "version": "2026.0.5",
+  "description": "Timestep AI - Multi-model provider implementations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
@@ -15,10 +15,14 @@
     }
   },
   "scripts": {
-    "build": "tsup timestep/index.ts --format esm --dts --sourcemap --no-splitting --external openai --external ollama --external @mendable/firecrawl-js --external pg",
-    "test": "vitest run --bail=1",
+    "build": "tsup timestep/index.ts --format esm --dts --sourcemap",
+    "test": "vitest run",
     "test:watch": "vitest",
-    "visualize": "tsx timestep/cli/visualize.ts"
+    "lint": "eslint timestep/**/*.ts tests/**/*.ts",
+    "type-check": "tsc --noEmit",
+    "start:a2a": "tsx timestep/a2a/cli.ts",
+    "a2a": "tsx timestep/a2a/cli.ts",
+    "mcp": "tsx timestep/mcp/cli.ts"
   },
   "keywords": [],
   "author": "",
@@ -26,22 +30,23 @@
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
     "@mendable/firecrawl-js": "^1.0.0",
-    "ollama": "^0.6.3",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "openai": "^6.0.0",
-    "pg": "^8.11.3",
-    "@dbos-inc/dbos-sdk": "^4.4.9"
+    "zod": "^4.1.13",
+    "@a2a-js/sdk": "^0.3.5",
+    "express": "^4.18.2",
+    "pg": "^8.11.3"
   },
   "devDependencies": {
-    "@openai/agents": "link:../3rdparty/openai-agents-js/packages/agents",
-    "@openai/agents-core": "link:../3rdparty/openai-agents-js/packages/agents-core",
-    "@openai/agents-openai": "link:../3rdparty/openai-agents-js/packages/agents-openai",
     "@types/node": "^20.10.0",
+    "@types/express": "^4.17.21",
     "@types/pg": "^8.10.9",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
     "tsup": "^8.5.0",
     "tsx": "^4.6.0",
     "typescript": "^5.3.0",
-    "vitest": "^1.0.0",
-    "zod": "^4.1.13",
-    "testcontainers": "^10.0.0"
+    "vitest": "^2.0.0"
   }
 }

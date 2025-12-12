@@ -1,55 +1,63 @@
-# Export environment variables to subcommands
-export
-
-# PostgreSQL connection string for tests (shared across Python and TypeScript)
-export PG_CONNECTION_URI=postgresql://postgres:postgres@localhost:5433/timestep_test?sslmode=disable
-
-default: test
+default: check-all test-all
 
 patch:
 	cd python && uv version --bump patch && cd ../typescript && npm version patch --no-git-tag-version --no-commit-hooks
 
-test-setup:
-	@echo "Starting test PostgreSQL database..."
-	docker compose -f docker-compose.test.yml up -d
-	@echo "Waiting for PostgreSQL to be ready..."
-	@timeout=30; \
-	while [ $$timeout -gt 0 ]; do \
-		if docker compose -f docker-compose.test.yml exec -T postgres-test pg_isready -U postgres > /dev/null 2>&1; then \
-			echo "PostgreSQL is ready!"; \
-			break; \
-		fi; \
-		echo "Waiting for PostgreSQL... ($$timeout seconds remaining)"; \
-		sleep 1; \
-		timeout=$$((timeout - 1)); \
-	done; \
-	if [ $$timeout -eq 0 ]; then \
-		echo "ERROR: PostgreSQL failed to start within 30 seconds"; \
-		exit 1; \
-	fi
-	@echo "Test database is ready. PG_CONNECTION_URI=$(PG_CONNECTION_URI)"
-
-test-teardown:
-	@echo "Stopping test PostgreSQL database..."
-	docker compose -f docker-compose.test.yml down
-
-test: test-setup test-python-setup test-typescript test-python
+test: test-python test-typescript
 
 test-all: test
 
-test-python-setup:
+test-python:
 	cd python && \
-	uv pip install --force-reinstall ../3rdparty/openai-agents-python && \
-	uv run python vendor_openai_agents.py
+	rm -rf .pytest_cache || true && \
+	OPENAI_API_KEY="$(OPENAI_API_KEY)" uv run python -m pytest tests/ -v -x
 
-test-python: test-python-setup
-	cd python && \
-	uv run pytest
+clean-python:
+	cd python && rm -rf .venv .pytest_cache __pycache__ */__pycache__ || true
 
-test-typescript: test-python-setup
-	cd 3rdparty/openai-agents-js && \
-	pnpm install && \
-	pnpm build && cd - && \
+clean-typescript:
+	cd typescript && rm -rf node_modules .pnpm-store dist || true
+
+clean: clean-python clean-typescript
+
+fix-permissions:
+	@echo "Fixing permissions for Docker-created files..."
+	@if [ -d "python/.venv" ]; then \
+		echo "Note: python/.venv should be in a Docker named volume. Removing local copy..."; \
+		sudo rm -rf python/.venv 2>/dev/null || rm -rf python/.venv 2>/dev/null || true; \
+	fi
+	@echo "Done! If you still have permission issues, run: sudo chown -R $$(id -u):$$(id -g) python/ typescript/"
+
+test-typescript:
 	cd typescript && \
-	pnpm install && \
-	pnpm test
+	OPENAI_API_KEY="$(OPENAI_API_KEY)" pnpm test
+
+lint-python:
+	cd python && uv run ruff check timestep/
+
+type-check-python:
+	cd python && uv run mypy timestep/
+
+lint-typescript:
+	cd typescript && pnpm lint
+
+type-check-typescript:
+	cd typescript && pnpm type-check
+
+lint: lint-python lint-typescript
+
+type-check: type-check-python type-check-typescript
+
+check-all: lint type-check
+
+run-app-typescript:
+	docker compose -f docker-compose.yml -f docker-compose.typescript.yml up -d
+
+run-app-python:
+	docker compose -f docker-compose.yml -f docker-compose.python.yml up -d
+
+stop-app:
+	docker compose -f docker-compose.yml -f docker-compose.typescript.yml -f docker-compose.python.yml down
+
+logs-app:
+	docker compose -f docker-compose.yml -f docker-compose.typescript.yml -f docker-compose.python.yml logs -f

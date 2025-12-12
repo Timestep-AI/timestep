@@ -1,324 +1,217 @@
-# Timestep AI Agents SDK
+# Timestep
 
-Durable OpenAI Agents with one API across Python and TypeScript. Pause and resume runs (even across languages), keep state in one place, and route models with simple prefixes.
+Streaming agent implementation using OpenAI's streaming API with tool support. Available in both Python and TypeScript.
 
-## What Timestep gives you
-- **Durable runs**: Save and resume `RunState` without changing your agent code.
-- **DBOS workflows**: Run agents in durable workflows that automatically recover from crashes, with queuing and scheduling support.
-- **Cross-language parity**: Same API surface in Python and TypeScript; state stays compatible across languages.
-- **Single storage story**: Use `PG_CONNECTION_URI` for PostgreSQL.
-- **Model routing**: Prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
-- **Minimal concepts**: `run_agent` / `runAgent`, `RunStateStore`, `run_agent_workflow` / `runAgentWorkflow`.
-- **Organized architecture**: Clean separation of concerns with `core/`, `config/`, `stores/`, `tools/`, `model_providers/`, and `models/` modules.
+## What is Timestep?
 
-## Prerequisites
-- `OPENAI_API_KEY`
-- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
+Timestep is a library and server framework for building AI agents. You can use it in two ways:
 
-## Quick start
+1. **As a Library** - Import `run_agent` in your code to create conversational agents with tool support
+2. **As an A2A Server** - Run a standalone server that exposes your agent via the [A2A Protocol](https://a2a-protocol.org/) for agent-to-agent communication
 
-### Python (async)
+## Architecture Overview
 
-```python
-from timestep import run_agent, RunStateStore
-from agents import (
-    Agent,
-    OpenAIConversationsSession,
-    ModelSettings,
-    function_tool,
-    input_guardrail,
-    output_guardrail,
-    GuardrailFunctionOutput,
-    RunContextWrapper,
-    TResponseInputItem,
-)
+Timestep provides a streaming agent framework that integrates OpenAI's API with tool execution capabilities. The system follows the A2A Protocol's "Task-generating Agents" philosophy, where all interactions are modeled as tasks with well-defined states and lifecycle.
 
-# Define a tool with approval requirement
-async def needs_approval_for_weather(ctx, args, call_id):
-    """Require approval for sensitive cities."""
-    return args.get("city", "").lower() in ["berkeley", "san francisco"]
+### Core Components
 
-@function_tool
-def get_weather(city: str) -> str:
-    """Get weather information for a city."""
-    return f"The weather in {city} is sunny and 72°F"
+- **Agent Core** (`run_agent`): Handles streaming conversations with OpenAI, tool execution, and conversation context management
+- **A2A Server**: Exposes agents via HTTP endpoints following the A2A Protocol specification
+- **Tool System**: Extensible tool framework supporting custom tools with approval workflows
+- **Event Streaming**: Real-time task updates via Server-Sent Events (SSE)
 
-get_weather.needs_approval = needs_approval_for_weather
+## Sequence Diagram
 
-# Define guardrails
-@input_guardrail(run_in_parallel=True)
-async def content_filter(
-    ctx: RunContextWrapper[None],
-    agent: Agent,
-    input: str | list[TResponseInputItem]
-) -> GuardrailFunctionOutput:
-    """Block inappropriate content."""
-    input_text = input if isinstance(input, str) else str(input)
-    blocked = any(word in input_text.lower() for word in ["spam", "scam"])
-    return GuardrailFunctionOutput(
-        output_info={"blocked": blocked},
-        tripwire_triggered=blocked,
-    )
+The following diagram shows the flow of a typical agent interaction:
 
-@output_guardrail
-async def output_safety(
-    ctx: RunContextWrapper,
-    agent: Agent,
-    output: str
-) -> GuardrailFunctionOutput:
-    """Ensure safe output."""
-    unsafe = "password" in output.lower() or "api key" in output.lower()
-    return GuardrailFunctionOutput(
-        output_info={"unsafe": unsafe},
-        tripwire_triggered=unsafe,
-    )
+```mermaid
+sequenceDiagram
+    participant Client
+    participant A2AServer
+    participant AgentExecutor
+    participant OpenAI
+    participant Tools
 
-# Create specialized weather agent
-weather_agent = Agent(
-    instructions="You are a weather assistant. Use get_weather for all weather queries.",
-    model="gpt-4.1",
-    model_settings=ModelSettings(temperature=0),
-    name="Weather Assistant",
-    tools=[get_weather],
-)
-
-# Create main assistant with handoffs and guardrails
-assistant = Agent(
-    handoffs=[weather_agent],
-    instructions="You are a helpful personal assistant.",
-    model="gpt-4.1",
-    model_settings=ModelSettings(temperature=0),
-    name="Personal Assistant",
-    input_guardrails=[content_filter],
-    output_guardrails=[output_safety],
-)
-
-# Initialize session and state store
-session = OpenAIConversationsSession()
-session_id = await session._get_session_id()
-state_store = RunStateStore(agent=assistant, session_id=session_id)
-
-# Run multiple conversation turns
-conversations = [
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's 2+2?"}]}],
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Oakland?"}]}],
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Berkeley?"}]}],
-]
-
-for input_items in conversations:
-    result = await run_agent(assistant, input_items, session, stream=False)
+    Client->>A2AServer: POST /tasks (user message)
+    A2AServer->>AgentExecutor: execute(context)
     
-    # Handle interruptions (e.g., tool approval needed)
-    if result.interruptions:
-        state = result.to_state()
-        await state_store.save(state)
+    AgentExecutor->>AgentExecutor: Create Task (submitted)
+    AgentExecutor->>A2AServer: Task Event
+    A2AServer->>Client: SSE: Task Created
+    
+    AgentExecutor->>AgentExecutor: Update Status (working)
+    A2AServer->>Client: SSE: Status Update
+    
+    AgentExecutor->>OpenAI: Stream Chat Completion
+    OpenAI-->>AgentExecutor: Content Deltas (streaming)
+    AgentExecutor->>A2AServer: Status Updates (streaming)
+    A2AServer->>Client: SSE: Content Updates
+    
+    alt Tool Call Required
+        OpenAI-->>AgentExecutor: Tool Call Request
+        AgentExecutor->>AgentExecutor: Update Status (input-required)
+        A2AServer->>Client: SSE: Approval Required
         
-        # Load, approve, and resume
-        loaded_state = await state_store.load()
-        for interruption in loaded_state.get_interruptions():
-            loaded_state.approve(interruption)
+        opt Human Approval
+            Client->>A2AServer: Approve Tool Call
+            A2AServer->>AgentExecutor: Tool Approved
+        end
         
-        result = await run_agent(assistant, loaded_state, session, stream=False)
-```
-
-### TypeScript
-
-```typescript
-import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-import {
-  Agent,
-  OpenAIConversationsSession,
-  tool,
-  InputGuardrail,
-  OutputGuardrail,
-} from '@openai/agents';
-import type { AgentInputItem } from '@openai/agents-core';
-
-// Define a tool with approval requirement
-const getWeather = tool({
-  name: 'get_weather',
-  description: 'Get weather information for a city.',
-  parameters: {
-    type: 'object',
-    properties: {
-      city: { type: 'string' }
-    },
-    required: ['city'],
-    additionalProperties: false
-  } as any,
-  needsApproval: async (_ctx: any, args: any) => {
-    // Require approval for sensitive cities
-    return ['berkeley', 'san francisco'].includes(args.city?.toLowerCase() || '');
-  },
-  execute: async (args: any): Promise<string> => {
-    return `The weather in ${args.city} is sunny and 72°F`;
-  }
-});
-
-// Define guardrails
-const contentFilter: InputGuardrail = {
-  name: 'Content Filter',
-  runInParallel: true,
-  execute: async ({ input }) => {
-    const inputText = typeof input === 'string' ? input : JSON.stringify(input);
-    const blocked = ['spam', 'scam'].some(word => 
-      inputText.toLowerCase().includes(word)
-    );
-    return {
-      outputInfo: { blocked },
-      tripwireTriggered: blocked,
-    };
-  },
-};
-
-const outputSafety: OutputGuardrail<any> = {
-  name: 'Output Safety',
-  execute: async ({ agentOutput }) => {
-    const outputText = typeof agentOutput === 'string' 
-      ? agentOutput 
-      : JSON.stringify(agentOutput);
-    const unsafe = outputText.toLowerCase().includes('password') || 
-                   outputText.toLowerCase().includes('api key');
-    return {
-      outputInfo: { unsafe },
-      tripwireTriggered: unsafe,
-    };
-  },
-};
-
-// Create specialized weather agent
-const weatherAgent = new Agent({
-  instructions: 'You are a weather assistant. Use get_weather for all weather queries.',
-  model: 'gpt-4.1',
-  modelSettings: { temperature: 0 },
-  name: 'Weather Assistant',
-  tools: [getWeather],
-});
-
-// Create main assistant with handoffs and guardrails
-const assistant = new Agent({
-  handoffs: [weatherAgent],
-  instructions: 'You are a helpful personal assistant.',
-  model: 'gpt-4.1',
-  modelSettings: { temperature: 0 },
-  name: 'Personal Assistant',
-  inputGuardrails: [contentFilter],
-  outputGuardrails: [outputSafety],
-});
-
-// Initialize session and state store
-const session = new OpenAIConversationsSession();
-const sessionId = await session.getSessionId();
-const stateStore = new RunStateStore({ agent: assistant, sessionId });
-
-// Run multiple conversation turns
-const conversations: AgentInputItem[][] = [
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's 2+2?" }] }],
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Oakland?" }] }],
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Berkeley?" }] }],
-];
-
-for (const inputItems of conversations) {
-  let result = await runAgent(assistant, inputItems, session, false);
-  
-  // Handle interruptions (e.g., tool approval needed)
-  if (result.interruptions?.length) {
-    await stateStore.save(result.state);
+        AgentExecutor->>Tools: Execute Tool
+        Tools-->>AgentExecutor: Tool Result
+        AgentExecutor->>OpenAI: Tool Result Message
+        OpenAI-->>AgentExecutor: Final Response
+    end
     
-    // Load, approve, and resume
-    const loadedState = await stateStore.load();
-    for (const interruption of loadedState.getInterruptions()) {
-      loadedState.approve(interruption);
-    }
-    
-    result = await runAgent(assistant, loadedState, session, false);
-  }
-}
+    AgentExecutor->>AgentExecutor: Update Status (completed)
+    A2AServer->>Client: SSE: Task Completed
 ```
 
-## Cross-language resume
+## Task State Machine
 
-1) Start in Python, save state on interruption:
-```python
-state = result.to_state()
-await state_store.save(state)
-```
-2) Load and continue in TypeScript:
-```typescript
-const saved = await stateStore.load();
-for (const interruption of saved.getInterruptions()) saved.approve(interruption);
-await runAgent(agent, saved, session, false);
-```
+Tasks progress through the following states:
 
-## DBOS Workflows (New!)
-
-Timestep now supports durable agent execution via DBOS workflows. Run agents in workflows that automatically recover from crashes, with built-in queuing and scheduling.
-
-### Durable Execution
-
-```python
-from timestep import run_agent_workflow, configure_dbos, ensure_dbos_launched
-from agents import Agent, OpenAIConversationsSession
-
-configure_dbos()
-ensure_dbos_launched()
-
-agent = Agent(model="gpt-4.1")
-session = OpenAIConversationsSession()
-
-# Run in a durable workflow - automatically saves state and recovers from crashes
-result = await run_agent_workflow(
-    agent=agent,
-    input_items=input_items,
-    session=session,
-    stream=False,
-    workflow_id="unique-id"  # Idempotency key
-)
+```mermaid
+stateDiagram-v2
+    [*] --> submitted: User sends message
+    submitted --> working: Agent starts processing
+    working --> input-required: Tool approval needed
+    working --> completed: Response ready
+    working --> failed: Error occurred
+    input-required --> working: Tool approved
+    input-required --> failed: Tool rejected/error
+    working --> canceled: User cancels
+    input-required --> canceled: User cancels
+    completed --> [*]
+    failed --> [*]
+    canceled --> [*]
 ```
 
-### Queued Execution with Rate Limiting
+**State Descriptions:**
 
-```python
-from timestep import queue_agent_workflow
+- **submitted**: Initial state when a task is created
+- **working**: Agent is processing the request (streaming content or executing tools)
+- **input-required**: Human approval is needed for a tool call
+- **completed**: Task finished successfully with final response
+- **failed**: Task encountered an error
+- **canceled**: Task was canceled by the user
 
-# Enqueue agent runs with automatic rate limiting (50 requests per 60 seconds)
-handle = queue_agent_workflow(
-    agent=agent,
-    input_items=input_items,
-    session=session,
-    priority=1,  # Higher priority
-    deduplication_id="unique-queue-id"
-)
+## Quick Start
 
-result = await handle.get_result()
+### Using as a Library
+
+See the language-specific documentation for detailed usage:
+- [Python Documentation](./python/README.md) - Installation and library usage
+- [TypeScript Documentation](./typescript/README.md) - Installation and library usage
+
+### Running the A2A Server
+
+See the language-specific documentation for detailed server setup:
+- [Python A2A Server](./python/README.md#running-the-a2a-server) - Python server setup
+- [TypeScript A2A Server](./typescript/README.md#running-the-a2a-server) - TypeScript server setup
+
+**Default Configuration:**
+- Host: `0.0.0.0`
+- Port: `8080`
+- Model: `gpt-4.1`
+
+Once running, the server exposes:
+- **Agent Card**: `http://localhost:8080/.well-known/agent-card.json`
+- **Task Endpoint**: `POST /tasks` to create tasks
+- **Streaming**: `GET /tasks/{task_id}/stream` for SSE updates
+
+## Features
+
+- **Streaming**: Uses OpenAI's streaming API for real-time responses
+- **Tool Support**: Extensible tool framework with custom tool support
+- **Conversation Context**: Maintains conversation history through message arrays
+- **Tool Approval**: Optional callback for human-in-the-loop tool approval
+- **Cross-Language**: Equivalent implementations in Python and TypeScript
+- **A2A Protocol**: Full support for the [Agent2Agent (A2A) Protocol](https://a2a-protocol.org/) for agent-to-agent communication
+- **Task Lifecycle**: Well-defined task states with streaming status updates
+- **Agent Discovery**: Agent Card exposes capabilities and skills for discovery
+
+## A2A Protocol Support
+
+Timestep implements the A2A Protocol, enabling your agent to communicate with other A2A-compatible agents and systems. The implementation follows the "Task-generating Agents" philosophy, where all interactions are modeled as tasks.
+
+### Key A2A Features
+
+- **Task-generating Agents**: All agent responses are encapsulated in `Task` objects
+- **Human-in-the-loop**: Tool calls can require approval using the `input-required` task status
+- **Streaming Updates**: Real-time task status updates via Server-Sent Events (SSE)
+- **Agent Skills**: Tools are automatically exposed as `AgentSkill` objects in the Agent Card
+- **Agent Card**: Discoverable agent metadata at `/.well-known/agent-card.json`
+
+### Example: Interacting with the A2A Server
+
+**1. View the Agent Card:**
+```bash
+curl http://localhost:8080/.well-known/agent-card.json
 ```
 
-### Scheduled Execution
-
-```python
-from timestep import create_scheduled_agent_workflow
-
-# Schedule agent to run every 6 hours
-create_scheduled_agent_workflow(
-    crontab="0 */6 * * *",  # Every 6 hours
-    agent=agent,
-    input_items=input_items,
-    session=session
-)
+**2. Send a task:**
+```bash
+curl -X POST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"text": "What is the weather in Oakland?"}}'
 ```
 
-See the [DBOS Workflows documentation](docs/docs/dbos-workflows.md) for more details.
+**3. Stream task updates (SSE):**
+```bash
+# Replace {task_id} with the ID from the POST response
+curl http://localhost:8080/tasks/{task_id}/stream
+```
 
-## Routing models
-- `gpt-4.1` or `openai/gpt-4.1` → OpenAI
-- `ollama/gpt-oss:20b` → Ollama (local)
-- `ollama/gpt-oss:20b-cloud` → [Ollama Cloud](https://ollama.com/cloud) (note: `-cloud` suffix determines cloud usage)
-- Add your own prefixes via `MultiModelProviderMap`.
+**4. Check task status:**
+```bash
+curl http://localhost:8080/tasks/{task_id}
+```
 
-## Docs
-- Full docs: https://timestep-ai.github.io/timestep/
-- Python notes: python/README.md
-- TypeScript notes: typescript/README.md
+For more information about the A2A Protocol, visit [https://a2a-protocol.org/](https://a2a-protocol.org/).
+
+## Built-in Tools
+
+- **GetWeather**: Simple weather tool (example implementation)
+- **WebSearch**: Web search using Firecrawl (requires `FIRECRAWL_API_KEY` environment variable)
+
+See the language-specific documentation for details on creating custom tools:
+- [Python Tools Documentation](./python/README.md#using-tools)
+- [TypeScript Tools Documentation](./typescript/README.md#using-tools)
+
+## Packages
+
+- **[Python Package (`timestep`)](./python/)** - [PyPI](https://pypi.org/project/timestep/)
+- **[TypeScript Package (`@timestep-ai/timestep`)](./typescript/)** - [npm](https://www.npmjs.com/package/@timestep-ai/timestep)
+
+## Documentation
+
+- [Python Documentation](./python/README.md) - Complete Python API reference, examples, and guides
+- [TypeScript Documentation](./typescript/README.md) - Complete TypeScript API reference, examples, and guides
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+make test-all
+
+# Or run individually
+make test-python
+make test-typescript
+```
+
+### Environment Variables
+
+```bash
+# Required
+export OPENAI_API_KEY=your-api-key-here
+
+# Optional (for web search tool)
+export FIRECRAWL_API_KEY=your-firecrawl-api-key-here
+```
 
 ## License
-MIT License - see `LICENSE`.
+
+MIT License - see [LICENSE](LICENSE) file for details.
