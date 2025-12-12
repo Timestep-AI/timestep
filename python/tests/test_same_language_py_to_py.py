@@ -55,7 +55,7 @@ def log_item_differences(cleaned, expected, max_items=None):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M", "openai/gpt-5.2"])
 async def test_same_language_py_to_py_blocking_non_streaming(model):
     """Test Python -> Python: blocking, non-streaming."""
     if model == "ollama/gpt-oss:20b-cloud" or model == "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M":
@@ -84,7 +84,7 @@ async def test_same_language_py_to_py_blocking_non_streaming(model):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M", "openai/gpt-5.2"])
 async def test_same_language_py_to_py_blocking_streaming(model):
     """Test Python -> Python: blocking, streaming."""
     if model == "ollama/gpt-oss:20b-cloud" or model == "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M":
@@ -111,7 +111,7 @@ async def test_same_language_py_to_py_blocking_streaming(model):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M", "openai/gpt-5.2"])
 async def test_same_language_py_to_py_parallel_non_streaming(model):
     """Test Python -> Python: parallel, non-streaming."""
     if model == "ollama/gpt-oss:20b-cloud" or model == "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M":
@@ -138,7 +138,7 @@ async def test_same_language_py_to_py_parallel_non_streaming(model):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M", "openai/gpt-5.2"])
 async def test_same_language_py_to_py_parallel_streaming(model):
     """Test Python -> Python: parallel, streaming."""
     if model == "ollama/gpt-oss:20b-cloud" or model == "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M":

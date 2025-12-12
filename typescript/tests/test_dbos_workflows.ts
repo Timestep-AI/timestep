@@ -445,7 +445,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
   }
 });
 
-test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"]])('test_create_scheduled_workflow with %s', async (model) => {
+test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"], ["openai/gpt-5.2"]])('test_create_scheduled_workflow with %s', async (model) => {
   // This test verifies that scheduled workflows must be created before DBOS launch.
   // Since DBOS is launched in beforeAll, this test should fail with an appropriate error.
   const agentName = `test-assistant-scheduled-${Date.now()}-${Math.random().toString(36).substring(7)}`;

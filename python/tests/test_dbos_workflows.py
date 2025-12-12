@@ -323,7 +323,7 @@ async def test_queue_agent_workflow(setup_dbos, model):
     not os.environ.get("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY not set"
 )
-@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M"])
+@pytest.mark.parametrize("model", ["gpt-4.1", "ollama/gpt-oss:20b-cloud", "ollama/hf.co/mjschock/SmolVLM2-500M-Video-Instruct-GGUF:Q4_K_M", "openai/gpt-5.2"])
 async def test_create_scheduled_workflow(setup_dbos, model):
     """Test that scheduled workflows must be created before DBOS launch."""
     # This test verifies that scheduled workflows must be created before DBOS launch.
