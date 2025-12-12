@@ -23,7 +23,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
           const result = await runAgentTestPartial(false, false, undefined, 0, 4, model);
           const pythonTestName = 'test_cross_language_ts_to_py_blocking_non_streaming';
           const pythonDir = path.join(__dirname, '../../python');
-          const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+          const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
           
           const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
           if (result.connectionString) {
@@ -47,7 +47,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
   const result = await runAgentTestPartial(false, false, undefined, 0, 4, model);
   const pythonTestName = 'test_cross_language_ts_to_py_blocking_non_streaming';
   const pythonDir = path.join(__dirname, '../../python');
-  const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+  const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
   
   const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
   if (result.connectionString) {
@@ -70,7 +70,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
       const result = await runAgentTestPartial(false, true, undefined, 0, 4, model);
       const pythonTestName = 'test_cross_language_ts_to_py_blocking_streaming';
       const pythonDir = path.join(__dirname, '../../python');
-      const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+      const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
       
       const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
       if (result.connectionString) {
@@ -91,7 +91,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
   const result = await runAgentTestPartial(false, true, undefined, 0, 4, model);
   const pythonTestName = 'test_cross_language_ts_to_py_blocking_streaming';
   const pythonDir = path.join(__dirname, '../../python');
-  const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+  const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
   
   const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
   if (result.connectionString) {
@@ -114,7 +114,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
       const result = await runAgentTestPartial(true, false, undefined, 0, 4, model);
       const pythonTestName = 'test_cross_language_ts_to_py_parallel_non_streaming';
       const pythonDir = path.join(__dirname, '../../python');
-      const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+      const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
       
       const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
       if (result.connectionString) {
@@ -135,7 +135,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
   const result = await runAgentTestPartial(true, false, undefined, 0, 4, model);
   const pythonTestName = 'test_cross_language_ts_to_py_parallel_non_streaming';
   const pythonDir = path.join(__dirname, '../../python');
-  const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+  const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
   
   const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
   if (result.connectionString) {
@@ -158,7 +158,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
       const result = await runAgentTestPartial(true, true, undefined, 0, 4, model);
       const pythonTestName = 'test_cross_language_ts_to_py_parallel_streaming';
       const pythonDir = path.join(__dirname, '../../python');
-      const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+      const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
       
       const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
       if (result.connectionString) {
@@ -179,7 +179,7 @@ test.each([["gpt-4.1"], ["ollama/gpt-oss:20b-cloud"], ["ollama/hf.co/mjschock/Sm
   const result = await runAgentTestPartial(true, true, undefined, 0, 4, model);
   const pythonTestName = 'test_cross_language_ts_to_py_parallel_streaming';
   const pythonDir = path.join(__dirname, '../../python');
-  const pythonTestCmd = `cd ${pythonDir} && uv run pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
+  const pythonTestCmd = `cd ${pythonDir} && uv run python -m pytest tests/test_cross_language_ts_to_py.py::${pythonTestName} -v -x`;
   
   const env: Record<string, string> = { ...process.env, CROSS_LANG_SESSION_ID: result.sessionId, CROSS_LANG_MODEL: model };
   if (result.connectionString) {
