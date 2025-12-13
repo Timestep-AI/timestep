@@ -35,8 +35,20 @@ export class DatabaseConnection {
   private async connectPostgreSQL(): Promise<boolean> {
     try {
       // Dynamic import to avoid requiring pg at module load time
-      const pg = await import('pg');
-      const { Pool } = pg;
+      // pg is a CommonJS module, so in ESM it's wrapped in a default export
+      const pgModule = await import('pg');
+      // Handle CommonJS module loaded via ESM: default export contains the actual module
+      const pg = (pgModule as any).default || pgModule;
+      const Pool = pg.Pool;
+      
+      if (!Pool || typeof Pool !== 'function') {
+        throw new Error(
+          `Pool is not a constructor. ` +
+          `pg keys: ${JSON.stringify(Object.keys(pg))}, ` +
+          `pgModule keys: ${JSON.stringify(Object.keys(pgModule))}, ` +
+          `Pool type: ${typeof Pool}`
+        );
+      }
 
       // Parse connection string and create pool
       this.connection = new Pool({

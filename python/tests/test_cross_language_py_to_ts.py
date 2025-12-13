@@ -45,20 +45,34 @@ async def run_test(test_name: str, run_in_parallel: bool, stream: bool, model: s
         env["PG_CONNECTION_URI"] = connection_string
     
     print(f"Running TypeScript test: {run_in_parallel}, {stream}, model: {model}")
+    print(f"Working directory: {ts_dir}")
+    print(f"Test file: {ts_test_path}")
+    # Use pnpm exec to ensure we use the locally installed tsx
+    test_file_rel = ts_test_path.relative_to(ts_dir)
+    print(f"Command: pnpm exec tsx {test_file_rel} {str(run_in_parallel).lower()} {str(stream).lower()} {session_id} {model}")
+    
     result = subprocess.run(
-        ["npx", "tsx", str(ts_test_path), str(run_in_parallel).lower(), str(stream).lower(), session_id, model],
+        ["pnpm", "exec", "tsx", str(test_file_rel), str(run_in_parallel).lower(), str(stream).lower(), session_id, model],
         cwd=str(ts_dir),
         capture_output=True,
         text=True,
         env=env
     )
     
-    print(result.stdout)
+    if result.stdout:
+        print("=== TypeScript stdout ===")
+        print(result.stdout)
     if result.stderr:
+        print("=== TypeScript stderr ===", file=sys.stderr)
         print(result.stderr, file=sys.stderr)
     
     if result.returncode != 0:
-        raise RuntimeError(f"TypeScript test failed with return code {result.returncode}")
+        error_msg = f"TypeScript test failed with return code {result.returncode}"
+        if result.stdout:
+            error_msg += f"\n\nStdout:\n{result.stdout}"
+        if result.stderr:
+            error_msg += f"\n\nStderr:\n{result.stderr}"
+        raise RuntimeError(error_msg)
     
     print(f"✓ {test_name} passed")
 

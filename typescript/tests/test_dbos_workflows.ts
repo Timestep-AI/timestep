@@ -47,8 +47,10 @@ beforeAll(async () => {
       const dbUrl = env['PG_CONNECTION_URI'];
       if (dbUrl) {
         console.log('Manually dropping dbos schema...');
-        const pg = await import('pg');
-        const { Pool } = pg;
+        // pg is a CommonJS module, so in ESM it's wrapped in a default export
+        const pgModule = await import('pg');
+        const pg = (pgModule as any).default || pgModule;
+        const Pool = pg.Pool;
         const pool = new Pool({ connectionString: dbUrl });
         try {
           // Drop the dbos schema if it exists (CASCADE to drop all objects)
