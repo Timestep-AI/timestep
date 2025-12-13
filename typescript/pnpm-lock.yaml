@@ -37,6 +37,9 @@ importers:
       postgres:
         specifier: ^3.4.7
         version: 3.4.7
+      ws:
+        specifier: ^8.18.3
+        version: 8.18.3
     devDependencies:
       '@openai/agents':
         specifier: link:../3rdparty/openai-agents-js/packages/agents
