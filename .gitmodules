@@ -4,9 +4,3 @@
 [submodule "3rdparty/openai-agents-js"]
 	path = 3rdparty/openai-agents-js
 	url = https://github.com/mjschock/openai-agents-js.git
-[submodule "3rdparty/llama.cpp"]
-	path = 3rdparty/llama.cpp
-	url = https://github.com/ggerganov/llama.cpp.git
-[submodule "3rdparty/ollama-python"]
-	path = 3rdparty/ollama-python
-	url = https://github.com/ollama/ollama-python.git
