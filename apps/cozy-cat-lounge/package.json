@@ -4,9 +4,13 @@
   "scripts": {
     "start": "concurrently --kill-others-on-fail --names backend,frontend \"npm run backend\" \"npm run frontend\"",
     "frontend": "npm --prefix frontend install && npm --prefix frontend run dev",
-    "backend": "./scripts/run-backend.sh"
+    "backend": "./scripts/run-backend.sh",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.0.0",
     "concurrently": "^9.1.2"
   }
 }
