@@ -93,7 +93,7 @@ The core feature of Timestep is durable execution with cross-language state pers
     # Create agent
     agent = Agent(model="gpt-4.1")
     session = Session()
-    # RunStateStore uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
+    # RunStateStore uses PostgreSQL (set PG_CONNECTION_URI or it will use PostgreSQL connection)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run agent
@@ -123,7 +123,7 @@ The core feature of Timestep is durable execution with cross-language state pers
     // Create agent
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    // RunStateStore uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
+    // RunStateStore uses PostgreSQL (set PG_CONNECTION_URI or it will use PostgreSQL connection)
     const stateStore = new RunStateStore({ 
       agent, 
       sessionId: await session.getSessionId() 
@@ -161,7 +161,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    # Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
+    # Uses PostgreSQL (set PG_CONNECTION_URI or it will use PostgreSQL connection)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Run until interruption
@@ -182,7 +182,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    // Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
+    // Uses PostgreSQL (set PG_CONNECTION_URI or it will use PostgreSQL connection)
     const stateStore = new RunStateStore({ 
       agent, 
       sessionId: await session.getSessionId() 
@@ -209,7 +209,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     const agent = new Agent({ model: 'gpt-4.1' });
     const session = new Session();
-    // Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
+    // Uses PostgreSQL (set PG_CONNECTION_URI or it will use PostgreSQL connection)
     const stateStore = new RunStateStore({ 
       agent, 
       sessionId: await session.getSessionId() 
@@ -233,7 +233,7 @@ One of Timestep's unique features is the ability to start execution in one langu
 
     agent = Agent(model="gpt-4.1")
     session = Session()
-    # Uses PostgreSQL (set PG_CONNECTION_URI or it will use DBOS's connection)
+    # Uses PostgreSQL (set PG_CONNECTION_URI or it will use PostgreSQL connection)
     state_store = RunStateStore(agent=agent, session_id=await session._get_session_id())
 
     # Load state saved from TypeScript
@@ -437,35 +437,6 @@ The database schema supports:
 - Tool calls and interruptions
 - Usage metrics and cost tracking
 
-## DBOS Workflows (Advanced)
-
-For production deployments requiring automatic crash recovery, rate limiting, and scheduled execution, Timestep integrates with [DBOS](https://www.dbos.dev/) to provide durable workflows.
-
-### Key Benefits
-
-- **Automatic crash recovery**: Workflows resume from the last completed step after process restarts
-- **Rate limiting**: Built-in queuing with configurable rate limits for LLM APIs
-- **Scheduled execution**: Run agents on a schedule using cron syntax
-- **Idempotency**: Prevent duplicate executions with workflow IDs
-
-### Quick Example
-
-```python
-from timestep import run_agent_workflow, configure_dbos, ensure_dbos_launched
-
-configure_dbos()
-ensure_dbos_launched()
-
-# Run in a durable workflow that survives crashes
-result = await run_agent_workflow(
-    agent=agent,
-    input_items=input_items,
-    session=session,
-    workflow_id="unique-id"  # Idempotency key
-)
-```
-
-See the [DBOS Workflows](dbos-workflows.md) documentation for complete details.
 
 ## Next Steps
 

@@ -3,7 +3,6 @@
 import { randomUUID } from 'crypto';
 import type { Agent, Tool, InputGuardrail, OutputGuardrail, Handoff, ModelSettings } from '@openai/agents';
 import { DatabaseConnection } from '../shared/db_connection.ts';
-import { getDBOSConnectionString, configureDBOS } from '../../config/dbos_config.ts';
 import { registerTool, getTool } from '../tool_registry.ts';
 import {
   registerInputGuardrail,
@@ -20,14 +19,10 @@ export async function saveAgent(agent: Agent): Promise<string> {
    * @param agent - The Agent object to save
    * @returns The agent_id (UUID as string)
    */
-  // Get connection string
-  let connectionString = getDBOSConnectionString();
+  // Get connection string from environment
+  const connectionString = process.env.PG_CONNECTION_URI;
   if (!connectionString) {
-    await configureDBOS();
-    connectionString = getDBOSConnectionString();
-  }
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
+    throw new Error('PG_CONNECTION_URI environment variable not set');
   }
 
   // Create and manage database connection
@@ -423,14 +418,10 @@ export async function loadAgent(agentId: string): Promise<Agent> {
    * @param agentId - The agent ID (UUID as string)
    * @returns The reconstructed Agent object
    */
-  // Get connection string
-  let connectionString = getDBOSConnectionString();
+  // Get connection string from environment
+  const connectionString = process.env.PG_CONNECTION_URI;
   if (!connectionString) {
-    await configureDBOS();
-    connectionString = getDBOSConnectionString();
-  }
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
+    throw new Error('PG_CONNECTION_URI environment variable not set');
   }
 
   // Create and manage database connection

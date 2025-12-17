@@ -355,8 +355,7 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
                 
                 # Get the database connection string that was used
                 # This ensures TypeScript can connect to the same database
-                from timestep.config.dbos_config import get_dbos_connection_string
-                connection_string = get_dbos_connection_string()
+                connection_string = os.environ.get("PG_CONNECTION_URI")
                 
                 # Return session ID and connection string without approving
                 return {"session_id": current_session_id, "connection_string": connection_string}
@@ -376,8 +375,7 @@ async def run_agent_test_partial(run_in_parallel: bool = True, stream: bool = Fa
                     await session.pop_item()
 
     # If we got here without interruption, get connection string anyway (may be None if DBOS wasn't configured)
-    from timestep.config.dbos_config import get_dbos_connection_string
-    connection_string = get_dbos_connection_string()
+    connection_string = os.environ.get("PG_CONNECTION_URI")
     return {"session_id": current_session_id, "connection_string": connection_string}
 
 

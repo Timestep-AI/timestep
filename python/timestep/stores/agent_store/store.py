@@ -12,7 +12,6 @@ from ..guardrail_registry import (
     register_input_guardrail, register_output_guardrail,
     get_input_guardrail, get_output_guardrail
 )
-from ...config.dbos_config import get_dbos_connection_string, configure_dbos
 
 
 async def save_agent(agent: Agent) -> str:
@@ -27,10 +26,9 @@ async def save_agent(agent: Agent) -> str:
         The agent_id (UUID as string)
     """
     # Get connection string
-    connection_string = get_dbos_connection_string()
+    connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
-        await configure_dbos()
-        connection_string = get_dbos_connection_string()
+        connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
         raise ValueError("DBOS connection string not available")
     
@@ -339,10 +337,9 @@ async def load_agent(agent_id: str) -> Agent:
         The reconstructed Agent object
     """
     # Get connection string
-    connection_string = get_dbos_connection_string()
+    connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
-        await configure_dbos()
-        connection_string = get_dbos_connection_string()
+        connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
         raise ValueError("DBOS connection string not available")
     

@@ -36,23 +36,16 @@ export class RunStateStore {
       return; // Already initialized
     }
 
-    // Get connection string from DBOS if not explicitly provided
+    // Get connection string from options or environment
     let connectionString = this._connectionString;
     if (!connectionString) {
-      const { getDBOSConnectionString, configureDBOS } = await import('../../config/dbos_config.ts');
-      connectionString = getDBOSConnectionString();
-      
-      // If DBOS isn't configured, configure it (will use PG_CONNECTION_URI if available)
-      if (!connectionString) {
-        await configureDBOS();
-        connectionString = getDBOSConnectionString();
-      }
+      connectionString = process.env.PG_CONNECTION_URI;
     }
     
     if (!connectionString) {
       throw new Error(
         'No connection string provided. ' +
-        'Either provide connectionString in options or ensure DBOS is configured with PG_CONNECTION_URI.'
+        'Either provide connectionString in options or set PG_CONNECTION_URI environment variable.'
       );
     }
     

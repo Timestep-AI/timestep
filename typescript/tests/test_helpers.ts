@@ -186,10 +186,9 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
         const state = result.state;
         await stateStore.save(state);
         
-        // Get the database connection string that was used
+        // Get the database connection string from environment
         // This ensures Python can connect to the same database
-        const { getDBOSConnectionString } = await import('../timestep/config/dbos_config.ts');
-        const connectionString = getDBOSConnectionString();
+        const connectionString = process.env.PG_CONNECTION_URI;
         
         // Return session ID and connection string without approving
         return { sessionId: currentSessionId, connectionString };
@@ -220,30 +219,22 @@ export async function runAgentTestPartial(runInParallel: boolean = true, stream:
     }
   }
 
-  // If we got here without interruption, get connection string anyway (may be undefined if DBOS wasn't configured)
-  const { getDBOSConnectionString } = await import('../timestep/config/dbos_config.ts');
-  const connectionString = getDBOSConnectionString();
+  // If we got here without interruption, get connection string from environment
+  const connectionString = process.env.PG_CONNECTION_URI;
   return { sessionId: currentSessionId, connectionString };
 }
 
 export async function runAgentTestFromPython(runInParallel: boolean = true, stream: boolean = false, sessionId: string, connectionString?: string, model: string = "gpt-4.1"): Promise<any[]> {
-  // Configure DBOS before loading state (only need configuration, not launch, since we're just using the database connection)
   // Use provided connectionString if available (for TS->TS tests), otherwise use PG_CONNECTION_URI from env (for Python->TS tests)
-  const { configureDBOS } = await import('../timestep/config/dbos_config.ts');
-  const configOptions: any = { name: 'timestep-test' };
-  if (connectionString) {
-    configOptions.systemDatabaseUrl = connectionString;
-  } else {
-    // Log for debugging - check if env var is set
-    const envConnStr = process.env['PG_CONNECTION_URI'];
-    if (envConnStr) {
-      console.log(`Using PG_CONNECTION_URI from environment: ${envConnStr.substring(0, 50)}...`);
+  if (!connectionString) {
+    connectionString = process.env.PG_CONNECTION_URI;
+    if (connectionString) {
+      console.log(`Using PG_CONNECTION_URI from environment: ${connectionString.substring(0, 50)}...`);
     }
   }
-  console.log('Configuring DBOS...');
-  await configureDBOS(configOptions);
-  console.log('DBOS configured');
-  // Note: We don't need to launch DBOS here - RunStateStore only needs the connection string, not the workflow system
+  if (!connectionString) {
+    throw new Error('PG_CONNECTION_URI environment variable not set');
+  }
   
   // Define guardrails
   const moonGuardrail: InputGuardrail = {
@@ -629,4 +620,5 @@ export function assertConversationItems(cleaned: any[], expected: any[]): void {
     }
   }
 }
+
 

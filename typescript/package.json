@@ -1,7 +1,7 @@
 {
   "name": "@timestep-ai/timestep",
-  "version": "2026.0.50",
-  "description": "Timestep AI - Durable agent execution framework with DBOS workflows, cross-language state persistence, and multi-model support for OpenAI Agents",
+  "version": "2026.0.52",
+  "description": "Timestep AI - Durable agent execution framework with cross-language state persistence and multi-model support for OpenAI Agents",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
@@ -32,7 +32,6 @@
     }
   },
   "dependencies": {
-    "@dbos-inc/dbos-sdk": "^4.4.9",
     "@mendable/firecrawl-js": "^1.0.0",
     "@modelcontextprotocol/sdk": "^1.24.0",
     "debug": "^4.4.0",

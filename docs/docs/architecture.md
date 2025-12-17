@@ -251,10 +251,8 @@ Timestep is organized into clear modules for maintainability and clarity:
 
 ### Core Modules
 - **`core/`**: Core agent execution functions (`run_agent`/`runAgent`, `default_result_processor`/`defaultResultProcessor`)
-- **`core/agent_workflow.py`/`core/agent_workflow.ts`**: DBOS workflows for durable agent execution
 
 ### Configuration
-- **`config/`**: Configuration utilities (`dbos_config`, `app_dir`)
 
 ### Data Access Layer
 - **`stores/`**: Data access layer with organized subfolders

@@ -395,7 +395,7 @@ A utility class for persisting and loading agent run state to/from a PostgreSQL 
 |-----------|------|-------------|
 | `agent` | `Agent` | The agent instance. Required for loading state. |
 | `session_id` / `sessionId` | `string \| undefined` | Session ID to use as identifier. If not provided, will be generated automatically. |
-| `connection_string` / `connectionString` | `string \| undefined` | PostgreSQL connection string. If not provided, uses DBOS's connection string if configured, otherwise requires `PG_CONNECTION_URI` environment variable. |
+| `connection_string` / `connectionString` | `string \| undefined` | PostgreSQL connection string. If not provided, uses PostgreSQL connection string if configured, otherwise requires `PG_CONNECTION_URI` environment variable. |
 
 ### Methods
 

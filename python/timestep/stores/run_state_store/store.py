@@ -1,10 +1,13 @@
 """RunStateStore implementation using PostgreSQL."""
 
 import json
+import os
+from pathlib import Path
 import uuid
 from typing import Optional, Any
 
 from ..shared.db_connection import DatabaseConnection
+from ...config.app_dir import get_app_dir
 from ..._vendored_imports import Agent, RunState
 
 
@@ -46,19 +49,23 @@ class RunStateStore:
         self._connection_string = connection_string
         self.db: Optional[DatabaseConnection] = None
         self._connected = False
-    
     async def _initialize_database(self) -> None:
         """Initialize the database connection."""
         connection_string = self._connection_string
-        # Get connection string from DBOS if not explicitly provided
+        
+        # If not explicitly provided, determine default
         if not connection_string:
-            from ...config.dbos_config import get_dbos_connection_string, configure_dbos
-            connection_string = get_dbos_connection_string()
-            
-            # If DBOS is not configured, auto-configure it (will use PG_CONNECTION_URI if available)
+            # Check for PG_CONNECTION_URI environment variable (PostgreSQL)
+            pg_uri = os.environ.get("PG_CONNECTION_URI")
+            if pg_uri:
+                connection_string = pg_uri
+            else:
+                # Default to SQLite in app directory
+                app_dir = get_app_dir()
+                db_path = app_dir / "timestep.db"
+                connection_string = f"sqlite:///{db_path}"
             if not connection_string:
-                await configure_dbos()
-                connection_string = get_dbos_connection_string()
+                connection_string = os.environ.get("PG_CONNECTION_URI")
         
         if not connection_string:
             raise ValueError(

@@ -4,7 +4,6 @@
 
 import { loadAgent } from '../stores/agent_store/store';
 import { DatabaseConnection } from '../stores/shared/db_connection';
-import { getDBOSConnectionString } from '../config/dbos_config';
 
 export class CircularDependencyChecker {
   async checkCircularHandoffs(agentId: string): Promise<string[] | null> {
@@ -27,7 +26,7 @@ export class CircularDependencyChecker {
       }
 
       // Get handoff agent IDs from database
-      const connectionString = getDBOSConnectionString();
+      const connectionString = process.env.PG_CONNECTION_URI;
       if (!connectionString) {
         recStack.delete(aid);
         path.pop();

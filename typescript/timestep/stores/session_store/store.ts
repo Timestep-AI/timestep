@@ -3,7 +3,6 @@
 import { randomUUID } from 'crypto';
 import type { Session } from '@openai/agents';
 import { DatabaseConnection } from '../shared/db_connection.ts';
-import { getDBOSConnectionString, configureDBOS } from '../../config/dbos_config.ts';
 
 export async function saveSession(session: Session): Promise<string> {
   /**
@@ -13,14 +12,10 @@ export async function saveSession(session: Session): Promise<string> {
    * @param session - The Session object to save
    * @returns The session_id (UUID as string) - this is the database ID, not the session's internal ID
    */
-  // Get connection string
-  let connectionString = getDBOSConnectionString();
+  // Get connection string from environment
+  const connectionString = process.env.PG_CONNECTION_URI;
   if (!connectionString) {
-    await configureDBOS();
-    connectionString = getDBOSConnectionString();
-  }
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
+    throw new Error('PG_CONNECTION_URI environment variable not set');
   }
 
   // Create and manage database connection
@@ -133,14 +128,10 @@ export async function loadSession(
    * @param sessionId - The session ID (can be either the database UUID or the session's internal ID)
    * @returns A dict with session data, or null if not found
    */
-  // Get connection string
-  let connectionString = getDBOSConnectionString();
+  // Get connection string from environment
+  const connectionString = process.env.PG_CONNECTION_URI;
   if (!connectionString) {
-    await configureDBOS();
-    connectionString = getDBOSConnectionString();
-  }
-  if (!connectionString) {
-    throw new Error('DBOS connection string not available');
+    throw new Error('PG_CONNECTION_URI environment variable not set');
   }
 
   // Create and manage database connection

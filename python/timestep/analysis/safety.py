@@ -39,9 +39,8 @@ class CircularDependencyChecker:
             
             # Get handoff agent IDs from database
             from ..stores.shared.db_connection import DatabaseConnection
-            from ..config.dbos_config import get_dbos_connection_string
             
-            connection_string = get_dbos_connection_string()
+            connection_string = os.environ.get("PG_CONNECTION_URI")
             if not connection_string:
                 rec_stack.remove(aid)
                 path.pop()

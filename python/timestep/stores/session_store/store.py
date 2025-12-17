@@ -5,7 +5,6 @@ import uuid
 from typing import Optional
 from ..shared.db_connection import DatabaseConnection
 from ..._vendored_imports import SessionABC
-from ...config.dbos_config import get_dbos_connection_string, configure_dbos
 
 
 async def save_session(session: SessionABC) -> str:
@@ -20,10 +19,9 @@ async def save_session(session: SessionABC) -> str:
         The session_id (UUID as string) - this is the database ID, not the session's internal ID
     """
     # Get connection string
-    connection_string = get_dbos_connection_string()
+    connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
-        await configure_dbos()
-        connection_string = get_dbos_connection_string()
+        connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
         raise ValueError("DBOS connection string not available")
     
@@ -124,10 +122,9 @@ async def load_session(session_id: str) -> Optional[dict]:
         A dict with session data, or None if not found
     """
     # Get connection string
-    connection_string = get_dbos_connection_string()
+    connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
-        await configure_dbos()
-        connection_string = get_dbos_connection_string()
+        connection_string = os.environ.get("PG_CONNECTION_URI")
     if not connection_string:
         raise ValueError("DBOS connection string not available")
     
