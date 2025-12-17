@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --strictPort",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --max-warnings=0"
