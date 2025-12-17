@@ -1,0 +1,14 @@
+{
+  "name": "timestep-ai-apps",
+  "private": true,
+  "scripts": {
+    "chatkit-starter": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter start",
+    "cozy-cat-lounge": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge start",
+    "customer-support": "npm --prefix apps/customer-support install && npm --prefix apps/customer-support start",
+    "news-guide": "npm --prefix apps/news-guide install && npm --prefix apps/news-guide start",
+    "metro-map": "npm --prefix apps/metro-map install && npm --prefix apps/metro-map start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
