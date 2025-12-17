@@ -24,7 +24,15 @@ from .models.default_models import (
 from .models.interface import Model
 from .prompts import DynamicPromptFunction, Prompt, PromptUtil
 from .run_context import RunContextWrapper, TContext
-from .tool import FunctionTool, FunctionToolResult, Tool, function_tool
+from .tool import (
+    FunctionTool,
+    FunctionToolResult,
+    Tool,
+    ToolErrorFunction,
+    default_tool_error_function,
+    function_tool,
+)
+from .tool_context import ToolContext
 from .util import _transforms
 from .util._types import MaybeAwaitable
 
@@ -34,17 +42,18 @@ if TYPE_CHECKING:
     from .lifecycle import AgentHooks, RunHooks
     from .mcp import MCPServer
     from .memory.session import Session
-    from .result import RunResult
+    from .result import RunResult, RunResultStreaming
     from .run import RunConfig
+    from .stream_events import StreamEvent
 
 # Per-process, ephemeral map linking a tool call ID to its nested
 # Agent run result within the same run; entry is removed after consumption.
-_agent_tool_run_results: dict[str, RunResult] = {}
+_agent_tool_run_results: dict[str, RunResult | RunResultStreaming] = {}
 
 
 def save_agent_tool_run_result(
     tool_call: ResponseFunctionToolCall | None,
-    run_result: RunResult,
+    run_result: RunResult | RunResultStreaming,
 ) -> None:
     """Save the nested agent run result for later consumption.
 
@@ -57,7 +66,7 @@ def save_agent_tool_run_result(
 
 def consume_agent_tool_run_result(
     tool_call: ResponseFunctionToolCall,
-) -> RunResult | None:
+) -> RunResult | RunResultStreaming | None:
     """Consume and return the nested agent run result for a tool call.
 
     This retrieves and removes the stored run result. Returns None if
@@ -87,6 +96,19 @@ ToolsToFinalOutputFunction: TypeAlias = Callable[
 """A function that takes a run context and a list of tool results, and returns a
 `ToolsToFinalOutputResult`.
 """
+
+
+class AgentToolStreamEvent(TypedDict):
+    """Streaming event emitted when an agent is invoked as a tool."""
+
+    event: StreamEvent
+    """The streaming event from the nested agent run."""
+
+    agent: Agent[Any]
+    """The nested agent emitting the event."""
+
+    tool_call: ResponseFunctionToolCall | None
+    """The originating tool call, if available."""
 
 
 class StopAtTools(TypedDict):
@@ -413,9 +435,12 @@ class Agent(AgentBase, Generic[TContext]):
         self,
         tool_name: str | None,
         tool_description: str | None,
-        custom_output_extractor: Callable[[RunResult], Awaitable[str]] | None = None,
+        custom_output_extractor: (
+            Callable[[RunResult | RunResultStreaming], Awaitable[str]] | None
+        ) = None,
         is_enabled: bool
         | Callable[[RunContextWrapper[Any], AgentBase[Any]], MaybeAwaitable[bool]] = True,
+        on_stream: Callable[[AgentToolStreamEvent], MaybeAwaitable[None]] | None = None,
         needs_approval: bool
         | Callable[[RunContextWrapper[Any], dict[str, Any], str], Awaitable[bool]] = False,
         run_config: RunConfig | None = None,
@@ -424,6 +449,7 @@ class Agent(AgentBase, Generic[TContext]):
         previous_response_id: str | None = None,
         conversation_id: str | None = None,
         session: Session | None = None,
+        failure_error_function: ToolErrorFunction | None = default_tool_error_function,
     ) -> Tool:
         """Transform this agent into a tool, callable by other agents.
 
@@ -442,6 +468,10 @@ class Agent(AgentBase, Generic[TContext]):
             is_enabled: Whether the tool is enabled. Can be a bool or a callable that takes the run
                 context and agent and returns whether the tool is enabled. Disabled tools are hidden
                 from the LLM at runtime.
+            on_stream: Optional callback (sync or async) to receive streaming events from the nested
+                agent run. The callback receives an `AgentToolStreamEvent` containing the nested
+                agent, the originating tool call (when available), and each stream event. When
+                provided, the nested agent is executed in streaming mode.
             needs_approval: Whether the tool needs approval before execution.
                 If True, the run will be interrupted and the tool call will need
                 to be approved using RunState.approve() or rejected using
@@ -449,6 +479,8 @@ class Agent(AgentBase, Generic[TContext]):
                 (always/never needs approval) or a function that takes
                 (run_context, tool_parameters, call_id) and returns whether this
                 specific call needs approval.
+            failure_error_function: If provided, generate an error message when the tool (agent) run
+                fails. The message is sent to the LLM. If None, the exception is raised instead.
         """
 
         @function_tool(
@@ -456,35 +488,99 @@ class Agent(AgentBase, Generic[TContext]):
             description_override=tool_description or "",
             is_enabled=is_enabled,
             needs_approval=needs_approval,
+            failure_error_function=failure_error_function,
         )
-        async def run_agent(context: RunContextWrapper, input: str) -> Any:
+        async def run_agent(context: ToolContext, input: str) -> Any:
             from .run import DEFAULT_MAX_TURNS, Runner
             from .tool_context import ToolContext
 
             resolved_max_turns = max_turns if max_turns is not None else DEFAULT_MAX_TURNS
+            run_result: RunResult | RunResultStreaming
 
-            output = await Runner.run(
-                starting_agent=self,
-                input=input,
-                context=context.context,
-                run_config=run_config,
-                max_turns=resolved_max_turns,
-                hooks=hooks,
-                previous_response_id=previous_response_id,
-                conversation_id=conversation_id,
-                session=session,
-            )
+            if on_stream is not None:
+                run_result = Runner.run_streamed(
+                    starting_agent=self,
+                    input=input,
+                    context=context.context,
+                    run_config=run_config,
+                    max_turns=resolved_max_turns,
+                    hooks=hooks,
+                    previous_response_id=previous_response_id,
+                    conversation_id=conversation_id,
+                    session=session,
+                )
+                # Dispatch callbacks in the background so slow handlers do not block
+                # event consumption.
+                event_queue: asyncio.Queue[AgentToolStreamEvent | None] = asyncio.Queue()
+
+                async def _run_handler(payload: AgentToolStreamEvent) -> None:
+                    """Execute the user callback while capturing exceptions."""
+                    try:
+                        maybe_result = on_stream(payload)
+                        if inspect.isawaitable(maybe_result):
+                            await maybe_result
+                    except Exception:
+                        logger.exception(
+                            "Error while handling on_stream event for agent tool %s.",
+                            self.name,
+                        )
+
+                async def dispatch_stream_events() -> None:
+                    while True:
+                        payload = await event_queue.get()
+                        is_sentinel = payload is None  # None marks the end of the stream.
+                        try:
+                            if payload is not None:
+                                await _run_handler(payload)
+                        finally:
+                            event_queue.task_done()
+
+                        if is_sentinel:
+                            break
+
+                dispatch_task = asyncio.create_task(dispatch_stream_events())
+
+                try:
+                    from .stream_events import AgentUpdatedStreamEvent
+
+                    current_agent = run_result.current_agent
+                    async for event in run_result.stream_events():
+                        if isinstance(event, AgentUpdatedStreamEvent):
+                            current_agent = event.new_agent
+
+                        payload: AgentToolStreamEvent = {
+                            "event": event,
+                            "agent": current_agent,
+                            "tool_call": context.tool_call,
+                        }
+                        await event_queue.put(payload)
+                finally:
+                    await event_queue.put(None)
+                    await event_queue.join()
+                    await dispatch_task
+            else:
+                run_result = await Runner.run(
+                    starting_agent=self,
+                    input=input,
+                    context=context.context,
+                    run_config=run_config,
+                    max_turns=resolved_max_turns,
+                    hooks=hooks,
+                    previous_response_id=previous_response_id,
+                    conversation_id=conversation_id,
+                    session=session,
+                )
 
             # Store the run result keyed by tool_call_id so it can be retrieved later
             # when the tool_call is available during result processing
             # At runtime, context is actually a ToolContext which has tool_call_id
             if isinstance(context, ToolContext):
-                _agent_tool_run_results[context.tool_call_id] = output
+                _agent_tool_run_results[context.tool_call_id] = run_result
 
             if custom_output_extractor:
-                return await custom_output_extractor(output)
+                return await custom_output_extractor(run_result)
 
-            return output.final_output
+            return run_result.final_output
 
         # Mark the function tool as an agent tool
         run_agent_tool = run_agent
