@@ -7,7 +7,7 @@ allow-direct-references = true
 
 [project]
 name = "timestep"
-version = "2026.0.53"
+version = "2026.0.54"
 description = "Timestep AI - Agent execution framework with cross-language state persistence and multi-model support for OpenAI Agents"
 readme = "README.md"
 license = { text = "MIT" }
