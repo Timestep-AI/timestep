@@ -47,7 +47,10 @@ def build_meal_preference_widget(
         label = meal_preference_label(value)
         emphasized = value == selected
         action_config = (
-            SetMealPreferenceAction.create(SetMealPreferencePayload(meal=value))
+            SetMealPreferenceAction.create(
+                SetMealPreferencePayload(meal=value),
+                handler="client",  # Route to client onAction callback first
+            )
             if selected is None
             else None
         )

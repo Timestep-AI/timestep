@@ -1,4 +1,5 @@
 import { ChatKit, useChatKit } from "@openai/chatkit-react";
+import { useCallback, useRef } from "react";
 import type { ColorScheme } from "../hooks/useColorScheme";
 import {
   SUPPORT_CHATKIT_API_DOMAIN_KEY,
@@ -18,6 +19,21 @@ export function ChatKitPanel({
   onThreadChange,
   onResponseCompleted,
 }: ChatKitPanelProps) {
+  const chatkitRef = useRef<ReturnType<typeof useChatKit> | null>(null);
+
+  const handleWidgetAction = useCallback(
+    async (
+      action: { type: string; payload?: Record<string, unknown> },
+      widgetItem: { id: string; widget: unknown }
+    ) => {
+      const chatkit = chatkitRef.current;
+      if (!chatkit) return;
+
+      await chatkit.sendCustomAction(action, widgetItem.id);
+      onResponseCompleted();
+    },
+    [onResponseCompleted]
+  );
 
   const chatkit = useChatKit({
     api: {
@@ -49,6 +65,9 @@ export function ChatKitPanel({
     threadItemActions: {
       feedback: false,
     },
+    widgets: {
+      onAction: handleWidgetAction,
+    },
     onResponseEnd: () => {
       onResponseCompleted();
     },
@@ -60,6 +79,7 @@ export function ChatKitPanel({
       console.error("ChatKit error", error);
     },
   });
+  chatkitRef.current = chatkit;
 
   return (
     <div className="relative h-full w-full overflow-hidden border border-slate-200/60 bg-white shadow-card dark:border-slate-800/70 dark:bg-slate-900">
