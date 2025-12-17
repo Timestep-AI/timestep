@@ -2,10 +2,12 @@
 
 Chat-driven GUI updates for a metro map using a React Flow canvas that lets the user extend lines with new stations.
 
+> **Note:** This app was copied and modified from the metro-map example app in the [openai-chatkit-advanced-samples](https://github.com/openai/openai-chatkit-advanced-samples) repository.
+
 ## Quickstart
 
 1. Export `OPENAI_API_KEY` (and `VITE_CHATKIT_API_DOMAIN_KEY=domain_pk_local_dev` for local).
-2. From the repo root run `npm run metro-map` (or `cd examples/metro-map && npm install && npm run start`).
+2. From this directory run `npm install && npm run start` (or from the repo root run `npm run metro-map`).
 3. Go to http://localhost:5173
 
 ## Example prompts

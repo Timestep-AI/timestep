@@ -2,10 +2,12 @@
 
 Foxhollow Dispatch newsroom assistant showcasing retrieval-heavy ChatKit flows and rich widgets.
 
+> **Note:** This app was copied and modified from the news-guide example app in the [openai-chatkit-advanced-samples](https://github.com/openai/openai-chatkit-advanced-samples) repository.
+
 ## Quickstart
 
 1. Export `OPENAI_API_KEY` (and `VITE_CHATKIT_API_DOMAIN_KEY=domain_pk_local_dev` for local).
-2. From the repo root run `npm run news-guide` (or `cd examples/news-guide && npm install && npm run start`).
+2. From this directory run `npm install && npm run start` (or from the repo root run `npm run news-guide`).
 3. Go to: http://localhost:5172
 
 ## Example prompts

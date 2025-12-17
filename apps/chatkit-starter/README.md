@@ -3,6 +3,8 @@
 Minimal Vite + React UI paired with a FastAPI backend that forwards chat
 requests to OpenAI through the ChatKit server library.
 
+> **Note:** This app was copied and modified from the self-hosted ChatKit example app in the [openai-chatkit-starter-app](https://github.com/openai/openai-chatkit-starter-app) repository.
+
 ## Quick start
 
 ```bash

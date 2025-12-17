@@ -1,11 +1,13 @@
-# Cat Lounge
+# Cozy Cat Lounge
 
 Virtual cat caretaker demo built with ChatKit (FastAPI backend + Vite/React frontend).
+
+> **Note:** This app was copied and modified from the cat-lounge example app in the [openai-chatkit-advanced-samples](https://github.com/openai/openai-chatkit-advanced-samples) repository.
 
 ## Quickstart
 
 1. Export `OPENAI_API_KEY`.
-2. From the repo root run `npm run cat-lounge` (or `cd examples/cat-lounge && npm install && npm run start`).
+2. From this directory run `npm install && npm run start` (or from the repo root run `npm run cozy-cat-lounge`).
 3. Go to http://localhost:5170
 
 ## Example prompts
