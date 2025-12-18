@@ -5,6 +5,7 @@
     "chatkit-starter": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter start",
     "chatkit-starter-ts": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter run start-ts",
     "cozy-cat-lounge": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge start",
+    "cozy-cat-lounge-ts": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge run start-ts",
     "customer-support": "npm --prefix apps/customer-support install && npm --prefix apps/customer-support start",
     "news-guide": "npm --prefix apps/news-guide install && npm --prefix apps/news-guide start",
     "metro-map": "npm --prefix apps/metro-map install && npm --prefix apps/metro-map start",
@@ -12,6 +13,7 @@
     "test:e2e:chatkit-starter": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter run test:e2e",
     "test:e2e:chatkit-starter-ts": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter run test:e2e:ts",
     "test:e2e:cozy-cat-lounge": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge run test:e2e",
+    "test:e2e:cozy-cat-lounge-ts": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge run test:e2e:ts",
     "test:e2e:customer-support": "npm --prefix apps/customer-support install && npm --prefix apps/customer-support run test:e2e",
     "test:e2e:metro-map": "npm --prefix apps/metro-map install && npm --prefix apps/metro-map run test:e2e",
     "test:e2e:news-guide": "npm --prefix apps/news-guide install && npm --prefix apps/news-guide run test:e2e",
@@ -19,6 +21,7 @@
     "test:e2e:ui:chatkit-starter": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter run test:e2e:ui",
     "test:e2e:ui:chatkit-starter-ts": "npm --prefix apps/chatkit-starter install && npm --prefix apps/chatkit-starter run test:e2e:ts:ui",
     "test:e2e:ui:cozy-cat-lounge": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge run test:e2e:ui",
+    "test:e2e:ui:cozy-cat-lounge-ts": "npm --prefix apps/cozy-cat-lounge install && npm --prefix apps/cozy-cat-lounge run test:e2e:ts:ui",
     "test:e2e:ui:customer-support": "npm --prefix apps/customer-support install && npm --prefix apps/customer-support run test:e2e:ui",
     "test:e2e:ui:metro-map": "npm --prefix apps/metro-map install && npm --prefix apps/metro-map run test:e2e:ui",
     "test:e2e:ui:news-guide": "npm --prefix apps/news-guide install && npm --prefix apps/news-guide run test:e2e:ui"
