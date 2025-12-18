@@ -3,10 +3,12 @@ import * as path from 'path';
 import * as http from 'http';
 
 const APP_ROOT = path.resolve(__dirname, '../..');
-const BACKEND_DIR = path.join(APP_ROOT, 'backend');
 const FRONTEND_DIR = path.join(APP_ROOT, 'frontend');
 const BACKEND_PORT = process.env.PORT ? parseInt(process.env.PORT) : 8000;
 const FRONTEND_PORT = 3000;
+
+// Backend name from env var (defaults to 'backend' for Python)
+const BACKEND_NAME = process.env.BACKEND || 'backend';
 
 let backendProcess: ChildProcess | null = null;
 let frontendProcess: ChildProcess | null = null;
@@ -60,6 +62,7 @@ async function waitForServer(
 
 /**
  * Start the backend server
+ * Uses BACKEND env var to determine which backend to start (default: 'backend')
  * @param skipLock - If true, skip the lock check (used when called from startServers)
  */
 export async function startBackend(skipLock: boolean = false): Promise<void> {
@@ -79,7 +82,7 @@ export async function startBackend(skipLock: boolean = false): Promise<void> {
     }
   }
 
-  console.log('Starting backend server...');
+  console.log(`Starting backend server (${BACKEND_NAME})...`);
   
   // Kill any process using port 8000 first
   try {
@@ -98,7 +101,8 @@ export async function startBackend(skipLock: boolean = false): Promise<void> {
     PORT: BACKEND_PORT.toString(),
   };
 
-  backendProcess = spawn('bash', [scriptPath], {
+  // Pass the backend name as argument to the script
+  backendProcess = spawn('bash', [scriptPath, BACKEND_NAME], {
     cwd: APP_ROOT,
     env,
     stdio: 'pipe',
@@ -312,4 +316,3 @@ export async function stopServers(): Promise<void> {
     isStopping = false;
   }
 }
-
