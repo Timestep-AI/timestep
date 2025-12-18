@@ -83,7 +83,7 @@ from .stream_events import (
     RunItemStreamEvent,
     StreamEvent,
 )
-from .tool import FunctionTool, Tool
+from .tool import FunctionTool, Tool, dispose_resolved_computers
 from .tool_guardrails import ToolInputGuardrailResult, ToolOutputGuardrailResult
 from .tracing import Span, SpanError, agent_span, get_current_trace, trace
 from .tracing.span_data import AgentSpanData
@@ -1324,6 +1324,9 @@ class AgentRunner:
                         if run_state._current_step is None:
                             run_state._current_step = NextStepRunAgain()  # type: ignore[assignment]
                     all_tools = await AgentRunner._get_all_tools(current_agent, context_wrapper)
+                    await RunImpl.initialize_computer_tools(
+                        tools=all_tools, context_wrapper=context_wrapper
+                    )
 
                     # Start an agent span if we don't have one. This span is ended if the current
                     # agent changes, or if the agent loop ends.
@@ -1750,6 +1753,10 @@ class AgentRunner:
                 )
                 raise
             finally:
+                try:
+                    await dispose_resolved_computers(run_context=context_wrapper)
+                except Exception as error:
+                    logger.warning("Failed to dispose computers after run: %s", error)
                 if current_span:
                     current_span.finish(reset_current=True)
 
@@ -2374,8 +2381,6 @@ class AgentRunner:
                         # Get the last model response
                         last_model_response = run_state._model_responses[-1]
 
-                        from ._run_impl import RunImpl
-
                         turn_result = await RunImpl.resolve_interrupted_turn(
                             agent=current_agent,
                             original_input=run_state._original_input,
@@ -2583,6 +2588,9 @@ class AgentRunner:
                     break
 
                 all_tools = await cls._get_all_tools(current_agent, context_wrapper)
+                await RunImpl.initialize_computer_tools(
+                    tools=all_tools, context_wrapper=context_wrapper
+                )
 
                 # Start an agent span if we don't have one. This span is ended if the current
                 # agent changes, or if the agent loop ends.
@@ -2869,6 +2877,10 @@ class AgentRunner:
                     logger.debug(
                         f"Error in streamed_result finalize for agent {current_agent.name} - {e}"
                     )
+            try:
+                await dispose_resolved_computers(run_context=context_wrapper)
+            except Exception as error:
+                logger.warning("Failed to dispose computers after streamed run: %s", error)
             if current_span:
                 current_span.finish(reset_current=True)
             if streamed_result.trace:

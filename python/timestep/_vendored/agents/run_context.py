@@ -27,7 +27,7 @@ class ApprovalRecord:
         self.rejected = []
 
 
-@dataclass
+@dataclass(eq=False)
 class RunContextWrapper(Generic[TContext]):
     """This wraps the context object that you passed to `Runner.run()`. It also contains
     information about the usage of the agent run so far.
