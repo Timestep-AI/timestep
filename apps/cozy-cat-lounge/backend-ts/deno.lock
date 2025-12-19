@@ -2,7 +2,10 @@
   "version": "5",
   "specifiers": {
     "npm:@openai/agents@0.3": "0.3.3_zod@3.25.76",
+    "npm:@openai/agents@~0.3.2": "0.3.3_zod@3.25.76",
+    "npm:debug@^4.3.4": "4.4.3",
     "npm:nunjucks@^3.2.4": "3.2.4",
+    "npm:zod@^3.23.0": "3.25.76",
     "npm:zod@^3.25.0": "3.25.76"
   },
   "npm": {

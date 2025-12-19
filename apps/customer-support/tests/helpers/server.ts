@@ -7,6 +7,15 @@ const FRONTEND_DIR = path.join(APP_ROOT, 'frontend');
 const BACKEND_PORT = 8000;
 const FRONTEND_PORT = 3000;
 
+// Determine which backend to use based on BACKEND_TYPE env var
+function getBackendArg(): string {
+  const backendType = process.env.BACKEND_TYPE;
+  if (backendType === 'ts' || backendType === 'typescript') {
+    return 'backend-ts';
+  }
+  return 'backend';
+}
+
 let backendProcess: ChildProcess | null = null;
 let frontendProcess: ChildProcess | null = null;
 let isStarting = false;
@@ -37,14 +46,15 @@ export async function startBackend(skipLock = false): Promise<void> {
   if (backendProcess) return;
   if (!skipLock) { while (isStarting) await new Promise(r => setTimeout(r, 100)); if (backendProcess) return; }
 
-  console.log('Starting backend server...');
+  const backendArg = getBackendArg();
+  console.log(`Starting backend server (${backendArg})...`);
   try {
     execSync('fuser -k 8000/tcp 2>/dev/null || lsof -ti:8000 | xargs kill -9 2>/dev/null || true', { stdio: 'inherit' });
     await new Promise(r => setTimeout(r, 1000));
   } catch {}
 
   const scriptPath = path.join(APP_ROOT, 'scripts', 'run-backend.sh');
-  backendProcess = spawn('bash', [scriptPath], { cwd: APP_ROOT, env: { ...process.env, PORT: BACKEND_PORT.toString() }, stdio: 'pipe' });
+  backendProcess = spawn('bash', [scriptPath, backendArg], { cwd: APP_ROOT, env: { ...process.env, PORT: BACKEND_PORT.toString() }, stdio: 'pipe' });
   backendProcess.stdout?.on('data', (d) => console.log(`[Backend] ${d.toString().trim()}`));
   backendProcess.stderr?.on('data', (d) => console.error(`[Backend Error] ${d.toString().trim()}`));
   backendProcess.on('exit', (code) => { console.log(`Backend exited with code ${code}`); backendProcess = null; });
