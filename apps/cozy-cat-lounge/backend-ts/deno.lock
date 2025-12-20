@@ -4,6 +4,8 @@
     "npm:@openai/agents@0.3": "0.3.3_zod@3.25.76",
     "npm:@openai/agents@~0.3.2": "0.3.3_zod@3.25.76",
     "npm:debug@^4.3.4": "4.4.3",
+    "npm:hono@*": "4.11.1",
+    "npm:hono@4": "4.11.1",
     "npm:nunjucks@^3.2.4": "3.2.4",
     "npm:zod@^3.23.0": "3.25.76",
     "npm:zod@^3.25.0": "3.25.76"
@@ -338,6 +340,9 @@
       "dependencies": [
         "function-bind"
       ]
+    },
+    "hono@4.11.1": {
+      "integrity": "sha512-KsFcH0xxHes0J4zaQgWbYwmz3UPOOskdqZmItstUG93+Wk1ePBLkLGwbP9zlmh1BFUiL8Qp+Xfu9P7feJWpGNg=="
     },
     "http-errors@2.0.1": {
       "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
@@ -704,6 +709,8 @@
   "workspace": {
     "dependencies": [
       "npm:@openai/agents@0.3",
+      "npm:hono@*",
+      "npm:hono@4",
       "npm:nunjucks@^3.2.4",
       "npm:zod@^3.25.0"
     ]

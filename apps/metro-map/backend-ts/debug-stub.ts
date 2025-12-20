@@ -3,4 +3,5 @@ function debug(_namespace: string): (...args: unknown[]) => void {
   return (..._args: unknown[]) => {};
 }
 export default debug;
+export { debug };
 

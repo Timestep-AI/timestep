@@ -2,6 +2,15 @@
  * Customer Support Server - Deno HTTP Server
  */
 
+// Suppress unhandled rejections from debug package dependencies
+globalThis.addEventListener("unhandledrejection", (event) => {
+  if (event.reason?.message?.includes("require is not defined")) {
+    event.preventDefault();
+  }
+});
+
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { run } from "@openai/agents";
 import {
   ChatKitServer,
@@ -213,50 +222,49 @@ class CustomerSupportServer extends ChatKitServer<Record<string, unknown>> {
 // Create server instance
 const supportServer = new CustomerSupportServer(stateManager);
 
-// HTTP Handler
-async function handler(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-  const path = url.pathname;
+// Hono app
+const app = new Hono();
 
-  // CORS headers
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
+// CORS middleware
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+  })
+);
 
-  // Handle preflight
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+// Health check
+app.get("/support/health", (c) => {
+  return c.json({ status: "healthy" });
+});
 
-  // Health check
-  if (path === "/support/health" && req.method === "GET") {
-    return new Response(JSON.stringify({ status: "healthy" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+// Customer snapshot
+app.get("/support/customer", (c) => {
+  const threadId = c.req.query("thread_id") || DEFAULT_THREAD_ID;
+  const data = stateManager.toDict(threadId);
+  return c.json({ customer: data });
+});
 
-  // Customer snapshot
-  if (path === "/support/customer" && req.method === "GET") {
-    const threadId = url.searchParams.get("thread_id") || DEFAULT_THREAD_ID;
-    const data = stateManager.toDict(threadId);
-    return new Response(JSON.stringify({ customer: data }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // ChatKit endpoint
-  if (path === "/support/chatkit" && req.method === "POST") {
-    const payload = await req.text();
-    const result = await supportServer.process(payload, { request: req });
+// ChatKit endpoint
+app.post("/support/chatkit", async (c) => {
+  try {
+    const payload = await c.req.text();
+    const result = await supportServer.process(payload, { request: c.req.raw });
 
     if (result instanceof StreamingResult) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
             for await (const chunk of result) {
-              controller.enqueue(new TextEncoder().encode(chunk));
+              try {
+                controller.enqueue(new TextEncoder().encode(chunk));
+              } catch (enqueueError) {
+                // Stream may already be closed by client (e.g., during teardown)
+                // This is not a real error, so we can ignore it
+                return;
+              }
             }
             try {
               controller.close();
@@ -276,8 +284,8 @@ async function handler(req: Request): Promise<Response> {
       });
 
       return new Response(stream, {
+        status: 200,
         headers: {
-          ...corsHeaders,
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
@@ -288,24 +296,23 @@ async function handler(req: Request): Promise<Response> {
     // Non-streaming response
     const jsonResult = result as { json?: string } | Record<string, unknown>;
     if ("json" in jsonResult && typeof jsonResult.json === "string") {
-      return new Response(jsonResult.json, {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return c.text(jsonResult.json, 200, {
+        "Content-Type": "application/json",
       });
     }
-    return new Response(JSON.stringify(result), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return c.json(result);
+  } catch (error) {
+    console.error("Error processing ChatKit request:", error);
+    return c.json({ error: "Internal server error" }, 500);
   }
+});
 
-  // 404 for unknown routes
-  return new Response(JSON.stringify({ error: "Not found" }), {
-    status: 404,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
+// 404 handler
+app.notFound((c) => {
+  return c.json({ error: "Not found" }, 404);
+});
 
 // Start server
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Customer Support Server starting on port ${port}...`);
-Deno.serve({ port }, handler);
-
+Deno.serve({ port }, app.fetch);

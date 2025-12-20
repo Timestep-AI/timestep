@@ -203,7 +203,7 @@ const addStationTool = tool({
   parameters: z.object({
     station_name: z.string().describe("Name of the station"),
     line_id: z.string().describe("Line ID to add station to"),
-    append: z.boolean().optional().describe("Add to end (true) or beginning (false)"),
+    append: z.boolean().default(true).describe("Add to end (true) or beginning (false)"),
   }),
   execute: async (args, ctx) => {
     const agentCtx = getContext(ctx);
@@ -215,7 +215,7 @@ const addStationTool = tool({
       const [updatedMap, newStation] = agentCtx.metro.addStation(
         stationName,
         args.line_id,
-        args.append !== false
+        args.append ?? true
       );
       
       await agentCtx.stream({

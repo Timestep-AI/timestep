@@ -6,4 +6,5 @@ function debug(_namespace: string): (...args: unknown[]) => void {
 }
 
 export default debug;
+export { debug };
 

@@ -4,6 +4,8 @@
     "start": "deno run --allow-net --allow-env --allow-read main.ts"
   },
   "imports": {
+    "hono": "npm:hono@^4.0.0",
+    "hono/": "npm:/hono/",
     "chatkit-server": "../../../3rdparty/chatkit-js/packages/chatkit-server/src/index.ts",
     "@openai/agents": "npm:@openai/agents@^0.3.0",
     "zod": "npm:zod@^3.25.0",
