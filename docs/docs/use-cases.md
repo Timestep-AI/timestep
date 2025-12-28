@@ -1,585 +1,242 @@
 # Use Cases
 
-This document covers common patterns and use cases for Timestep, with practical examples in both Python and TypeScript, focusing on durable execution and cross-language state persistence.
+This document covers common patterns and use cases for Timestep MVP.
 
-## Durable Execution with Interruptions
+## Human-in-the-Loop with Guardrails
 
-One of Timestep's core features is durable execution with built-in state persistence. This enables resumable workflows and human-in-the-loop patterns.
+Request human approval during tool execution using guardrails.
 
-=== "Python"
+```python
+import asyncio
+from timestep import (
+    Agent,
+    FileSession,
+    InputGuardrail,
+    GuardrailInterrupt,
+    GuardrailResult,
+    run_agent,
+)
 
-    ```python
-    from timestep import run_agent, RunStateStore
-    from agents import Agent, Session
+# Define a tool
+async def send_email(args: dict) -> dict:
+    """Send an email."""
+    recipient = args.get("recipient", "")
+    subject = args.get("subject", "")
+    return {"result": f"Email sent to {recipient} with subject {subject}"}
 
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
-    )
-
-    # Run agent
-    result = await run_agent(agent, input_items, session, stream=False)
-
-    # Handle interruptions (e.g., tool calls requiring approval)
-    if result.interruptions:
-        # Save state for later resume
-        state = result.to_state()
-        await state_store.save(state)
-        
-        # Load state and approve interruptions
-        loaded_state = await state_store.load()
-        for interruption in loaded_state.get_interruptions():
-            loaded_state.approve(interruption)
-        
-        # Resume execution
-        result = await run_agent(agent, loaded_state, session, stream=False)
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
-
-    // Run agent
-    let result = await runAgent(agent, inputItems, session, false);
-    result = await (result);
-
-    // Handle interruptions (e.g., tool calls requiring approval)
-    if (result.interruptions?.length) {
-      // Save state for later resume
-      await stateStore.save(result.state);
-      
-      // Load state and approve interruptions
-      const loadedState = await stateStore.load();
-      for (const interruption of loadedState.getInterruptions()) {
-        loadedState.approve(interruption);
-      }
-      
-      // Resume execution
-      result = await runAgent(agent, loadedState, session, false);
-    }
-    ```
-
-## Cross-Language State Transfer
-
-Timestep's unique feature is the ability to start execution in one language and resume in another, enabling flexible deployment architectures.
-
-### Python → TypeScript
-
-Start execution in Python, interrupt for tool approval, and resume in TypeScript:
-
-=== "Python: Start and Save"
-
-    ```python
-    from timestep import run_agent, RunStateStore
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
-    )
-
-    # Run until interruption
-    result = await run_agent(agent, input_items, session, stream=False)
-
-    if result.interruptions:
-        # Save state - can be loaded in TypeScript!
-        state = result.to_state()
-        await state_store.save(state)
-        session_id = await session._get_session_id()
-        print(f"State saved. Resume in TypeScript with session_id: {session_id}")
-    ```
-
-=== "TypeScript: Resume"
-
-    ```typescript
-    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
-
-    // Load state saved from Python
-    const savedState = await stateStore.load();
-
-    // Approve interruptions
-    for (const interruption of savedState.getInterruptions()) {
-      savedState.approve(interruption);
-    }
-
-    // Resume execution
-    const result = await runAgent(agent, savedState, session, false);
-    ```
-
-### TypeScript → Python
-
-Start execution in TypeScript, interrupt for tool approval, and resume in Python:
-
-=== "TypeScript: Start and Save"
-
-    ```typescript
-    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
-
-    // Run until interruption
-    let result = await runAgent(agent, inputItems, session, false);
-
-    if (result.interruptions?.length) {
-      // Save state - can be loaded in Python!
-      await stateStore.save(result.state);
-      const sessionId = await session.getSessionId();
-      console.log(`State saved. Resume in Python with session_id: ${sessionId}`);
-    }
-    ```
-
-=== "Python: Resume"
-
-    ```python
-    from timestep import run_agent, RunStateStore
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
-    )
-
-    # Load state saved from TypeScript
-    saved_state = await state_store.load()
-
-    # Approve interruptions
-    for interruption in saved_state.get_interruptions():
-        saved_state.approve(interruption)
-
-    # Resume execution
-    result = await run_agent(agent, saved_state, session, False)
-    ```
-
-## Switching Between OpenAI and Ollama
-
-One of the most common use cases is switching between different model providers based on your needs (cost, performance, privacy, etc.).
-
-=== "Python"
-
-    ```python
-    from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-    from agents import Agent, Runner, RunConfig
-    import os
-
-    # Setup provider with both OpenAI and Ollama
-    model_provider_map = MultiModelProviderMap()
-    if os.environ.get("OLLAMA_API_KEY"):
-        model_provider_map.add_provider(
-            "ollama",
-            OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
+# Define guardrail that requires approval for external emails
+async def email_approval_guardrail(tool_name: str, args: dict) -> GuardrailResult:
+    """Require approval for external email domains."""
+    recipient = args.get("recipient", "")
+    if "@" in recipient and not recipient.endswith("@company.com"):
+        raise GuardrailInterrupt(
+            prompt=f"Approval required to send email to external address {recipient}. Approve? (y/n): ",
+            tool_name=tool_name,
+            args=args
         )
+    return GuardrailResult.proceed()
 
-    model_provider = MultiModelProvider(
-        provider_map=model_provider_map,
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+# Create agent with guardrail
+agent = Agent(
+    name="Email Assistant",
+    model="gpt-4o",
+    instructions="You are an email assistant. Use send_email to send emails.",
+    tools=[send_email],
+    guardrails=[InputGuardrail(email_approval_guardrail)],
+)
+
+async def main():
+    session = FileSession(
+        agent_name=agent.name,
+        conversation_id="email-conversation",
+        agent_instructions=agent.instructions,
     )
-
-    # Use OpenAI for complex tasks
-    openai_agent = Agent(model="gpt-4.1")
     
-    # Use Ollama for simpler tasks or when privacy is important
-    # Note: -cloud suffix uses Ollama Cloud (https://ollama.com/cloud)
-    ollama_agent = Agent(model="ollama/gpt-oss:20b-cloud")
+    messages = [{"role": "user", "content": "Send an email to alice@external.com with subject 'Hello'"}]
+    result = await run_agent(agent, messages, session, stream=False)
     
-    # Both use the same provider
-    run_config = RunConfig(model_provider=model_provider)
-    ```
+    print("Result:", result)
 
-=== "TypeScript"
+asyncio.run(main())
+```
 
-    ```typescript
-    import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
-    import { Agent, Runner } from '@openai/agents';
+## Agent Handoffs
 
-    // Setup provider with both OpenAI and Ollama
-    const modelProviderMap = new MultiModelProviderMap();
-    if (process.env('OLLAMA_API_KEY')) {
-      modelProviderMap.addProvider(
-        'ollama',
-        new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
-      );
+Delegate tasks to specialized agents using handoffs.
+
+```python
+import asyncio
+from timestep import Agent, FileSession, run_agent, default_result_processor
+
+# Weather agent
+async def get_weather(args: dict) -> dict:
+    city = args.get("city", "unknown")
+    return {"result": f"The weather in {city} is sunny and 72°F"}
+
+weather_agent = Agent(
+    name="Weather Assistant",
+    model="gpt-4o",
+    instructions="You are a weather assistant. Use get_weather for all weather queries.",
+    tools=[get_weather],
+)
+
+# Main assistant with handoff
+assistant = Agent(
+    name="Personal Assistant",
+    model="gpt-4o",
+    instructions="You are a helpful assistant. For weather queries, use transfer_to_weather_assistant.",
+    tools=[],
+    handoffs=[weather_agent],
+)
+
+async def main():
+    session = FileSession(
+        agent_name=assistant.name,
+        conversation_id="main-conversation",
+        agent_instructions=assistant.instructions,
+    )
+    
+    messages = [{"role": "user", "content": "What's the weather in San Francisco?"}]
+    result = await run_agent(assistant, messages, session, stream=False)
+    
+    print("Messages:", result["messages"])
+
+asyncio.run(main())
+```
+
+## Output Guardrails
+
+Modify or validate tool outputs before returning to the agent.
+
+```python
+import asyncio
+from timestep import (
+    Agent,
+    FileSession,
+    OutputGuardrail,
+    GuardrailResult,
+    run_agent,
+)
+
+# Tool that might return sensitive data
+async def get_user_info(args: dict) -> dict:
+    user_id = args.get("user_id", "")
+    # Simulated sensitive data
+    return {
+        "result": f"User {user_id}: email=user@example.com, password=secret123"
     }
 
-    const modelProvider = new MultiModelProvider({
-      provider_map: modelProviderMap,
-      openai_api_key: process.env('OPENAI_API_KEY') || '',
-    });
+# Output guardrail to sanitize sensitive data
+async def sanitize_output_guardrail(tool_name: str, args: dict, result: dict) -> GuardrailResult:
+    """Remove sensitive information from output."""
+    result_text = str(result.get("result", ""))
+    if "password" in result_text.lower():
+        # Remove password from output
+        sanitized = result_text.replace("password=secret123", "password=***")
+        return GuardrailResult.modify_result({"result": sanitized})
+    return GuardrailResult.proceed()
 
-    // Use OpenAI for complex tasks
-    const openaiAgent = new Agent({ model: 'gpt-4.1' });
-    
-    // Use Ollama for simpler tasks or when privacy is important
-    // Note: -cloud suffix uses Ollama Cloud (https://ollama.com/cloud)
-    const ollamaAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
-    
-    // Both use the same provider
-    const runner = new Runner({ modelProvider });
-    ```
+agent = Agent(
+    name="User Info Assistant",
+    model="gpt-4o",
+    instructions="You are a user information assistant.",
+    tools=[get_user_info],
+    guardrails=[OutputGuardrail(sanitize_output_guardrail)],
+)
 
-## Custom Provider Setup
-
-Create custom provider mappings for specialized use cases, such as multiple Ollama instances or custom endpoints.
-
-=== "Python"
-
-    ```python
-    from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-
-    # Create custom mapping with multiple Ollama instances
-    provider_map = MultiModelProviderMap()
-    
-    # Local Ollama for development
-    provider_map.add_provider(
-        "local",
-        OllamaModelProvider(base_url="http://localhost:11434")
+async def main():
+    session = FileSession(
+        agent_name=agent.name,
+        conversation_id="user-info-conversation",
+        agent_instructions=agent.instructions,
     )
     
-    # Remote Ollama for production
-    provider_map.add_provider(
-        "remote",
-        OllamaModelProvider(base_url="http://ollama-server:11434")
+    messages = [{"role": "user", "content": "Get info for user 123"}]
+    result = await run_agent(agent, messages, session, stream=False)
+    
+    print("Result:", result)
+
+asyncio.run(main())
+```
+
+## Session Persistence
+
+Use FileSession to maintain conversation context across runs.
+
+```python
+import asyncio
+from timestep import Agent, FileSession, run_agent, default_result_processor
+
+agent = Agent(
+    name="Assistant",
+    model="gpt-4o",
+    instructions="You are a helpful assistant.",
+    tools=[],
+)
+
+async def main():
+    # Create session with persistent storage
+    session = FileSession(
+        agent_name=agent.name,
+        conversation_id="my-conversation",
+        agent_instructions=agent.instructions,
     )
-    
-    # Ollama Cloud for specific use cases
-    provider_map.add_provider(
-        "cloud",
-        OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
-    )
-    
-    model_provider = MultiModelProvider(provider_map=provider_map)
-    
-    # Use different instances based on prefix
-    dev_agent = Agent(model="local/llama3")
-    prod_agent = Agent(model="remote/llama3")
-    cloud_agent = Agent(model="cloud/llama3")
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
-
-    // Create custom mapping with multiple Ollama instances
-    const providerMap = new MultiModelProviderMap();
-    
-    // Local Ollama for development
-    providerMap.addProvider(
-      'local',
-      new OllamaModelProvider({ baseURL: 'http://localhost:11434' })
-    );
-    
-    // Remote Ollama for production
-    providerMap.addProvider(
-      'remote',
-      new OllamaModelProvider({ baseURL: 'http://ollama-server:11434' })
-    );
-    
-    // Ollama Cloud for specific use cases
-    providerMap.addProvider(
-      'cloud',
-      new OllamaModelProvider({ apiKey: process.env('OLLAMA_API_KEY') })
-    );
-    
-    const modelProvider = new MultiModelProvider({ provider_map: providerMap });
-    
-    // Use different instances based on prefix
-    const devAgent = new Agent({ model: 'local/llama3' });
-    const prodAgent = new Agent({ model: 'remote/llama3' });
-    const cloudAgent = new Agent({ model: 'cloud/llama3' });
-    ```
-
-## Streaming vs Non-Streaming
-
-Timestep supports both streaming and non-streaming responses. Choose based on your UX requirements.
-
-=== "Python - Streaming"
-
-    ```python
-    from timestep import run_agent
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-
-    from timestep import default_result_processor
-    
-    # Streaming response
-    result = await run_agent(agent, input_items, session, stream=True)
-    
-    # Process stream events
-    async for event in result.stream_events():
-        # Handle streaming events
-        print(event)
-    
-    # Ensure all events are consumed
-    result = await default_result_processor(result)
-    ```
-
-=== "Python - Non-Streaming"
-
-    ```python
-    from timestep import run_agent
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-
-    # Non-streaming response
-    result = await run_agent(agent, input_items, session, stream=False)
-    
-    # Access final result
-    print(result.final_output)
-    ```
-
-=== "TypeScript - Streaming"
-
-    ```typescript
-    import { runAgent,  } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-
-    // Streaming response
-    const result = await runAgent(agent, inputItems, session, true);
-    
-    // Process stream
-    for await (const event of result.toTextStream()) {
-      // Handle streaming events
-      console.log(event);
-    }
-    
-    // Ensure all events are consumed
-    await defaultResultProcessor(result);
-    ```
-
-=== "TypeScript - Non-Streaming"
-
-    ```typescript
-    import { runAgent } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-
-    // Non-streaming response
-    let result = await runAgent(agent, inputItems, session, false);
-    
-    // Access final result
-    console.log(result.finalOutput);
-    ```
-
-## Error Handling Patterns
-
-Handle errors gracefully when providers are unavailable or models fail.
-
-=== "Python"
-
-    ```python
-    from timestep import run_agent
-    from agents import Agent, Session
-    from agents.exceptions import AgentsException, ModelBehaviorError
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-
-    try:
-        result = await run_agent(agent, input_items, session, stream=False)
-    except ModelBehaviorError as e:
-        # Handle model-specific errors
-        print(f"Model error: {e}")
-        # Fallback to different model (Ollama Cloud, note: -cloud suffix)
-        fallback_agent = Agent(model="ollama/gpt-oss:20b-cloud")
-        result = await run_agent(fallback_agent, input_items, session, stream=False)
-    except AgentsException as e:
-        # Handle general agent errors
-        print(f"Agent error: {e}")
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { runAgent } from '@timestep-ai/timestep';
-    import { Agent, Session, ModelBehaviorError, AgentsError } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-
-    try {
-      const result = await runAgent(agent, inputItems, session, false);
-    } catch (e) {
-      if (e instanceof ModelBehaviorError) {
-        // Handle model-specific errors
-        console.error('Model error:', e.message);
-        // Fallback to different model (Ollama Cloud, note: -cloud suffix)
-        const fallbackAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
-        const result = await runAgent(fallbackAgent, inputItems, session, false);
-      } else if (e instanceof AgentsError) {
-        // Handle general agent errors
-        console.error('Agent error:', e.message);
-      }
-    }
-    ```
-
-## Session Management
-
-Use sessions to maintain conversation context across multiple agent runs.
-
-=== "Python"
-
-    ```python
-    from timestep import run_agent
-    from agents import Agent, Session
-
-    # Create agent with model provider
-    agent = Agent(model="gpt-4.1")
-    
-    # Create session for conversation context
-    session = Session()
     
     # First message
-    result1 = await run_agent(
-        agent,
-        [{"role": "user", "content": "Hello, my name is Alice"}],
-        session,
-        stream=False
-    )
+    messages1 = [{"role": "user", "content": "Hello, my name is Alice"}]
+    result1 = await run_agent(agent, messages1, session, stream=False)
+    print("First response:", result1["messages"])
+    
     # Second message - session maintains context
-    result2 = await run_agent(
-        agent,
-        [{"role": "user", "content": "What's my name?"}],
-        session,
-        stream=False
+    messages2 = [{"role": "user", "content": "What's my name?"}]
+    result2 = await run_agent(agent, messages2, session, stream=False)
+    print("Second response:", result2["messages"])
+    # Agent remembers: "Alice"
+
+asyncio.run(main())
+```
+
+## Streaming Responses
+
+Process streaming responses for real-time updates.
+
+```python
+import asyncio
+from timestep import Agent, FileSession, run_agent
+
+agent = Agent(
+    name="Assistant",
+    model="gpt-4o",
+    instructions="You are a helpful assistant.",
+    tools=[],
+)
+
+async def main():
+    session = FileSession(
+        agent_name=agent.name,
+        conversation_id="streaming-conversation",
+        agent_instructions=agent.instructions,
     )
     
-    # Agent remembers: "Alice"
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { runAgent,  } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    // Create agent with model provider
-    const agent = new Agent({ model: 'gpt-4.1' });
+    messages = [{"role": "user", "content": "Tell me a story"}]
+    # For streaming, pass result_processor=None to get raw events
+    events = run_agent(agent, messages, session, stream=True, result_processor=None)
     
-    // Create session for conversation context
-    const session = new Session();
-    
-    // First message
-    const result1 = await runAgent(
-      agent,
-      [{ role: 'user', content: 'Hello, my name is Alice' }],
-      session,
-      false
-    );
-    await (result1);
-    
-    // Second message - session maintains context
-    const result2 = await runAgent(
-      agent,
-      [{ role: 'user', content: "What's my name?" }],
-      session,
-      false
-    );
-    
-    // Agent remembers: "Alice"
-    ```
+    # Process streaming events
+    async for event in events:
+        if event.get("type") == "content_delta":
+            print(event.get("content"), end="", flush=True)
+        elif event.get("type") == "message":
+            print("\n\nFinal message:", event.get("content"))
 
-## Using Tools
-
-Timestep includes built-in tools like web search. Here's how to use them:
-
-=== "Python"
-
-    ```python
-    from timestep import web_search, run_agent
-    from agents import Agent, Session
-
-    # Create agent with tools
-    tools = [web_search]
-    agent = Agent(model="gpt-4.1", tools=tools)
-    session = Session()
-
-    result = await run_agent(agent, input_items, session, stream=False)
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { webSearch, runAgent } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    // Create agent with tools
-    const tools = [webSearch];
-    const agent = new Agent({ model: 'gpt-4.1', tools });
-    const session = new Session();
-
-    const result = await runAgent(agent, inputItems, session, false);
-    ```
-
-## Cross-Language Compatibility
-
-Timestep maintains feature parity between Python and TypeScript, allowing teams to share patterns and code structure.
-
-### Shared Patterns
-
-Both implementations support:
-- Same model naming conventions
-- Same provider mapping approach
-- Same error handling patterns
-- Same session management
-- **Same state format for cross-language persistence**
-
-### Language-Specific Notes
-
-**Python:**
-- Uses `run_agent()` for execution
-- Uses `RunStateStore` for state persistence
-- Uses `default_result_processor()` for result handling
-
-**TypeScript:**
-- Uses `runAgent()` for execution
-- Uses `RunStateStore` for state persistence
-- Uses `defaultResultProcessor()` for result handling
+asyncio.run(main())
+```
 
 ## Best Practices
 
 1. **Environment Variables**: Always use environment variables for API keys
-2. **Error Handling**: Implement fallback strategies for production
-3. **Session Management**: Use sessions for multi-turn conversations
-4. **State Persistence**: Save state at interruption points for resumability
-5. **Cross-Language**: Leverage cross-language state transfer for flexible deployments
-6. **Provider Selection**: Choose providers based on task requirements (cost, latency, privacy)
-7. **Streaming**: Use streaming for better UX in interactive applications
-8. **Testing**: Test with both OpenAI and Ollama to ensure compatibility
+2. **Error Handling**: Implement proper error handling for tool execution
+3. **Session Management**: Use FileSession for multi-turn conversations
+4. **Guardrails**: Use guardrails for safety and human-in-the-loop patterns
+5. **Handoffs**: Use handoffs to delegate to specialized agents
+6. **Streaming**: Use streaming for better UX in interactive applications

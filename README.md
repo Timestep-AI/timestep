@@ -1,265 +1,143 @@
-# Timestep AI Agents SDK
+# Timestep AI
 
-Durable OpenAI Agents with one API across Python and TypeScript. Pause and resume runs (even across languages), keep state in one place, and route models with simple prefixes.
+MVP Agent System with Human-in-the-Loop, Guardrails, Handoffs, and Sessions.
 
 ## What Timestep gives you
-- **Durable runs**: Save and resume `RunState` without changing your agent code.
-- **Cross-language parity**: Same API surface in Python and TypeScript; state stays compatible across languages.
-- **Single storage story**: Use `PG_CONNECTION_URI` for PostgreSQL.
-- **Model routing**: Prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
-- **Minimal concepts**: `run_agent` / `runAgent`, `RunStateStore`.
-- **Organized architecture**: Clean separation of concerns with `core/`, `config/`, `stores/`, `tools/`, `model_providers/`, and `models/` modules.
+
+- **Agents with Human-in-the-Loop**: Request human approval during tool execution via guardrails
+- **Guardrails**: Pre and post-execution validation and modification of tool inputs/outputs
+- **Handoffs**: Agent-to-agent delegation via handoff tools
+- **Sessions**: File-based conversation persistence
+- **Custom Execution Loop**: Direct OpenAI API integration without SDK dependencies
 
 ## Prerequisites
+
 - `OPENAI_API_KEY`
-- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
+- Python 3.11+
 
 ## Quick start
 
-### Python (async)
+### Python
 
 ```python
-from timestep import run_agent, RunStateStore
-from agents import (
+import asyncio
+from timestep import (
     Agent,
-    OpenAIConversationsSession,
-    ModelSettings,
-    function_tool,
-    input_guardrail,
-    output_guardrail,
-    GuardrailFunctionOutput,
-    RunContextWrapper,
-    TResponseInputItem,
+    FileSession,
+    InputGuardrail,
+    OutputGuardrail,
+    GuardrailInterrupt,
+    run_agent,
+    default_result_processor,
 )
 
-# Define a tool with approval requirement
-async def needs_approval_for_weather(ctx, args, call_id):
-    """Require approval for sensitive cities."""
-    return args.get("city", "").lower() in ["berkeley", "san francisco"]
-
-@function_tool
-def get_weather(city: str) -> str:
+# Define a simple tool
+async def get_weather(args: dict) -> dict:
     """Get weather information for a city."""
-    return f"The weather in {city} is sunny and 72°F"
+    city = args.get("city", "unknown")
+    return {"result": f"The weather in {city} is sunny and 72°F"}
 
-get_weather.needs_approval = needs_approval_for_weather
+# Define input guardrail that requires approval for certain cities
+async def city_approval_guardrail(tool_name: str, args: dict) -> "GuardrailResult":
+    """Require approval for sensitive cities."""
+    from timestep import GuardrailResult, GuardrailInterrupt
+    
+    city = args.get("city", "").lower()
+    if city in ["berkeley", "san francisco"]:
+        raise GuardrailInterrupt(
+            prompt=f"Approval required to get weather for {city}. Approve? (y/n): ",
+            tool_name=tool_name,
+            args=args
+        )
+    return GuardrailResult.proceed()
 
-# Define guardrails
-@input_guardrail(run_in_parallel=True)
-async def content_filter(
-    ctx: RunContextWrapper[None],
-    agent: Agent,
-    input: str | list[TResponseInputItem]
-) -> GuardrailFunctionOutput:
-    """Block inappropriate content."""
-    input_text = input if isinstance(input, str) else str(input)
-    blocked = any(word in input_text.lower() for word in ["spam", "scam"])
-    return GuardrailFunctionOutput(
-        output_info={"blocked": blocked},
-        tripwire_triggered=blocked,
-    )
-
-@output_guardrail
-async def output_safety(
-    ctx: RunContextWrapper,
-    agent: Agent,
-    output: str
-) -> GuardrailFunctionOutput:
+# Define output guardrail
+async def output_safety_guardrail(tool_name: str, args: dict, result: dict) -> "GuardrailResult":
     """Ensure safe output."""
-    unsafe = "password" in output.lower() or "api key" in output.lower()
-    return GuardrailFunctionOutput(
-        output_info={"unsafe": unsafe},
-        tripwire_triggered=unsafe,
-    )
+    from timestep import GuardrailResult
+    
+    result_text = str(result.get("result", ""))
+    if "password" in result_text.lower() or "api key" in result_text.lower():
+        return GuardrailResult.block("Output contains sensitive information")
+    return GuardrailResult.proceed()
 
 # Create specialized weather agent
 weather_agent = Agent(
-    instructions="You are a weather assistant. Use get_weather for all weather queries.",
-    model="gpt-4.1",
-    model_settings=ModelSettings(temperature=0),
     name="Weather Assistant",
+    model="gpt-4o",
+    instructions="You are a weather assistant. Use get_weather for all weather queries.",
     tools=[get_weather],
 )
 
 # Create main assistant with handoffs and guardrails
 assistant = Agent(
-    handoffs=[weather_agent],
-    instructions="You are a helpful personal assistant.",
-    model="gpt-4.1",
-    model_settings=ModelSettings(temperature=0),
     name="Personal Assistant",
-    input_guardrails=[content_filter],
-    output_guardrails=[output_safety],
+    model="gpt-4o",
+    instructions="You are a helpful personal assistant. For weather queries, use the transfer_to_weather_assistant tool.",
+    tools=[],
+    handoffs=[weather_agent],
+    guardrails=[
+        InputGuardrail(city_approval_guardrail),
+        OutputGuardrail(output_safety_guardrail),
+    ],
 )
 
-# Initialize session and state store
-session = OpenAIConversationsSession()
-session_id = await session._get_session_id()
-state_store = RunStateStore(agent=assistant, session_id=session_id)
-
-# Run multiple conversation turns
-conversations = [
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's 2+2?"}]}],
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Oakland?"}]}],
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Berkeley?"}]}],
-]
-
-for input_items in conversations:
-    result = await run_agent(assistant, input_items, session, stream=False)
+async def main():
+    # Create session
+    session = FileSession(
+        agent_name=assistant.name,
+        conversation_id="test-conversation",
+        agent_instructions=assistant.instructions,
+    )
     
-    # Handle interruptions (e.g., tool approval needed)
-    if result.interruptions:
-        state = result.to_state()
-        await state_store.save(state)
-        
-        # Load, approve, and resume
-        loaded_state = await state_store.load()
-        for interruption in loaded_state.get_interruptions():
-            loaded_state.approve(interruption)
-        
-        result = await run_agent(assistant, loaded_state, session, stream=False)
-```
-
-### TypeScript
-
-```typescript
-import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-import {
-  Agent,
-  OpenAIConversationsSession,
-  tool,
-  InputGuardrail,
-  OutputGuardrail,
-} from '@openai/agents';
-import type { AgentInputItem } from '@openai/agents-core';
-
-// Define a tool with approval requirement
-const getWeather = tool({
-  name: 'get_weather',
-  description: 'Get weather information for a city.',
-  parameters: {
-    type: 'object',
-    properties: {
-      city: { type: 'string' }
-    },
-    required: ['city'],
-    additionalProperties: false
-  } as any,
-  needsApproval: async (_ctx: any, args: any) => {
-    // Require approval for sensitive cities
-    return ['berkeley', 'san francisco'].includes(args.city?.toLowerCase() || '');
-  },
-  execute: async (args: any): Promise<string> => {
-    return `The weather in ${args.city} is sunny and 72°F`;
-  }
-});
-
-// Define guardrails
-const contentFilter: InputGuardrail = {
-  name: 'Content Filter',
-  runInParallel: true,
-  execute: async ({ input }) => {
-    const inputText = typeof input === 'string' ? input : JSON.stringify(input);
-    const blocked = ['spam', 'scam'].some(word => 
-      inputText.toLowerCase().includes(word)
-    );
-    return {
-      outputInfo: { blocked },
-      tripwireTriggered: blocked,
-    };
-  },
-};
-
-const outputSafety: OutputGuardrail<any> = {
-  name: 'Output Safety',
-  execute: async ({ agentOutput }) => {
-    const outputText = typeof agentOutput === 'string' 
-      ? agentOutput 
-      : JSON.stringify(agentOutput);
-    const unsafe = outputText.toLowerCase().includes('password') || 
-                   outputText.toLowerCase().includes('api key');
-    return {
-      outputInfo: { unsafe },
-      tripwireTriggered: unsafe,
-    };
-  },
-};
-
-// Create specialized weather agent
-const weatherAgent = new Agent({
-  instructions: 'You are a weather assistant. Use get_weather for all weather queries.',
-  model: 'gpt-4.1',
-  modelSettings: { temperature: 0 },
-  name: 'Weather Assistant',
-  tools: [getWeather],
-});
-
-// Create main assistant with handoffs and guardrails
-const assistant = new Agent({
-  handoffs: [weatherAgent],
-  instructions: 'You are a helpful personal assistant.',
-  model: 'gpt-4.1',
-  modelSettings: { temperature: 0 },
-  name: 'Personal Assistant',
-  inputGuardrails: [contentFilter],
-  outputGuardrails: [outputSafety],
-});
-
-// Initialize session and state store
-const session = new OpenAIConversationsSession();
-const sessionId = await session.getSessionId();
-const stateStore = new RunStateStore({ agent: assistant, sessionId });
-
-// Run multiple conversation turns
-const conversations: AgentInputItem[][] = [
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's 2+2?" }] }],
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Oakland?" }] }],
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Berkeley?" }] }],
-];
-
-for (const inputItems of conversations) {
-  let result = await runAgent(assistant, inputItems, session, false);
-  
-  // Handle interruptions (e.g., tool approval needed)
-  if (result.interruptions?.length) {
-    await stateStore.save(result.state);
+    # Run agent (result_processor defaults to default_result_processor)
+    messages = [{"role": "user", "content": "What's the weather in Berkeley?"}]
     
-    // Load, approve, and resume
-    const loadedState = await stateStore.load();
-    for (const interruption of loadedState.getInterruptions()) {
-      loadedState.approve(interruption);
-    }
+    result = await run_agent(assistant, messages, session, stream=False)
     
-    result = await runAgent(assistant, loadedState, session, false);
-  }
-}
+    print("Messages:", result["messages"])
+    print("Tool calls:", result["tool_calls"])
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-## Cross-language resume
+## Core Concepts
 
-1) Start in Python, save state on interruption:
-```python
-state = result.to_state()
-await state_store.save(state)
-```
-2) Load and continue in TypeScript:
-```typescript
-const saved = await stateStore.load();
-for (const interruption of saved.getInterruptions()) saved.approve(interruption);
-await runAgent(agent, saved, session, false);
-```
+### Agents
 
+An `Agent` has:
+- `name`: Agent identifier
+- `model`: OpenAI model name (e.g., "gpt-4o")
+- `instructions`: System instructions for the agent
+- `tools`: List of callable tool functions
+- `handoffs`: List of agents this agent can handoff to
+- `guardrails`: List of InputGuardrail/OutputGuardrail instances
 
-## Routing models
-- `gpt-4.1` or `openai/gpt-4.1` → OpenAI
-- `ollama/gpt-oss:20b` → Ollama (local)
-- `ollama/gpt-oss:20b-cloud` → [Ollama Cloud](https://ollama.com/cloud) (note: `-cloud` suffix determines cloud usage)
-- Add your own prefixes via `MultiModelProviderMap`.
+### Guardrails
 
-## Docs
-- Full docs: https://timestep-ai.github.io/timestep/
-- Python notes: python/README.md
-- TypeScript notes: typescript/README.md
+Guardrails validate and modify tool execution:
+
+- **InputGuardrail**: Runs before tool execution
+  - Can block execution
+  - Can modify input arguments
+  - Can raise `GuardrailInterrupt` for human approval
+
+- **OutputGuardrail**: Runs after tool execution
+  - Can modify output results
+  - Can block results
+
+### Handoffs
+
+Handoffs allow agents to delegate to other agents. When an agent has `handoffs=[other_agent]`, a tool `transfer_to_{other_agent_name}` is automatically created. The target agent manages its own session.
+
+### Sessions
+
+`FileSession` stores conversations as JSONL files:
+- One file per agent+conversation
+- Persists across runs
+- Simple file-based storage (no database required)
 
 ## License
+
 MIT License - see `LICENSE`.

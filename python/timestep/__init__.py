@@ -1,37 +1,33 @@
-"""Timestep AI - Multi-model provider implementations."""
+"""Timestep AI - MVP Agent System with Human-in-the-Loop, Guardrails, Handoffs, and Sessions."""
 
-from .models.ollama_model import OllamaModel
-from .model_providers.ollama_model_provider import OllamaModelProvider
-from .model_providers.multi_model_provider import MultiModelProvider, MultiModelProviderMap
-from .tools.web_search_tool import web_search
+from .services.agent import Agent
+from .services.executor import TimestepAgentExecutor
+from .services.guardrails import (
+    GuardrailError,
+    GuardrailInterrupt,
+    InputGuardrail,
+    OutputGuardrail,
+    request_approval,
+    with_guardrails,
+)
+from .stores.session import FileSession, Session
+from .utils.types import ChatMessage, Tool
 
 __all__ = [
-    "OllamaModel",
-    "OllamaModelProvider",
-    "MultiModelProvider",
-    "MultiModelProviderMap",
-    "run_agent",
-    "default_result_processor",
-    "RunStateStore",
-    "web_search",
+    # Core execution
     "Agent",
-    "Runner",
-    "RunConfig",
-    "RunState",
-    "TResponseInputItem",
-    "AgentsException",
-    "MaxTurnsExceeded",
-    "ModelBehaviorError",
-    "UserError",
-    "SessionABC",
+    "TimestepAgentExecutor",
+    # Types
+    "ChatMessage",
+    "Tool",
+    # Sessions
+    "Session",
+    "FileSession",
+    # Guardrails
+    "InputGuardrail",
+    "OutputGuardrail",
+    "GuardrailError",
+    "GuardrailInterrupt",
+    "request_approval",
+    "with_guardrails",
 ]
-
-from typing import Any, Optional, Callable, Awaitable
-from ._vendored_imports import (
-    Agent, Runner, RunConfig, RunState, TResponseInputItem,
-    AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
-    SessionABC
-)
-
-from .stores.run_state_store.store import RunStateStore
-from .core.agent import run_agent, default_result_processor

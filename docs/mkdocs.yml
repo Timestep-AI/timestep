@@ -1,5 +1,5 @@
 site_name: Timestep Documentation
-site_description: Multi-model provider implementations for OpenAI Agents
+site_description: MVP Agent System with Human-in-the-Loop, Guardrails, Handoffs, and Sessions
 site_url: https://timestep-ai.github.io/timestep/
 repo_url: https://github.com/Timestep-AI/timestep
 repo_name: Timestep-AI/timestep
@@ -60,19 +60,5 @@ nav:
   - Getting Started: getting-started.md
   - Architecture: architecture.md
   - Use Cases: use-cases.md
-  - DBOS Workflows: dbos-workflows.md
-  - Theory:
-    - category-theory.md
-    - ologs.md
-    - string-diagrams.md
-  - Generated:
-    - ontology.md
-    - agent-diagrams/
   - API Reference:
-    - api-reference/multi-model-provider.md
-    - api-reference/ollama-model-provider.md
-    - api-reference/multi-model-provider-map.md
-    - api-reference/tools.md
     - api-reference/utilities.md
-    - api-reference/ollama-model.md
-

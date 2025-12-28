@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timestep Agent Card Viewer</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Timestep Agent Card Viewer</h1>
+            <div class="controls">
+                <input 
+                    type="text" 
+                    id="baseUrl" 
+                    placeholder="http://localhost:9999" 
+                    value="http://localhost:9999"
+                >
+                <button id="fetchBtn">Fetch Agent Card</button>
+            </div>
+        </header>
+        
+        <main>
+            <div id="loading" class="hidden">Loading...</div>
+            <div id="error" class="hidden"></div>
+            <div id="cardContainer" class="hidden">
+                <h2>Agent Card</h2>
+                <pre id="cardJson"></pre>
+            </div>
+        </main>
+    </div>
+    
+    <script src="index.js"></script>
+</body>
+</html>
+

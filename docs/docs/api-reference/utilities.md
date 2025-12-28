@@ -1,789 +1,366 @@
-# Utilities
+# API Reference
 
-Timestep provides several utility functions and classes to help with agent execution, state management, and result consumption.
+Timestep MVP provides core functions for agent execution.
 
-## run_agent / runAgent
+## run_agent
 
-A convenience function for running agents with session management and error handling.
+Run an agent with custom execution loop.
 
 ### Function Signature
 
-=== "Python"
-
-    ```python
-    async def run_agent(
-        agent: Agent,
-        run_input: list[TResponseInputItem] | RunState,
-        session: SessionABC,
-        stream: bool,
-        result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor,
-        model_provider: Optional[Any] = None
-    ) -> Any
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    export async function runAgent(
-      agent: Agent,
-      runInput: AgentInputItem[] | RunState<any, any>,
-      session: Session,
-      stream: boolean,
-      resultProcessor?: (result: any) => Promise<any>,
-      modelProvider?: any
-    ): Promise<any>
-    ```
+```python
+async def run_agent(
+    agent: Agent,
+    messages: List[ChatMessage],
+    session: Session,
+    stream: bool = False
+) -> AsyncIterator[Dict[str, Any]]
+```
 
 ### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent` | `Agent` | The agent to run. |
-| `run_input` / `runInput` | `list[TResponseInputItem] \| RunState` / `AgentInputItem[] \| RunState` | The input for the agent run. Can be a list of input items or a RunState. |
-| `session` | `SessionABC` / `Session` | The session to use for maintaining conversation context. |
-| `stream` | `bool` / `boolean` | Whether to use streaming mode. |
-| `result_processor` / `resultProcessor` | `Optional[Callable[[Any], Awaitable[Any]]]` / `(result: any) => Promise<any> \| undefined` | Optional function to process the result. Defaults to `default_result_processor`/`defaultResultProcessor` which consumes all streaming events and waits for completion. Pass `None`/`undefined` to skip processing. |
-| `model_provider` / `modelProvider` | `Optional[Any]` / `any \| undefined` | Optional ModelProvider to use for resolving model names. If not provided, defaults to `MultiModelProvider` which supports both OpenAI and Ollama models. |
+| `agent` | `Agent` | The agent to run |
+| `messages` | `List[ChatMessage]` | Initial messages for the conversation |
+| `session` | `Session` | Session for conversation persistence |
+| `stream` | `bool` | Whether to stream responses (default: False) |
 
 ### Returns
 
-| Type | Description |
-|------|-------------|
-| `RunResult` / `RunResultStreaming` | The result of the agent run. |
-
-### Features
-
-- **Session Management**: Automatically handles session input callbacks
-- **Error Handling**: Catches and logs common agent errors (MaxTurnsExceeded, ModelBehaviorError, UserError, AgentsException)
-- **Streaming Support**: Supports both streaming and non-streaming modes
-- **Configuration**: Uses default RunConfig settings (nest_handoff_history=False)
-- **Result Processing**: Automatically processes results by default (consumes streaming events, waits for completion). Can be customized via `result_processor`/`resultProcessor` parameter.
-- **Model Provider Support**: Supports custom model providers via `model_provider`/`modelProvider` parameter. Defaults to `MultiModelProvider` which supports both OpenAI and Ollama models.
+Returns an async iterator of execution events:
+- `{"type": "content_delta", "content": str}` - Streaming content chunks
+- `{"type": "tool_call", "tool": str, "args": dict}` - Tool call event
+- `{"type": "tool_result", "tool": str, "result": dict}` - Tool result event
+- `{"type": "tool_error", "tool": str, "error": str}` - Tool error event
+- `{"type": "message", "content": str}` - Final message
+- `{"type": "error", "error": str}` - Execution error
 
 ### Example
 
-=== "Python"
+```python
+from timestep import Agent, FileSession, run_agent
 
-    ```python
-    from timestep import run_agent
-    from agents import Agent, Session
+agent = Agent(
+    name="Assistant",
+    model="gpt-4o",
+    instructions="You are a helpful assistant.",
+    tools=[],
+)
 
-    agent = Agent(model="gpt-4.1")
-    session = Session()
+session = FileSession(
+    agent_name=agent.name,
+    conversation_id="my-conversation",
+    agent_instructions=agent.instructions,
+)
 
-    # Non-streaming
-    result = await run_agent(
-        agent,
-        [{"role": "user", "content": "Hello"}],
-        session,
-        stream=False
-    )
+# Get raw events by passing result_processor=None
+messages = [{"role": "user", "content": "Hello!"}]
+events = run_agent(agent, messages, session, stream=False, result_processor=None)
 
-    # Streaming
-    result = await run_agent(
-        agent,
-        [{"role": "user", "content": "Hello"}],
-        session,
-        stream=True
-    )
-    
-    # Result is automatically processed (streaming events consumed, completion awaited)
-    print(result.output)
-    ```
+async for event in events:
+    print(event)
+```
 
-=== "TypeScript"
+## default_result_processor
 
-    ```typescript
-    import { runAgent } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-
-    // Non-streaming
-    const result = await runAgent(
-      agent,
-      [{ role: 'user', content: 'Hello' }],
-      session,
-      false
-    );
-
-    // Streaming
-    const result = await runAgent(
-      agent,
-      [{ role: 'user', content: 'Hello' }],
-      session,
-      true
-    );
-    
-    // Result is automatically processed (streaming events consumed, completion awaited)
-    console.log(result.output);
-    ```
-
-## default_result_processor / defaultResultProcessor
-
-The default result processor function that consumes all events from a result (streaming or non-streaming), ensuring all background operations complete. This is used automatically by `run_agent`/`runAgent` unless a custom processor is provided.
+Default processor that collects all events and returns final result.
 
 ### Function Signature
 
-=== "Python"
-
-    ```python
-    async def default_result_processor(result: Any) -> Any
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    export async function defaultResultProcessor(result: any): Promise<any>
-    ```
+```python
+async def default_result_processor(
+    events: AsyncIterator[Dict[str, Any]]
+) -> Dict[str, Any]
+```
 
 ### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `result` | `RunResult \| RunResultStreaming` | The result from `run_agent` or `Runner.run()`. |
+| `events` | `AsyncIterator[Dict[str, Any]]` | Stream of execution events |
 
 ### Returns
 
-| Type | Description |
-|------|-------------|
-| Same as input | The same result object after consuming all stream events. |
+Returns a dictionary with:
+- `messages`: List of message contents
+- `tool_calls`: List of tool calls made
+- `errors`: List of errors encountered
 
-### Purpose
+### Example
 
-This function ensures that:
+```python
+from timestep import Agent, FileSession, run_agent
 
-- All streaming events are consumed
-- All background operations (like session updates) complete
-- The result is ready for final access
+agent = Agent(name="Assistant", model="gpt-4o", instructions="Helpful assistant", tools=[])
+session = FileSession(agent_name=agent.name, conversation_id="test", agent_instructions=agent.instructions)
 
-This is particularly important for streaming results, where background operations may continue after the stream completes.
+messages = [{"role": "user", "content": "Hello!"}]
+result = await run_agent(agent, messages, session, stream=False)
 
-### Custom Result Processors
+print(result["messages"])
+print(result["tool_calls"])
+```
 
-You can provide a custom result processor to `run_agent`/`runAgent` to handle results differently:
+## Agent
 
-=== "Python"
-
-    ```python
-    from timestep import run_agent, default_result_processor
-    from agents import Agent, Session
-
-    async def custom_processor(result):
-        # Process events incrementally
-        if hasattr(result, 'stream_events'):
-            async for event in result.stream_events():
-                # Handle each event
-                print(f"Event: {event}")
-        return result
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-
-    # Use custom processor
-    result = await run_agent(
-        agent,
-        [{"role": "user", "content": "Hello"}],
-        session,
-        stream=True,
-        result_processor=custom_processor
-    )
-
-    # Or skip processing entirely
-    result = await run_agent(
-        agent,
-        [{"role": "user", "content": "Hello"}],
-        session,
-        stream=True,
-        result_processor=None
-    )
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { runAgent, defaultResultProcessor } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    async function customProcessor(result: any) {
-      // Process events incrementally
-      if ('toTextStream' in result) {
-        const stream = result.toTextStream({ compatibleWithNodeStreams: true });
-        for await (const chunk of stream) {
-          // Handle each chunk
-          console.log(`Chunk: ${chunk}`);
-        }
-        await result.completed;
-      }
-      return result;
-    }
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-
-    // Use custom processor
-    const result = await runAgent(
-      agent,
-      [{ role: 'user', content: 'Hello' }],
-      session,
-      true,
-      customProcessor
-    );
-
-    // Or skip processing entirely
-    const result2 = await runAgent(
-      agent,
-      [{ role: 'user', content: 'Hello' }],
-      session,
-      true,
-      undefined
-    );
-    ```
-
-### Custom Model Provider
-
-You can provide a custom model provider to `run_agent`/`runAgent` to use different model backends:
-
-=== "Python"
-
-    ```python
-    from timestep import run_agent, MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
-    from agents import Agent, Session
-    import os
-
-    # Create custom model provider
-    provider_map = MultiModelProviderMap()
-    provider_map.add_provider(
-        "ollama",
-        OllamaModelProvider(api_key=os.environ.get("OLLAMA_API_KEY"))
-    )
-    model_provider = MultiModelProvider(
-        provider_map=provider_map,
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-    )
-
-    agent = Agent(model="gpt-4.1")  # Uses OpenAI by default
-    session = Session()
-
-    # Use custom model provider
-    result = await run_agent(
-        agent,
-        [{"role": "user", "content": "Hello"}],
-        session,
-        stream=False,
-        model_provider=model_provider
-    )
-
-    # Or use Ollama model with the same provider
-    ollama_agent = Agent(model="ollama/gpt-oss:20b-cloud")
-    result = await run_agent(
-        ollama_agent,
-        [{"role": "user", "content": "Hello"}],
-        session,
-        stream=False,
-        model_provider=model_provider
-    )
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { runAgent, MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    // Create custom model provider
-    const providerMap = new MultiModelProviderMap();
-    providerMap.addProvider(
-      'ollama',
-      new OllamaModelProvider({ apiKey: process.env.OLLAMA_API_KEY })
-    );
-    const modelProvider = new MultiModelProvider({
-      provider_map: providerMap,
-      openai_api_key: process.env.OPENAI_API_KEY || '',
-    });
-
-    const agent = new Agent({ model: 'gpt-4.1' }); // Uses OpenAI by default
-    const session = new Session();
-
-    // Use custom model provider
-    const result = await runAgent(
-      agent,
-      [{ role: 'user', content: 'Hello' }],
-      session,
-      false,
-      undefined,
-      modelProvider
-    );
-
-    // Or use Ollama model with the same provider
-    const ollamaAgent = new Agent({ model: 'ollama/gpt-oss:20b-cloud' });
-    const result2 = await runAgent(
-      ollamaAgent,
-      [{ role: 'user', content: 'Hello' }],
-      session,
-      false,
-      undefined,
-      modelProvider
-    );
-    ```
-
-## RunStateStore
-
-A utility class for persisting and loading agent run state to/from a PostgreSQL database. Useful for saving and resuming agent conversations with cross-language compatibility.
+Agent configuration for multi-agent system.
 
 ### Class Definition
 
-=== "Python"
+```python
+@dataclass
+class Agent:
+    name: str
+    model: str
+    instructions: str
+    tools: List[Tool] = field(default_factory=list)
+    handoffs: List["Agent"] = field(default_factory=list)
+    guardrails: List[Any] = field(default_factory=list)
+```
 
-    ```python
-    class RunStateStore:
-        def __init__(
-            self,
-            agent: Agent,
-            session_id: Optional[str] = None,
-            connection_string: Optional[str] = None
-        )
-        async def save(self, state: Any) -> None
-        async def load(self) -> Any
-        async def clear(self) -> None
-        async def close(self) -> None
-    ```
+### Parameters
 
-=== "TypeScript"
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `str` | Agent name |
+| `model` | `str` | OpenAI model name (e.g., "gpt-4o") |
+| `instructions` | `str` | System instructions for the agent |
+| `tools` | `List[Tool]` | List of callable tool functions |
+| `handoffs` | `List[Agent]` | List of agents this agent can handoff to |
+| `guardrails` | `List` | List of InputGuardrail/OutputGuardrail instances |
 
-    ```typescript
-    export class RunStateStore {
-      constructor(options: {
-        agent: Agent;
-        sessionId?: string;
-        connectionString?: string;
-      })
-      async save(state: any): Promise<void>
-      async load(): Promise<any>
-      async clear(): Promise<void>
-      async close(): Promise<void>
-    }
-    ```
+### Example
 
-### Constructor
+```python
+from timestep import Agent, InputGuardrail
 
-=== "Python"
+async def my_tool(args: dict) -> dict:
+    return {"result": "done"}
 
-    ```python
+async def my_guardrail(tool_name: str, args: dict):
+    from timestep import GuardrailResult
+    return GuardrailResult.proceed()
+
+agent = Agent(
+    name="My Agent",
+    model="gpt-4o",
+    instructions="You are helpful.",
+    tools=[my_tool],
+    guardrails=[InputGuardrail(my_guardrail)],
+)
+```
+
+## FileSession
+
+File-based session implementation using JSONL storage.
+
+### Class Definition
+
+```python
+class FileSession:
     def __init__(
         self,
-        agent: Agent,
-        session_id: Optional[str] = None,
-        connection_string: Optional[str] = None
+        agent_name: str,
+        conversation_id: str,
+        agent_instructions: str | None = None,
+        storage_dir: str = "conversations",
     )
-    ```
+    
+    @property
+    def session_id(self) -> str
+    
+    async def get_items(self, limit: int | None = None) -> list[ChatMessage]
+    async def add_items(self, items: list[ChatMessage]) -> None
+    async def pop_item(self) -> ChatMessage | None
+    async def clear_session(self) -> None
+```
 
-=== "TypeScript"
-
-    ```typescript
-    constructor(options: {
-      agent: Agent;
-      sessionId?: string;
-      connectionString?: string;
-    })
-    ```
-
-#### Parameters
+### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent` | `Agent` | The agent instance. Required for loading state. |
-| `session_id` / `sessionId` | `string \| undefined` | Session ID to use as identifier. If not provided, will be generated automatically. |
-| `connection_string` / `connectionString` | `string \| undefined` | PostgreSQL connection string. If not provided, uses PostgreSQL connection string if configured, otherwise requires `PG_CONNECTION_URI` environment variable. |
+| `agent_name` | `str` | Name of the agent |
+| `conversation_id` | `str` | Unique identifier for this conversation |
+| `agent_instructions` | `str \| None` | Optional system instructions |
+| `storage_dir` | `str` | Directory to store conversation files (default: "conversations") |
 
-### Methods
+### Example
 
-#### `save()`
+```python
+from timestep import FileSession
 
-Saves the run state to the database.
+session = FileSession(
+    agent_name="Assistant",
+    conversation_id="my-conversation",
+    agent_instructions="You are helpful.",
+)
 
-=== "Python"
+# Get messages
+messages = await session.get_items()
 
-    ```python
-    async def save(self, state: Any) -> None
-    ```
+# Add messages
+await session.add_items([{"role": "user", "content": "Hello"}])
+```
 
-=== "TypeScript"
+## InputGuardrail
 
-    ```typescript
-    async save(state: any): Promise<void>
-    ```
+Input guardrail for tool execution.
 
-##### Parameters
+### Class Definition
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `state` | `RunState` | The run state to save. |
-
-##### Example
-
-=== "Python"
-
-    ```python
-    from timestep import RunStateStore
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
+```python
+class InputGuardrail:
+    def __init__(
+        self,
+        handler: Callable[[str, Dict[str, Any]], Awaitable[GuardrailResult]]
     )
-
-    # Save state
-    await state_store.save(run_state)
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
-
-    // Save state
-    await stateStore.save(runState);
-    ```
-
-#### `load()`
-
-Loads run state from the database.
-
-=== "Python"
-
-    ```python
-    async def load(self) -> Any
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    async load(): Promise<any>
-    ```
-
-##### Returns
-
-| Type | Description |
-|------|-------------|
-| `RunState` | The loaded run state. |
-
-##### Example
-
-=== "Python"
-
-    ```python
-    from timestep import RunStateStore
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
-    )
-
-    # Load state
-    run_state = await state_store.load()
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
-
-    // Load state
-    const runState = await stateStore.load();
-    ```
-
-#### `clear()`
-
-Marks the state as inactive (soft delete) in the database.
-
-=== "Python"
-
-    ```python
-    async def clear(self) -> None
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    async clear(): Promise<void>
-    ```
-
-##### Example
-
-=== "Python"
-
-    ```python
-    from timestep import RunStateStore
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
-    )
-
-    # Clear saved state
-    await state_store.clear()
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    import { RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
-
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
-
-    // Clear saved state
-    await stateStore.clear();
-    ```
-
-#### `close()`
-
-Closes the database connection.
-
-=== "Python"
-
-    ```python
-    async def close(self) -> None
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    async close(): Promise<void>
-    ```
-
-##### Example
-
-=== "Python"
-
-    ```python
-    # Close connection when done
-    await state_store.close()
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    // Close connection when done
-    await stateStore.close();
-    ```
-
-### Complete Example
-
-=== "Python"
-
-    ```python
-    from timestep import run_agent, RunStateStore
-    from agents import Agent, Session
-
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    state_store = RunStateStore(
-        agent=agent,
-        session_id=await session._get_session_id()
-    )
-
-    # Try to load existing state
-    try:
-        run_state = await state_store.load()
-        print("Resuming conversation")
-    except FileNotFoundError:
-        run_state = [{"role": "user", "content": "Hello"}]
-        print("Starting new conversation")
-
-    # Run agent
-    result = await run_agent(agent, run_state, session, stream=False)
-
-    # Handle interruptions
-    if result.interruptions:
-        # Save state for later resume
-        state = result.to_state()
-        await state_store.save(state)
-        
-        # Load and approve interruptions
-        loaded_state = await state_store.load()
-        for interruption in loaded_state.get_interruptions():
-            loaded_state.approve(interruption)
-        
-        # Resume execution
-        result = await run_agent(agent, loaded_state, session, stream=False)
-
-    # Save state for next time
-    await state_store.save(result.to_state())
     
-    # Close connection when done
-    await state_store.close()
-    ```
+    async def check(self, tool_name: str, args: Dict[str, Any]) -> GuardrailResult
+```
 
-=== "TypeScript"
+### Example
 
-    ```typescript
-    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
+```python
+from timestep import InputGuardrail, GuardrailResult, GuardrailInterrupt
 
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const stateStore = new RunStateStore({
-      agent,
-      sessionId: await session.getSessionId()
-    });
+async def approval_guardrail(tool_name: str, args: dict) -> GuardrailResult:
+    if needs_approval(args):
+        raise GuardrailInterrupt("Need approval", tool_name, args)
+    return GuardrailResult.proceed()
 
-    // Try to load existing state
-    let runInput;
-    try {
-      runInput = await stateStore.load();
-      console.log('Resuming conversation');
-    } catch {
-      runInput = [{ role: 'user', content: 'Hello' }];
-      console.log('Starting new conversation');
-    }
+guardrail = InputGuardrail(approval_guardrail)
+```
 
-    // Run agent
-    let result = await runAgent(agent, runInput, session, false);
+## OutputGuardrail
 
-    // Handle interruptions
-    if (result.interruptions?.length) {
-      // Save state for later resume
-      await stateStore.save(result.state);
-      
-      // Load and approve interruptions
-      const loadedState = await stateStore.load();
-      for (const interruption of loadedState.getInterruptions()) {
-        loadedState.approve(interruption);
-      }
-      
-      // Resume execution
-      result = await runAgent(agent, loadedState, session, false);
-    }
+Output guardrail for tool execution.
 
-    // Save state for next time
-    await stateStore.save(result.state);
+### Class Definition
+
+```python
+class OutputGuardrail:
+    def __init__(
+        self,
+        handler: Callable[[str, Dict[str, Any], Dict[str, Any]], Awaitable[GuardrailResult]]
+    )
     
-    // Close connection when done
-    await stateStore.close();
-    ```
+    async def check(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        result: Dict[str, Any]
+    ) -> GuardrailResult
+```
 
-### Cross-Language State Transfer Example
+### Example
 
-`RunStateStore` enables seamless state transfer between Python and TypeScript using a shared PostgreSQL database:
+```python
+from timestep import OutputGuardrail, GuardrailResult
 
-=== "Python → TypeScript"
+async def sanitize_guardrail(tool_name: str, args: dict, result: dict) -> GuardrailResult:
+    if "password" in str(result):
+        sanitized = str(result).replace("password=secret", "password=***")
+        return GuardrailResult.modify_result({"result": sanitized})
+    return GuardrailResult.proceed()
 
-    ```python
-    # Python: Save state
-    from timestep import run_agent, RunStateStore
-    from agents import Agent, Session
+guardrail = OutputGuardrail(sanitize_guardrail)
+```
 
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    session_id = await session._get_session_id()
-    state_store = RunStateStore(agent=agent, session_id=session_id)
+## GuardrailResult
 
-    result = await run_agent(agent, input_items, session, stream=False)
+Result from a guardrail check.
 
-    if result.interruptions:
-        # Save state - can be loaded in TypeScript!
-        state = result.to_state()
-        await state_store.save(state)
-        print(f"State saved. Resume in TypeScript with session_id: {session_id}")
-    ```
+### Class Definition
 
-    ```typescript
-    // TypeScript: Load Python state and resume
-    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
+```python
+@dataclass
+class GuardrailResult:
+    proceed: bool
+    modified_args: Optional[Dict[str, Any]] = None
+    modified_result: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+    
+    @classmethod
+    def block(cls, reason: str) -> "GuardrailResult"
+    
+    @classmethod
+    def proceed(cls) -> "GuardrailResult"
+    
+    @classmethod
+    def modify_args(cls, new_args: Dict[str, Any]) -> "GuardrailResult"
+    
+    @classmethod
+    def modify_result(cls, new_result: Dict[str, Any]) -> "GuardrailResult"
+```
 
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const sessionId = await session.getSessionId();
-    const stateStore = new RunStateStore({ agent, sessionId });
+## GuardrailInterrupt
 
-    // Load state saved from Python (using same session_id)
-    const savedState = await stateStore.load();
+Exception raised when guardrail requires human input.
 
-    // Approve interruptions
-    for (const interruption of savedState.getInterruptions()) {
-      savedState.approve(interruption);
-    }
+### Class Definition
 
-    // Resume execution
-    const result = await runAgent(agent, savedState, session, false);
-    ```
+```python
+class GuardrailInterrupt(GuardrailError):
+    def __init__(self, prompt: str, tool_name: str, args: Dict[str, Any])
+```
 
-=== "TypeScript → Python"
+### Attributes
 
-    ```typescript
-    // TypeScript: Save state
-    import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-    import { Agent, Session } from '@openai/agents';
+- `prompt`: Prompt to show to user
+- `tool_name`: Name of the tool
+- `args`: Tool arguments
 
-    const agent = new Agent({ model: 'gpt-4.1' });
-    const session = new Session();
-    const sessionId = await session.getSessionId();
-    const stateStore = new RunStateStore({ agent, sessionId });
+## request_approval
 
-    let result = await runAgent(agent, inputItems, session, false);
+Request approval from user. Blocks until answered.
 
-    if (result.interruptions?.length) {
-      // Save state - can be loaded in Python!
-      await stateStore.save(result.state);
-      console.log(`State saved. Resume in Python with session_id: ${sessionId}`);
-    }
-    ```
+### Function Signature
 
-    ```python
-    # Python: Load TypeScript state and resume
-    from timestep import run_agent, RunStateStore
-    from agents import Agent, Session
+```python
+async def request_approval(prompt: str) -> bool
+```
 
-    agent = Agent(model="gpt-4.1")
-    session = Session()
-    session_id = await session._get_session_id()
-    state_store = RunStateStore(agent=agent, session_id=session_id)
+### Example
 
-    # Load state saved from TypeScript (using same session_id)
-    saved_state = await state_store.load()
+```python
+from timestep import request_approval
 
-    # Approve interruptions
-    for interruption in saved_state.get_interruptions():
-        saved_state.approve(interruption)
+approved = await request_approval("Approve this action? (y/n): ")
+if approved:
+    # Proceed
+    pass
+```
 
-    # Resume execution
-    result = await run_agent(agent, saved_state, session, False)
-    ```
+## with_guardrails
 
-## See Also
+Execute a tool handler with optional pre and post guardrails.
 
-- [Use Cases](../use-cases.md) - For examples of using these utilities
-- [Getting Started](../getting-started.md) - For basic agent setup
+### Function Signature
+
+```python
+async def with_guardrails(
+    tool_handler: Callable[[Dict[str, Any]], Any],
+    tool_name: str,
+    args: Dict[str, Any],
+    pre_guardrails: Optional[List[Guardrail]] = None,
+    post_guardrails: Optional[List[Guardrail]] = None,
+) -> Dict[str, Any]
+```
+
+### Example
+
+```python
+from timestep import with_guardrails
+
+async def my_tool(args: dict) -> dict:
+    return {"result": "done"}
+
+result = await with_guardrails(
+    my_tool,
+    tool_name="my_tool",
+    args={"key": "value"},
+    pre_guardrails=[pre_guardrail],
+    post_guardrails=[post_guardrail],
+)
+```
