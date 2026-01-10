@@ -1,105 +1,72 @@
-"""Core agent execution functions."""
+"""Agent harness interface and adapters."""
 
-from typing import Any, Optional, Callable, Awaitable
-from .._vendored_imports import (
-    Agent, Runner, RunConfig, RunState, TResponseInputItem,
-    AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError,
-    SessionABC
-)
-from ..model_providers.multi_model_provider import MultiModelProvider
+import json
+import shlex
+import subprocess
+import time
+from typing import Any, Dict, List
 
-async def default_result_processor(result: Any) -> Any:
+from .types import AgentFn, JSON, Message
+from ..utils.messages import is_assistant_message
+
+
+def agent_builtin_echo(messages: List[Message], context: JSON) -> Message:
+    """Builtin agent harness that finishes immediately by echoing the last user message."""
+    last_user = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            last_user = str(m.get("content", "") or "")
+            break
+    return {"role": "assistant", "content": f"Echo: {last_user}"}
+
+
+def agent_cmd_factory(agent_cmd: str, timeout_s: int = 120) -> AgentFn:
     """
-    Default result processor that consumes all events from a result (streaming or non-streaming).
-
-    Args:
-        result: RunResult or RunResultStreaming from run_agent
-
-    Returns:
-        The same result object after consuming stream (if applicable)
-    """
-    if hasattr(result, 'stream_events'):
-        # Consume all stream events - this already waits for _run_impl_task in the finally block
-        async for _ in result.stream_events():
-            pass
-
-        # After consuming stream_events(), the _run_impl_task should have been awaited
-        # in the finally block of stream_events(). However, to match TypeScript's
-        # await result.completed behavior and ensure ALL background operations are done,
-        # we should explicitly wait for the _run_impl_task if it exists.
-        if hasattr(result, '_run_impl_task') and result._run_impl_task is not None:
-            import asyncio
-            try:
-                # Wait for the main implementation task to complete
-                # This ensures all background session operations have finished
-                await result._run_impl_task
-            except Exception:
-                # Exception handling is done in stream_events(), so we can ignore here
-                # The exception will be raised when accessing result.output or other properties
-                pass
-
-    return result
-
-
-async def run_agent(
-    agent: Agent,
-    run_input: list[TResponseInputItem] | RunState,
-    session: SessionABC,
-    stream: bool,
-    result_processor: Optional[Callable[[Any], Awaitable[Any]]] = default_result_processor,
-    model_provider: Optional[Any] = None  # ModelProvider type
-):
-    """
-    Run an agent with the given session and stream setting.
+    Creates an agent harness function that shells out to `agent_cmd`.
     
-    Args:
-        agent: The agent to run
-        run_input: Input items or RunState for the agent
-        session: Session for managing conversation state
-        stream: Whether to stream the results
-        result_processor: Optional function to process the result. Defaults to default_result_processor
-            which consumes all streaming events and waits for completion. Pass None to skip processing.
-        model_provider: Optional ModelProvider to use for resolving model names. If not provided,
-            defaults to MultiModelProvider which supports both OpenAI and Ollama models.
-    
-    Returns:
-        The processed result from the agent run
+    Protocol:
+      - send JSON to stdin: {"messages":[...], "tools":[...], "task":{...}, "seed":..., "limits":...}
+      - expect stdout JSON: assistant message dict
     """
-    async def session_input_callback(existing_items: list, new_input: list) -> list:
-        """Callback to merge new input with existing session items."""
-        return existing_items + new_input
+    args = shlex.split(agent_cmd)
 
-    # Default to MultiModelProvider if no provider is specified
-    if model_provider is None:
-        model_provider = MultiModelProvider()
+    def _agent(messages: List[Message], context: JSON) -> Message:
+        payload = {
+            "messages": messages,
+            "tools": context.get("tools_schema", []),
+            "task": context.get("task", {}),
+            "seed": context.get("seed"),
+            "limits": context.get("limits", {}),
+        }
+        t0 = time.time()
+        try:
+            proc = subprocess.run(
+                args,
+                input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            return {"role": "assistant", "content": "", "tool_calls": [], "error": "agent_timeout"}
 
-    run_config = RunConfig(
-        nest_handoff_history=False, # Match TypeScript: don't nest handoff history
-        session_input_callback=session_input_callback,
-        model_provider=model_provider
-    )
+        stdout = proc.stdout.decode("utf-8", errors="replace").strip()
+        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
 
-    try:
-        if stream:
-            result = Runner.run_streamed(agent, run_input, run_config=run_config, session=session)
-        else:
-            result = await Runner.run(agent, run_input, run_config=run_config, session=session)
+        if not stdout:
+            # Treat empty output as a final assistant message (failure is visible via graders)
+            return {"role": "assistant", "content": "", "tool_calls": [], "error": "agent_empty_stdout", "stderr": stderr}
 
-        # Apply result processor if provided
-        if result_processor is not None:
-            result = await result_processor(result)
+        try:
+            msg = json.loads(stdout)
+        except json.JSONDecodeError:
+            # If agent prints plain text, treat as assistant content
+            msg = {"role": "assistant", "content": stdout}
 
-        return result
-    except MaxTurnsExceeded as e:
-        print(f"MaxTurnsExceeded: {e}")
-        raise
-    except ModelBehaviorError as e:
-        print(f"ModelBehaviorError: {e}")
-        raise
-    except UserError as e:
-        print(f"UserError: {e}")
-        raise
-    except AgentsException as e:
-        print(f"AgentsException: {e}")
-        raise
+        # Attach diagnostics if present
+        if stderr:
+            msg.setdefault("_agent_stderr", stderr)
+        msg.setdefault("_agent_latency_s", round(time.time() - t0, 4))
+        return msg
 
+    return _agent

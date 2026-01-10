@@ -1,22 +1,33 @@
-# Timestep Documentation
+# Timestep AI Agents SDK
 
-Welcome! Timestep makes OpenAI Agents durable and resumable across Python and TypeScript with a tiny surface area: `run_agent` / `runAgent` and `RunStateStore`.
+Welcome! Timestep is a universal **Agents SDK** built around the core **agent-environment loop** using OpenAI-style chat message protocol. The SDK provides a clean foundation for building agents, with an **evaluation harness** as one powerful use case.
 
 ## Prerequisites
-- `OPENAI_API_KEY`
-- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db` or use local Postgres (auto-detected on `localhost:5432`)
+
+- **Python 3.11+** or **Node.js 20+**
+- **OpenAI API key** (optional, for agents that use OpenAI or LLM-as-judge graders)
 
 ## Quick navigation
-- Getting started: [Installation and Quick Start](getting-started.md)
-- Core concepts: [Architecture](architecture.md), [Use Cases](use-cases.md)
-- API reference: [Utilities](api-reference/utilities.md), [MultiModelProvider](api-reference/multi-model-provider.md), [OllamaModelProvider](api-reference/ollama-model-provider.md), [MultiModelProviderMap](api-reference/multi-model-provider-map.md), [Tools](api-reference/tools.md)
 
-## Core features
-- **Durable execution**: save/load `RunState` from PostgreSQL.
-- Cross-language state: same format in Python and TypeScript.
-- Model routing: prefix (`ollama/gpt-oss:20b` for local, `ollama/gpt-oss:20b-cloud` for [Ollama Cloud](https://ollama.com/cloud)) to select providers; defaults to OpenAI. Note: `-cloud` suffix determines cloud usage.
-- PostgreSQL storage: use `PG_CONNECTION_URI` for database connection.
+- Getting started: [Installation and Quick Start](getting-started.md)
+- Core concepts: [Architecture](architecture.md)
+- Examples: See `examples/` directory in the repository
+
+## Core Features
+
+### Core SDK
+- **Universal protocol**: OpenAI chat message format - works with any agent framework
+- **Simple agent harness interface**: Just a function `(messages, context) => assistant_message`
+- **Tool execution**: Deterministic tool execution with automatic indexing
+- **Token tracking**: Automatic tracking of input/output tokens and costs
+- **Cross-language parity**: Same API in Python and TypeScript
+
+### Evaluation Harness
+- **Built-in graders**: Code-based (regex, contains, JSON), LLM-as-judge, outcome verification
+- **JSONL task format**: Simple, human-readable task definitions
+- **CLI interface**: Run eval suites and generate reports
 
 ## Packages
+
 - Python: [`timestep`](https://pypi.org/project/timestep/)
 - TypeScript: [`@timestep-ai/timestep`](https://www.npmjs.com/package/@timestep-ai/timestep)
