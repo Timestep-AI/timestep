@@ -1,17 +1,13 @@
 """Episode runner - the core agent-environment loop."""
 
 import json
-import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .agent import AgentFn
-from .tools import ToolFn, build_tools_schema
+from .types import AgentFn, JSON, Message, ToolFn
+from .tools import build_tools_schema
 from ..utils.messages import is_assistant_message
 from ..utils.io import now
-
-JSON = Dict[str, Any]
-Message = Dict[str, Any]
 
 
 @dataclass
@@ -25,24 +21,42 @@ class EpisodeInfo:
     duration_s: float
     terminated_reason: str  # final_answer | max_steps | time_limit | error
     error: Optional[str] = None
+    # Token and cost tracking (optional, populated if agent provides usage info)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+def _extract_usage_from_message(msg: Message) -> Dict[str, Any]:
+    """Extract token usage from agent message if present."""
+    usage = msg.get("usage") or {}
+    return {
+        "input_tokens": int(usage.get("prompt_tokens", 0) or 0),
+        "output_tokens": int(usage.get("completion_tokens", 0) or 0),
+        "total_tokens": int(usage.get("total_tokens", 0) or 0),
+    }
 
 
 def run_episode(
     initial_messages: List[Message],
     agent: AgentFn,
     tools: Dict[str, ToolFn],
-    tools_allowed: Optional[List[str]],
-    limits: JSON,
-    task_meta: JSON,
-    seed: int,
+    tools_allowed: Optional[List[str]] = None,
+    limits: Optional[JSON] = None,
+    task_meta: Optional[JSON] = None,
+    seed: int = 0,
 ) -> Tuple[List[Message], EpisodeInfo]:
     """
-    Runs the canonical loop:
-      - agent returns assistant message
-      - if assistant has tool_calls: env executes them and appends tool messages
-      - else: assistant is final; done
+    Orchestrates the agent harness in the canonical agent-environment loop:
+      - Loop calls agent harness with messages and context
+      - Agent harness returns assistant message
+      - If assistant has tool_calls: environment executes them and appends tool messages, loop continues
+      - Else: assistant is final; done
+    
+    This is the core execution pattern that orchestrates the agent harness. The evaluation harness builds on top of this.
     """
-    task_id = str(task_meta.get("id", "unknown"))
+    task_id = str((task_meta or {}).get("id", "unknown"))
     max_steps = int((limits or {}).get("max_steps", 30))
     time_limit_s = float((limits or {}).get("time_limit_s", 120))
 
@@ -54,6 +68,11 @@ def run_episode(
     tool_calls = 0
     terminated_reason = "error"
     err: Optional[str] = None
+    
+    # Token tracking
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_tokens = 0
 
     # Provide schema to agent via context (optional)
     tools_schema = build_tools_schema(tools, tools_allowed)
@@ -65,9 +84,9 @@ def run_episode(
 
         context = {
             "tools_schema": tools_schema,
-            "task": task_meta,
+            "task": task_meta or {},
             "seed": seed,
-            "limits": limits,
+            "limits": limits or {},
         }
 
         assistant_msg = agent(messages, context)
@@ -77,6 +96,12 @@ def run_episode(
             # Append an error assistant message for observability
             messages.append({"role": "assistant", "content": "", "_error": err})
             break
+
+        # Extract token usage if available
+        usage = _extract_usage_from_message(assistant_msg)
+        total_input_tokens += usage["input_tokens"]
+        total_output_tokens += usage["output_tokens"]
+        total_tokens += usage["total_tokens"]
 
         # Normalize basic fields
         assistant_msg.setdefault("content", "")
@@ -151,12 +176,16 @@ def run_episode(
     duration = now() - t0
     info = EpisodeInfo(
         task_id=task_id,
-        trial=int(task_meta.get("_trial", 0)),
+        trial=int((task_meta or {}).get("_trial", 0)),
         seed=seed,
         steps=steps,
         tool_calls=tool_calls,
         duration_s=round(duration, 4),
         terminated_reason=terminated_reason,
         error=err,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+        total_tokens=total_tokens,
+        cost_usd=0.0,  # Can be calculated from tokens if pricing is known
     )
     return messages, info

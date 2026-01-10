@@ -1,9 +1,9 @@
-/** CLI interface for eval framework. */
+/** CLI interface for evaluation harness. */
 
-import { agentBuiltinEcho, agentCmdFactory } from './agent.js';
+import { agentBuiltinEcho, agentCmdFactory } from '../core/index.js';
 import { parseGraderSpec } from './graders.js';
 import { runSuite, report } from './suite.js';
-import { DEFAULT_TOOLS } from './tools.js';
+import { DEFAULT_TOOLS } from '../core/index.js';
 
 export async function main(args: string[]): Promise<void> {
   /** Main CLI entry point. */
@@ -71,7 +71,7 @@ export async function main(args: string[]): Promise<void> {
       }
     }
 
-    // Build agent
+    // Build agent harness
     let agent;
     if (agentSpec.startsWith('builtin:')) {
       const name = agentSpec.split(':')[1];

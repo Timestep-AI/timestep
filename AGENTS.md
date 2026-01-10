@@ -32,30 +32,72 @@ This document provides guidance for AI coding agents working on the Timestep pro
 
 4. **Environment variables** (optional):
    ```bash
-   export OPENAI_API_KEY="your-key-here"  # For agents that use OpenAI
+   export OPENAI_API_KEY="your-key-here"  # For agents that use OpenAI or LLM-as-judge graders
    ```
 
 ## Project Structure
 
-The codebase is organized into clear modules:
+The codebase is organized into core and eval modules:
 
 ```
 timestep/
 ├── python/timestep/
-│   ├── eval/              # Eval framework core
-│   │   ├── agent.py       # Agent function interface
-│   │   ├── episode.py     # Episode runner
+│   ├── core/              # Core agent-environment loop
+│   │   ├── agent.py       # Agent harness interface
+│   │   ├── episode.py     # Episode runner (agent-environment loop)
 │   │   ├── tools.py        # Tool execution
-│   │   ├── graders.py      # Built-in graders
+│   │   └── types.py        # Core types
+│   ├── eval/               # Evaluation harness
 │   │   ├── suite.py        # Suite runner
+│   │   ├── graders.py      # All graders (code-based, LLM-as-judge, outcome)
 │   │   └── cli.py          # CLI interface
 │   └── utils/              # Utilities (JSONL, hashing, etc.)
 └── typescript/timestep/
-    ├── eval/               # Same structure as Python
+    ├── core/               # Same structure as Python
+    ├── eval/
     └── utils/
 ```
 
 **Important**: Both Python and TypeScript follow the same structure for cross-language parity.
+
+## Core Concepts
+
+### Agent Harness
+
+An **agent harness** (or scaffold) is a system that enables a model to act as an agent. In Timestep, this is the `AgentFn` interface:
+
+```python
+AgentFn = Callable[[List[Message], JSON], Message]
+```
+
+The agent harness:
+- Takes messages (transcript) and context
+- Returns an assistant message (may include `tool_calls`)
+- Processes inputs, orchestrates tool calls, and returns results
+- Can use any model provider (OpenAI, Anthropic, local models, etc.)
+
+### Agent-Environment Loop
+
+The core execution pattern implemented by `run_episode()` that orchestrates the agent harness:
+
+1. The loop calls the agent harness with messages and context
+2. Agent harness returns assistant message
+3. If assistant has `tool_calls`: environment executes them and appends tool messages
+4. Loop continues (returns to step 1) until final answer (no tool calls) or limits reached
+
+The agent-environment loop orchestrates the agent harness, executing tools and managing the conversation flow. Together, the loop and harness form the complete agent system.
+
+### Evaluation Harness
+
+The evaluation harness builds on the core to:
+- Run evaluation suites on multiple tasks
+- Grade agent performance using graders
+- Generate reports
+
+### Transcript vs Outcome
+
+- **Transcript**: Complete record of an episode (all messages)
+- **Outcome**: Final state in environment (separate from transcript)
 
 ## Testing
 
@@ -114,7 +156,7 @@ pnpm test
 ### Before Submitting
 
 1. **Run all tests**: Ensure both Python and TypeScript tests pass
-2. **Check imports**: Verify all imports use correct module paths
+2. **Check imports**: Verify all imports use correct module paths (core vs eval)
 3. **Update documentation**: Update relevant docs if adding features
 4. **Cross-language testing**: Test that tasks work in both languages
 
@@ -122,7 +164,7 @@ pnpm test
 
 - [ ] All tests pass (Python and TypeScript)
 - [ ] Code follows project conventions
-- [ ] Imports use correct module paths
+- [ ] Imports use correct module paths (core.* or eval.*)
 - [ ] Documentation updated (if needed)
 - [ ] Cross-language compatibility verified (if task-related)
 - [ ] No breaking changes (or clearly documented)
@@ -132,7 +174,7 @@ pnpm test
 Use clear, descriptive commit messages:
 - `feat: Add new grader for X`
 - `fix: Resolve issue with tool execution`
-- `refactor: Reorganize eval modules`
+- `refactor: Reorganize core modules`
 - `docs: Update README with new examples`
 
 ## Common Tasks
@@ -149,53 +191,54 @@ Use clear, descriptive commit messages:
 
 ### Adding a New Tool
 
-1. Create tool function in `eval/tools.py` (Python) or `eval/tools.ts` (TypeScript)
+1. Create tool function in `core/tools.py` (Python) or `core/tools.ts` (TypeScript)
 2. Add to `DEFAULT_TOOLS` dictionary
 3. Add tests
 4. Update documentation
 
-### Creating an Agent Adapter
+### Creating an Agent Harness
 
-Agents are functions that take `(messages, context)` and return an assistant message:
+Agent harnesses are functions that take `(messages, context)` and return an assistant message:
 
 ```python
 def my_agent(messages: list[Message], context: JSON) -> Message:
     # Use OpenAI library or other model provider
     # Return OpenAI-style assistant message
-    return {"role": "assistant", "content": "...", "tool_calls": [...]}
+    # Optionally include usage info for token tracking
+    return {
+        "role": "assistant",
+        "content": "...",
+        "tool_calls": [...],
+        "usage": {  # Optional
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15
+        }
+    }
 ```
 
 For command-based agents, use `agent_cmd_factory()`.
 
-## Eval Framework Architecture
+## Architecture Overview
 
-### Core Concepts
+### Core Module
 
-1. **Agent Function**: `(messages, context) => assistant_message`
-   - Takes list of messages and context
-   - Returns one assistant message
-   - May include `tool_calls` for tool-using agents
+The core module provides the agent-environment loop:
 
-2. **Episode Runner**: `run_episode()`
-   - Runs agent-environment loop
-   - Executes tool calls automatically
-   - Tracks steps, tool calls, duration
-   - Returns transcript and episode info
+1. **Agent harness interface**: `AgentFn` - function that enables a model to act as an agent (takes messages and context, returns assistant message)
+2. **Episode runner**: `run_episode()` - orchestrates the agent harness, executes the agent-environment loop
+3. **Tool execution**: Deterministic functions with automatic indexing
+4. **Episode info**: Tracks steps, tool calls, duration, tokens, costs
 
-3. **Tool Execution**: Deterministic functions
-   - Tools are simple functions `(args) => result`
-   - Results are JSON-serialized
-   - Tool calls are automatically indexed
+The agent-environment loop (`run_episode()`) orchestrates the agent harness (`AgentFn`), executing tools and managing the conversation flow.
 
-4. **Graders**: Evaluation functions
-   - Take transcript, tool index, task, episode info
-   - Return `{name, passed, score, details}`
-   - Can be aggregated
+### Eval Module
 
-5. **Suite Runner**: `run_suite()`
-   - Runs multiple trials per task
-   - Persists transcripts, tool indices, grades
-   - Generates results.jsonl
+The eval module builds on core to provide evaluation:
+
+1. **Suite runner**: `run_suite()` - runs evaluation suites on multiple tasks
+2. **Graders**: Code-based, LLM-as-judge, and outcome verification graders
+3. **Reporting**: `report()` - generates summary reports
 
 ### Task Format
 
@@ -213,6 +256,7 @@ Messages follow OpenAI chat completion format:
 - `content`: String content
 - `tool_calls`: Array of tool call objects (assistant messages)
 - `tool_call_id`: String ID (tool messages)
+- `usage`: Optional token usage info (assistant messages)
 
 ## Debugging Tips
 
@@ -223,7 +267,7 @@ Messages follow OpenAI chat completion format:
 3. Check tool names match available tools
 4. Verify expected values match grader requirements
 
-### Agent Issues
+### Agent Harness Issues
 
 1. Check agent returns valid assistant message
 2. Verify tool_calls format if using tools
@@ -245,6 +289,6 @@ Messages follow OpenAI chat completion format:
 
 - **Always maintain cross-language parity**: Changes in one language should be reflected in the other
 - **Test task compatibility**: When modifying task format or results, verify cross-language compatibility
-- **Follow the module structure**: Use the organized folder structure; don't create files at the root level
-- **Keep it simple**: The eval framework is intentionally minimal - avoid over-engineering
+- **Follow the module structure**: Core is independent, eval builds on core
+- **Keep it simple**: The SDK is intentionally minimal - avoid over-engineering
 - **Documentation matters**: Update docs when adding features or changing behavior

@@ -1,13 +1,9 @@
 /** Episode runner - the core agent-environment loop. */
 
-import type { AgentFn } from './agent.js';
-import type { ToolFn } from './tools.js';
-import { buildToolsSchema } from './tools.js';
-import { isAssistantMessage } from '../utils/messages.js';
-import { now } from '../utils/io.js';
-
-export type JSON = Record<string, any>;
-export type Message = Record<string, any>;
+import { AgentFn, JSON, Message, ToolFn } from './types';
+import { buildToolsSchema } from './tools';
+import { isAssistantMessage } from '../../utils/messages';
+import { now } from '../../utils/io';
 
 export interface EpisodeInfo {
   task_id: string;
@@ -18,24 +14,42 @@ export interface EpisodeInfo {
   duration_s: number;
   terminated_reason: string; // final_answer | max_steps | time_limit | error
   error?: string;
+  // Token and cost tracking (optional, populated if agent provides usage info)
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
 }
 
-export function runEpisode(
+function extractUsageFromMessage(msg: Message): { input_tokens: number; output_tokens: number; total_tokens: number } {
+  /** Extract token usage from agent message if present. */
+  const usage = msg.usage || {};
+  return {
+    input_tokens: Number(usage.prompt_tokens || 0) || 0,
+    output_tokens: Number(usage.completion_tokens || 0) || 0,
+    total_tokens: Number(usage.total_tokens || 0) || 0,
+  };
+}
+
+export async function runEpisode(
   initialMessages: Message[],
   agent: AgentFn,
   tools: Record<string, ToolFn>,
-  toolsAllowed: string[] | undefined,
-  limits: JSON,
-  taskMeta: JSON,
-  seed: number,
-): [Message[], EpisodeInfo] {
+  toolsAllowed?: string[],
+  limits?: JSON,
+  taskMeta?: JSON,
+  seed: number = 0,
+): Promise<[Message[], EpisodeInfo]> {
   /**
-   * Runs the canonical loop:
-   *   - agent returns assistant message
-   *   - if assistant has tool_calls: env executes them and appends tool messages
-   *   - else: assistant is final; done
+   * Orchestrates the agent harness in the canonical agent-environment loop:
+   *   - Loop calls agent harness with messages and context
+   *   - Agent harness returns assistant message
+   *   - If assistant has tool_calls: environment executes them and appends tool messages, loop continues
+   *   - Else: assistant is final; done
+   * 
+   * This is the core execution pattern that orchestrates the agent harness. The evaluation harness builds on top of this.
    */
-  const taskId = String(taskMeta.id || 'unknown');
+  const taskId = String((taskMeta || {}).id || 'unknown');
   const maxSteps = Number((limits || {}).max_steps || 30);
   const timeLimitS = Number((limits || {}).time_limit_s || 120);
 
@@ -47,6 +61,11 @@ export function runEpisode(
   let toolCalls = 0;
   let terminatedReason = 'error';
   let err: string | undefined = undefined;
+  
+  // Token tracking
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalTokens = 0;
 
   // Provide schema to agent via context (optional)
   const toolsSchema = buildToolsSchema(tools, toolsAllowed);
@@ -59,9 +78,9 @@ export function runEpisode(
 
     const context = {
       tools_schema: toolsSchema,
-      task: taskMeta,
+      task: taskMeta || {},
       seed,
-      limits,
+      limits: limits || {},
     };
 
     const assistantMsg = await agent(messages, context);
@@ -72,6 +91,12 @@ export function runEpisode(
       messages.push({ role: 'assistant', content: '', _error: err });
       break;
     }
+
+    // Extract token usage if available
+    const usage = extractUsageFromMessage(assistantMsg);
+    totalInputTokens += usage.input_tokens;
+    totalOutputTokens += usage.output_tokens;
+    totalTokens += usage.total_tokens;
 
     // Normalize basic fields
     if (!assistantMsg.content) assistantMsg.content = '';
@@ -150,22 +175,25 @@ export function runEpisode(
     terminatedReason = 'final_answer';
     break;
   }
-  
-  if (terminatedReason === 'error' && !err) {
+
+  if (steps >= maxSteps) {
     terminatedReason = 'max_steps';
   }
 
   const duration = now() - t0;
   const info: EpisodeInfo = {
     task_id: taskId,
-    trial: Number(taskMeta._trial || 0),
+    trial: Number((taskMeta || {})._trial || 0),
     seed,
     steps,
     tool_calls: toolCalls,
     duration_s: Math.round(duration * 1000) / 1000,
     terminated_reason: terminatedReason,
     error: err,
+    input_tokens: totalInputTokens,
+    output_tokens: totalOutputTokens,
+    total_tokens: totalTokens,
+    cost_usd: 0.0, // Can be calculated from tokens if pricing is known
   };
-  
   return [messages, info];
 }

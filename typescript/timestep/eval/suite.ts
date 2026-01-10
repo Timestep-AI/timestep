@@ -1,19 +1,16 @@
-/** Suite runner for evaluation tasks. */
+/** Suite runner for evaluation harness. */
 
 import { readJsonl, writeJsonl } from '../utils/jsonl.js';
 import { writeJson, now } from '../utils/io.js';
 import { ensureTaskId } from '../utils/messages.js';
-import type { AgentFn } from './agent.js';
-import type { ToolFn } from './tools.js';
-import { indexToolCalls } from './tools.js';
+import type { AgentFn, ToolFn, EpisodeInfo } from '../core/index.js';
+import { runEpisode, indexToolCalls } from '../core/index.js';
 import type { Grader } from './graders.js';
 import { aggregateGrades } from './graders.js';
-import { runEpisode, type EpisodeInfo } from './episode.js';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 
 export type JSON = Record<string, any>;
-export type Message = Record<string, any>;
 
 export async function runSuite(
   tasksPath: string,
@@ -71,7 +68,7 @@ export async function runSuite(
       // Attach trial metadata (kept out of messages)
       const taskMeta = { ...task, _trial: trial };
 
-      // Run episode
+      // Run episode (core agent-environment loop)
       const [messages, info] = await runEpisode(
         taskMessages,
         agent,
@@ -85,8 +82,14 @@ export async function runSuite(
       // Build tool index
       const toolIdx = indexToolCalls(messages);
 
-      // Grade
-      const gradeRows = graders.map(g => g.grade(messages, toolIdx, task, info));
+      // Grade (handle async graders)
+      const gradeRows = await Promise.all(
+        graders.map(async g => {
+          const result = g.grade(messages, toolIdx, task, info);
+          // Handle both sync and async graders
+          return result instanceof Promise ? await result : result;
+        })
+      );
       const agg = aggregateGrades(gradeRows);
 
       // Persist artifacts
@@ -110,6 +113,10 @@ export async function runSuite(
         duration_s: info.duration_s,
         terminated_reason: info.terminated_reason,
         error: info.error,
+        input_tokens: info.input_tokens,
+        output_tokens: info.output_tokens,
+        total_tokens: info.total_tokens,
+        cost_usd: info.cost_usd,
       });
 
       // Row for results.jsonl
@@ -121,6 +128,10 @@ export async function runSuite(
         steps: info.steps,
         tool_calls: info.tool_calls,
         duration_s: info.duration_s,
+        input_tokens: info.input_tokens,
+        output_tokens: info.output_tokens,
+        total_tokens: info.total_tokens,
+        cost_usd: info.cost_usd,
         passed: agg.passed,
         score: agg.score,
       });
@@ -150,6 +161,7 @@ export function report(outdir: string): void {
 
   const overallPass = rows.filter(r => r.passed).length / rows.length;
   const overallScore = rows.reduce((sum, r) => sum + Number(r.score || 0), 0) / rows.length;
+  const avgTokens = rows.reduce((sum, r) => sum + Number(r.total_tokens || 0), 0) / rows.length;
 
   const byTask: Record<string, JSON[]> = {};
   for (const r of rows) {
@@ -158,12 +170,13 @@ export function report(outdir: string): void {
     byTask[tid].push(r);
   }
 
-  const taskSummaries: Array<[string, number, number, number, number]> = [];
+  const taskSummaries: Array<[string, number, number, number, number, number]> = [];
   for (const [tid, rs] of Object.entries(byTask)) {
     const pr = rs.filter(x => x.passed).length / rs.length;
     const ms = rs.reduce((sum, x) => sum + Number(x.score || 0), 0) / rs.length;
     const md = rs.reduce((sum, x) => sum + Number(x.duration_s || 0), 0) / rs.length;
-    taskSummaries.push([tid, pr, ms, md, rs.length]);
+    const mt = rs.reduce((sum, x) => sum + Number(x.total_tokens || 0), 0) / rs.length;
+    taskSummaries.push([tid, pr, ms, md, mt, rs.length]);
   }
 
   taskSummaries.sort((a, b) => a[1] - b[1] || a[2] - b[2]); // worst first
@@ -172,9 +185,10 @@ export function report(outdir: string): void {
   console.log(`Trials: ${rows.length}`);
   console.log(`Overall pass rate: ${overallPass.toFixed(3)}`);
   console.log(`Overall mean score: ${overallScore.toFixed(3)}`);
+  console.log(`Average tokens per trial: ${avgTokens.toFixed(0)}`);
   console.log();
-  console.log('Worst tasks (task_id | pass_rate | mean_score | mean_duration_s | trials):');
-  for (const [tid, pr, ms, md, n] of taskSummaries.slice(0, 20)) {
-    console.log(`  ${tid} | ${pr.toFixed(3)} | ${ms.toFixed(3)} | ${md.toFixed(3)} | ${n}`);
+  console.log('Worst tasks (task_id | pass_rate | mean_score | mean_duration_s | mean_tokens | trials):');
+  for (const [tid, pr, ms, md, mt, n] of taskSummaries.slice(0, 20)) {
+    console.log(`  ${tid} | ${pr.toFixed(3)} | ${ms.toFixed(3)} | ${md.toFixed(3)} | ${mt.toFixed(0)} | ${n}`);
   }
 }

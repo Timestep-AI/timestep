@@ -1,17 +1,17 @@
-"""CLI interface for eval framework."""
+"""CLI interface for evaluation harness."""
 
 import argparse
 from pathlib import Path
 
-from .agent import agent_builtin_echo, agent_cmd_factory
+from ..core.agent import agent_builtin_echo, agent_cmd_factory
+from ..core.tools import DEFAULT_TOOLS
 from .graders import parse_grader_spec
 from .suite import run_suite, report
-from .tools import DEFAULT_TOOLS
 
 
 def main() -> None:
     """Main CLI entry point."""
-    p = argparse.ArgumentParser(description="OpenAI-message-protocol eval MVP")
+    p = argparse.ArgumentParser(description="Timestep AI Agents SDK - Evaluation Harness")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     prun = sub.add_parser("run", help="Run eval suite")
@@ -27,7 +27,7 @@ def main() -> None:
         "MaxToolCalls:50",
         "FinalRegex",   # uses task.expected.final_regex if present
         "FinalContains" # uses task.expected.final_contains if present
-    ], help="List of graders (builtin). Example: FinalRegex:^133$ MaxToolCalls:5")
+    ], help="List of graders (builtin). Example: FinalRegex:^133$ MaxToolCalls:5 LLMJudge")
 
     preport = sub.add_parser("report", help="Summarize results")
     preport.add_argument("--outdir", required=True, type=Path)
@@ -38,7 +38,7 @@ def main() -> None:
         report(args.outdir)
         return
 
-    # Build agent
+    # Build agent harness
     if args.agent.startswith("builtin:"):
         name = args.agent.split(":", 1)[1]
         if name == "echo":

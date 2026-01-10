@@ -1,20 +1,17 @@
-"""Agent function interface and adapters."""
+"""Agent harness interface and adapters."""
 
 import json
 import shlex
 import subprocess
 import time
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
 
+from .types import AgentFn, JSON, Message
 from ..utils.messages import is_assistant_message
-
-JSON = Dict[str, Any]
-Message = Dict[str, Any]
-AgentFn = Callable[[List[Message], JSON], Message]  # (messages, context) -> assistant message
 
 
 def agent_builtin_echo(messages: List[Message], context: JSON) -> Message:
-    """Builtin agent that finishes immediately by echoing the last user message."""
+    """Builtin agent harness that finishes immediately by echoing the last user message."""
     last_user = ""
     for m in reversed(messages):
         if m.get("role") == "user":
@@ -25,7 +22,7 @@ def agent_builtin_echo(messages: List[Message], context: JSON) -> Message:
 
 def agent_cmd_factory(agent_cmd: str, timeout_s: int = 120) -> AgentFn:
     """
-    Creates an agent function that shells out to `agent_cmd`.
+    Creates an agent harness function that shells out to `agent_cmd`.
     
     Protocol:
       - send JSON to stdin: {"messages":[...], "tools":[...], "task":{...}, "seed":..., "limits":...}

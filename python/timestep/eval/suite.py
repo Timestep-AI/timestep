@@ -1,17 +1,17 @@
-"""Suite runner for evaluation tasks."""
+"""Suite runner for evaluation harness."""
 
 import dataclasses
 import random
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
 
-from .agent import AgentFn
-from .episode import run_episode, EpisodeInfo
-from .tools import ToolFn, index_tool_calls, ToolCallRecord
+from ..core.episode import run_episode, EpisodeInfo
+from ..core.tools import ToolFn, index_tool_calls
+from ..core.types import AgentFn, Message
 from .graders import Grader, aggregate_grades
 from ..utils.jsonl import read_jsonl, write_jsonl
 from ..utils.io import write_json, now
-from ..utils.messages import ensure_task_id, Message
+from ..utils.messages import ensure_task_id
 
 JSON = Dict[str, Any]
 
@@ -63,7 +63,7 @@ def run_suite(
             task_meta = dict(task)
             task_meta["_trial"] = trial
 
-            # Run episode
+            # Run episode (core agent-environment loop)
             messages, info = run_episode(
                 initial_messages=task_messages,
                 agent=agent,
@@ -96,6 +96,10 @@ def run_suite(
                 "steps": info.steps,
                 "tool_calls": info.tool_calls,
                 "duration_s": info.duration_s,
+                "input_tokens": info.input_tokens,
+                "output_tokens": info.output_tokens,
+                "total_tokens": info.total_tokens,
+                "cost_usd": info.cost_usd,
                 "passed": agg["passed"],
                 "score": agg["score"],
             })
@@ -118,6 +122,7 @@ def report(outdir: Path) -> None:
 
     overall_pass = sum(1 for r in rows if r.get("passed")) / len(rows)
     overall_score = sum(float(r.get("score", 0.0)) for r in rows) / len(rows)
+    avg_tokens = sum(float(r.get("total_tokens", 0)) for r in rows) / len(rows) if rows else 0
 
     by_task: Dict[str, List[JSON]] = {}
     for r in rows:
@@ -128,7 +133,8 @@ def report(outdir: Path) -> None:
         pr = sum(1 for x in rs if x.get("passed")) / len(rs)
         ms = sum(float(x.get("score", 0.0)) for x in rs) / len(rs)
         md = sum(float(x.get("duration_s", 0.0)) for x in rs) / len(rs)
-        task_summaries.append((tid, pr, ms, md, len(rs)))
+        mt = sum(float(x.get("total_tokens", 0)) for x in rs) / len(rs)
+        task_summaries.append((tid, pr, ms, md, mt, len(rs)))
 
     task_summaries.sort(key=lambda x: (x[1], x[2]))  # worst first
 
@@ -136,7 +142,8 @@ def report(outdir: Path) -> None:
     print(f"Trials: {len(rows)}")
     print(f"Overall pass rate: {overall_pass:.3f}")
     print(f"Overall mean score: {overall_score:.3f}")
+    print(f"Average tokens per trial: {avg_tokens:.0f}")
     print()
-    print("Worst tasks (task_id | pass_rate | mean_score | mean_duration_s | trials):")
-    for tid, pr, ms, md, n in task_summaries[:20]:
-        print(f"  {tid} | {pr:.3f} | {ms:.3f} | {md:.3f} | {n}")
+    print("Worst tasks (task_id | pass_rate | mean_score | mean_duration_s | mean_tokens | trials):")
+    for tid, pr, ms, md, mt, n in task_summaries[:20]:
+        print(f"  {tid} | {pr:.3f} | {ms:.3f} | {md:.3f} | {mt:.0f} | {n}")

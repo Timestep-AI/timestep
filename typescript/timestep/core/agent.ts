@@ -1,18 +1,14 @@
-/** Agent function interface and adapters. */
+/** Agent harness interface and adapters. */
 
-import { isAssistantMessage } from '../utils/messages.js';
-
-export type JSON = Record<string, any>;
-export type Message = Record<string, any>;
-export type AgentFn = (messages: Message[], context: JSON) => Message | Promise<Message>;
+import { spawn } from 'child_process';
+import { AgentFn, JSON, Message } from './types';
 
 export function agentBuiltinEcho(messages: Message[], context: JSON): Message {
-  /** Builtin agent that finishes immediately by echoing the last user message. */
+  /** Builtin agent harness that finishes immediately by echoing the last user message. */
   let lastUser = '';
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === 'user') {
-      lastUser = String(m.content || '');
+    if (messages[i].role === 'user') {
+      lastUser = String(messages[i].content || '');
       break;
     }
   }
@@ -21,7 +17,7 @@ export function agentBuiltinEcho(messages: Message[], context: JSON): Message {
 
 export function agentCmdFactory(agentCmd: string, timeoutS: number = 120): AgentFn {
   /**
-   * Creates an agent function that shells out to `agentCmd`.
+   * Creates an agent harness function that shells out to `agentCmd`.
    * 
    * Protocol:
    *   - send JSON to stdin: {"messages":[...], "tools":[...], "task":{...}, "seed":..., "limits":...}
@@ -42,7 +38,6 @@ export function agentCmdFactory(agentCmd: string, timeoutS: number = 120): Agent
     const [cmd, ...args] = agentCmd.trim().split(/\s+/);
     
     return new Promise<Message>((resolve) => {
-      const { spawn } = require('child_process');
       const proc = spawn(cmd, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
       });

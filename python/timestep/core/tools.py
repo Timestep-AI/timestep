@@ -4,11 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .types import JSON, Message, ToolFn
 from ..utils.messages import is_assistant_message, is_tool_message
-
-JSON = Dict[str, Any]
-Message = Dict[str, Any]
-ToolFn = Callable[[JSON], Any]
 
 
 def tool_calc(args: JSON) -> Any:

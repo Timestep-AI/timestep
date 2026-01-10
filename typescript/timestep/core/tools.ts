@@ -1,18 +1,6 @@
 /** Tool execution and indexing. */
 
-import type { Message, JSON } from '../utils/messages.js';
-
-export type ToolFn = (args: JSON) => any;
-
-export interface ToolCallRecord {
-  tool_call_id: string;
-  name: string;
-  arguments_raw: any;
-  arguments: JSON;
-  result_raw: string;
-  result: any;
-  error?: string;
-}
+import { JSON, Message, ToolFn } from './types';
 
 export function toolCalc(args: JSON): any {
   /**
@@ -21,8 +9,8 @@ export function toolCalc(args: JSON): any {
    */
   const expr = String(args.expr || '');
   // Extremely restricted eval (still not perfect for production)
-  // In TypeScript, we'd need a safe expression parser - using Function as a workaround
-  const val = new Function('return ' + expr)();
+  // eslint-disable-next-line no-eval
+  const val = eval(expr);
   return { expr, value: val };
 }
 
@@ -49,18 +37,32 @@ export function buildToolsSchema(tools: Record<string, ToolFn>, allowed?: string
   }
 
   // Minimal function schema; arguments left open (free-form JSON) by default.
-  return names.map(name => ({
-    type: 'function',
-    function: {
-      name,
-      description: `Tool '${name}'`,
-      parameters: {
-        type: 'object',
-        properties: {},
-        additionalProperties: true,
+  const schema: JSON[] = [];
+  for (const name of names) {
+    schema.push({
+      type: 'function',
+      function: {
+        name,
+        description: `Tool '${name}'`,
+        parameters: {
+          type: 'object',
+          properties: {},
+          additionalProperties: true,
+        },
       },
-    },
-  }));
+    });
+  }
+  return schema;
+}
+
+export interface ToolCallRecord {
+  tool_call_id: string;
+  name: string;
+  arguments_raw: any;
+  arguments: JSON;
+  result_raw: string;
+  result: any;
+  error?: string;
 }
 
 export function indexToolCalls(messages: Message[]): ToolCallRecord[] {
@@ -75,8 +77,7 @@ export function indexToolCalls(messages: Message[]): ToolCallRecord[] {
 
   for (const m of messages) {
     if (m.role === 'assistant') {
-      const toolCalls = m.tool_calls || [];
-      for (const tc of toolCalls) {
+      for (const tc of (m.tool_calls || [])) {
         const tcId = String(tc.id || '');
         const fn = tc.function || {};
         const name = String(fn.name || '');
@@ -95,11 +96,11 @@ export function indexToolCalls(messages: Message[]): ToolCallRecord[] {
     if (m.role === 'tool') {
       const tcId = String(m.tool_call_id || '');
       const raw = String(m.content || '');
-      let parsed: any = raw;
+      let parsed: any = null;
       try {
         parsed = JSON.parse(raw);
       } catch {
-        // Keep as string
+        parsed = raw;
       }
       if (tcId) {
         results[tcId] = [raw, parsed];
@@ -112,7 +113,6 @@ export function indexToolCalls(messages: Message[]): ToolCallRecord[] {
     const [name, argsRaw] = calls[tcId] || ['', '{}'];
     let argsParsed: JSON = {};
     let err: string | undefined = undefined;
-    
     try {
       argsParsed = typeof argsRaw === 'string' ? JSON.parse(argsRaw) : (argsRaw || {});
       if (typeof argsParsed !== 'object' || Array.isArray(argsParsed)) {
@@ -134,6 +134,5 @@ export function indexToolCalls(messages: Message[]): ToolCallRecord[] {
       error: err,
     });
   }
-  
   return out;
 }
