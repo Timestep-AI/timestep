@@ -110,6 +110,72 @@ run_suite(
 report(Path("runs/demo"))
 ```
 
+### Streaming Support
+
+For real-time agent execution with chunked streaming (like OpenAI's streaming API), use `stream_episode()`:
+
+```python
+import asyncio
+from timestep import stream_episode, create_openai_streaming_agent, DEFAULT_TOOLS
+from timestep.core.types import Message
+
+async def main():
+    # Create streaming agent (yields chunks in real-time)
+    agent = create_openai_streaming_agent()
+    
+    messages: list[Message] = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "Count from 1 to 5."}
+    ]
+    
+    # Stream events and chunks
+    async for event in stream_episode(
+        initial_messages=messages,
+        agent=agent,  # Streaming agent
+        tools=DEFAULT_TOOLS,
+        limits={"max_steps": 5},
+        task_meta={"id": "streaming_demo"},
+    ):
+        if event["type"] == "content_delta":
+            # Content chunks arrive in real-time
+            print(event["delta"], end="", flush=True)
+        elif event["type"] == "episode_complete":
+            print(f"\n\nComplete! Steps: {event['info'].steps}")
+
+asyncio.run(main())
+```
+
+**Integration with HTTP servers:**
+
+```python
+# FastAPI example
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+import json
+
+app = FastAPI()
+
+@app.post("/agent/stream")
+async def stream_agent(request: dict):
+    async def generate():
+        async for event in stream_episode(
+            initial_messages=request["messages"],
+            agent=create_openai_streaming_agent(),
+            tools=DEFAULT_TOOLS,
+            tools_allowed=request.get("tools_allowed"),
+            limits=request.get("limits", {}),
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
+    
+    return StreamingResponse(generate(), media_type="text/event-stream")
+```
+
+The streaming function yields:
+- **Chunk events**: `content_delta`, `tool_call_delta` (from streaming agents)
+- **Control events**: `step_start`, `agent_response_complete`, `tool_call_start`, `tool_call_result`, `step_complete`, `episode_complete`
+
+Works with both streaming agents (`StreamingAgentFn`) and non-streaming agents (`AgentFn`).
+
 ### TypeScript
 
 ```typescript
@@ -133,6 +199,55 @@ const [transcript, info] = await runEpisode(
 );
 
 console.log(`Steps: ${info.steps}, Tool calls: ${info.tool_calls}`);
+```
+
+**Streaming support:**
+
+```typescript
+import { streamEpisode, createOpenAIStreamingAgent, DEFAULT_TOOLS } from '@timestep-ai/timestep';
+
+// Create streaming agent
+const agent = createOpenAIStreamingAgent(process.env.OPENAI_API_KEY);
+
+// Stream events and chunks
+for await (const event of streamEpisode(
+  messages,
+  agent, // Streaming agent
+  DEFAULT_TOOLS,
+  undefined,
+  { max_steps: 5 },
+  { id: 'streaming_demo' },
+)) {
+  if (event.type === 'content_delta') {
+    // Content chunks arrive in real-time
+    process.stdout.write(event.delta as string);
+  } else if (event.type === 'episode_complete') {
+    console.log(`\n\nComplete! Steps: ${event.info.steps}`);
+  }
+}
+```
+
+**Express integration:**
+
+```typescript
+import express from 'express';
+import { streamEpisode, createOpenAIStreamingAgent, DEFAULT_TOOLS } from '@timestep-ai/timestep';
+
+app.post('/agent/stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  
+  for await (const event of streamEpisode(
+    req.body.messages,
+    createOpenAIStreamingAgent(),
+    DEFAULT_TOOLS,
+    req.body.tools_allowed,
+    req.body.limits || {},
+  )) {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+  
+  res.end();
+});
 ```
 
 ## Agent Harness Interface
