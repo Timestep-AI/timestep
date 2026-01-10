@@ -1,295 +1,295 @@
 # Architecture
 
-How Timestep fits around the OpenAI Agents SDK and keeps runs durable across Python and TypeScript.
+Timestep AI Agents SDK is built around a simple, universal **agent-environment loop** using OpenAI chat message protocol. The SDK is organized into two main modules: **core** (the agent-environment loop) and **eval** (the evaluation harness).
 
-## Durable Execution Architecture
+## Core vs Eval
 
-Timestep's durable execution system enables resumable agent workflows with cross-language state persistence.
+### Core Module (`timestep.core`)
 
-### State Persistence Flow
+The core module provides the foundation - the agent-environment loop. It can be used independently without evaluation:
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                    Agent Execution                           │
-│                  (Python or TypeScript)                     │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Interruption Detection                         │
-│  - Tool calls requiring approval                           │
-│  - Human-in-the-loop requests                              │
-│  - Custom interruption points                              │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              RunStateStore                                  │
-│  - Serialize RunState to JSON                              │
-│  - Save to file or database                                │
-│  - Cross-language compatible format                        │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              State Storage                                  │
-│  - File-based (development)                                 │
-│  - PostgreSQL (production)                                │
-│  - PostgreSQL schema for durability                        │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Resume in Any Language                         │
-│  - Load state from storage                                 │
-│  - Approve interruptions                                   │
-│  - Continue execution                                      │
-└─────────────────────────────────────────────────────────────┘
+- **Agent harness interface**: `AgentFn` - function that takes messages and context, returns assistant message
+- **Episode runner**: `run_episode()` - executes the agent-environment loop
+- **Tool execution**: Deterministic tool execution with automatic indexing
+- **Episode info**: Tracks steps, tool calls, duration, tokens, costs
+
+### Eval Module (`timestep.eval`)
+
+The eval module builds on core to provide evaluation capabilities:
+
+- **Suite runner**: `run_suite()` - runs evaluation suites on multiple tasks
+- **Graders**: Code-based, LLM-as-judge, and outcome verification graders
+- **Reporting**: `report()` - generates summary reports
+
+## Core Concepts
+
+### Agent Harness (or Scaffold)
+
+An **agent harness** is a system that enables a model to act as an agent. In Timestep, this is the `AgentFn` interface:
+
+```python
+AgentFn = Callable[[List[Message], JSON], Message]
 ```
 
-### Cross-Language State Transfer
+- **Input**: List of messages (conversation history/transcript) + context (tools schema, task metadata, etc.)
+- **Output**: Single assistant message (may include `tool_calls`)
 
-Timestep's state format is identical between Python and TypeScript, enabling seamless state transfer:
+The agent harness processes inputs, orchestrates tool calls, and returns results. It can use any model provider (OpenAI, Anthropic, local models, etc.) - Timestep doesn't care, as long as it follows the interface.
 
-1. **Python** saves state using `RunStateStore.save()`
-2. State is serialized to JSON format
-3. **TypeScript** loads the same JSON using `RunStateStore.load()`
-4. Execution continues with full context preserved
+### Agent-Environment Loop
 
-### Storage
+The `run_episode()` function implements the canonical agent-environment loop, which orchestrates the agent harness:
 
-- **PostgreSQL**: Use `PG_CONNECTION_URI` environment variable to connect to your PostgreSQL database.
+1. The loop calls the agent harness with messages and context
+2. Agent harness returns assistant message
+3. If assistant has `tool_calls`:
+   - Environment executes each tool call
+   - Appends tool result messages to transcript
+   - Loop continues (returns to step 1)
+4. If assistant has no `tool_calls`:
+   - Episode terminates (final answer)
 
-## System Architecture
+This loop continues until:
+- Agent harness returns final answer (no tool calls)
+- Maximum steps reached
+- Time limit exceeded
+- Error occurs
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                    OpenAI Agents SDK                        │
-│                  (Agent, Runner, etc.)                     │
-│              (Complex API Surface)                          │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│         Timestep Simplified API Layer                      │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  run_agent() - Simplified execution                 │  │
-│  │  RunStateStore - State persistence                   │  │
-│  │  result_processor parameter - Result processing      │  │
-│  └──────────────────┬───────────────────────────────────┘  │
-│                      │                                       │
-│  ┌───────────────────▼───────────────────────────────────┐ │
-│  │              MultiModelProvider                        │ │
-│  │  ┌─────────────────────────────────────────────────┐   │ │
-│  │  │         Model Name Parser                       │   │ │
-│  │  │  - Parses model name (e.g., "ollama/gpt-oss:20b-cloud")   │   │ │
-│  │  │  - Extracts prefix and actual model name        │   │ │
-│  │  └──────────────────┬──────────────────────────────┘   │ │
-│  │                      │                                   │ │
-│  │  ┌───────────────────▼───────────────────────────────┐ │ │
-│  │  │         Provider Router                          │ │ │
-│  │  │  - Checks MultiModelProviderMap for custom maps  │ │ │
-│  │  │  - Falls back to default providers              │ │ │
-│  │  └───────┬───────────────────────┬─────────────────┘ │ │
-│  └──────────┼───────────────────────┼────────────────────┘ │
-└─────────────┼───────────────────────┼───────────────────────┘
-              │                       │
-             ▼                       ▼
-┌──────────────────┐    ┌──────────────────────┐
-│  OpenAIProvider   │    │  OllamaModelProvider  │
-│  (from SDK)       │    │  (Timestep)          │
-└────────┬─────────┘    └──────────┬───────────┘
-         │                         │
-         ▼                         ▼
-┌──────────────────┐    ┌──────────────────────┐
-│   OpenAI API      │    │    Ollama API         │
-│                   │    │  (local or cloud)    │
-└───────────────────┘    └──────────────────────┘
+The agent-environment loop orchestrates the agent harness, executing tools and managing the conversation flow. Together, the loop and harness form the complete agent system.
+
+### Transcript
+
+The **transcript** is the complete record of an episode - all messages exchanged between agent and environment. This includes:
+- System/user messages (initial input)
+- Assistant messages (agent responses)
+- Tool messages (tool execution results)
+
+The transcript is preserved in full for analysis and grading.
+
+### Outcome
+
+The **outcome** is the final state in the environment, separate from the transcript. For example:
+- Transcript: Agent says "Your flight has been booked"
+- Outcome: Actual reservation exists in the database
+
+Timestep supports outcome verification through the `OutcomeVerifier` grader, which checks environment state rather than just the transcript.
+
+### Tool Execution
+
+Tools are deterministic functions:
+
+```python
+ToolFn = Callable[[JSON], Any]
 ```
 
-## Model Routing
+- Tools receive arguments as JSON
+- Return values are JSON-serialized
+- Tool calls are automatically indexed and paired with results
+- Tool execution is synchronous and deterministic
 
-### Prefix-Based Routing
+### Episode Info
 
-Timestep uses a simple but powerful prefix-based routing system:
+The `EpisodeInfo` object tracks metadata about a completed episode:
 
-1. **Model Name Parsing**: When a model is requested, the name is parsed to extract:
-   - **Prefix**: The part before the first `/` (e.g., `ollama` from `ollama/gpt-oss:20b-cloud`)
-   - **Model Name**: The part after the `/` (e.g., `llama3` from `ollama/gpt-oss:20b-cloud`)
+```python
+@dataclass
+class EpisodeInfo:
+    task_id: str
+    trial: int
+    seed: int
+    steps: int
+    tool_calls: int
+    duration_s: float
+    terminated_reason: str  # final_answer | max_steps | time_limit | error
+    error: Optional[str] = None
+    # Token tracking (if agent provides usage info)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+```
 
-2. **Provider Lookup**: The system looks up the provider in this order:
-   - First checks `MultiModelProviderMap` for custom mappings
-   - Falls back to default providers:
-     - `openai/` or no prefix → `OpenAIProvider`
-     - `ollama/` → `OllamaModelProvider`
+## Evaluation Harness
 
-3. **Model Retrieval**: The appropriate provider's `get_model()` method is called with the actual model name.
+The **evaluation harness** builds on the core agent-environment loop to provide evaluation capabilities.
 
-### Default Routing Rules
+### Graders
 
-| Model Name Format | Provider | Example |
-|-------------------|----------|---------|
-| `gpt-4` | OpenAI | `gpt-4`, `gpt-3.5-turbo` |
-| `openai/gpt-4` | OpenAI | `openai/gpt-4` |
-| `ollama/gpt-oss:20b` | Ollama (local) | `ollama/gpt-oss:20b` |
-| `ollama/gpt-oss:20b-cloud` | [Ollama Cloud](https://ollama.com/cloud) | `ollama/gpt-oss:20b-cloud`, `ollama/gpt-oss:120b-cloud` (note: `-cloud` suffix determines cloud usage) |
+Graders evaluate agent performance. They consume:
+- `messages`: Full transcript
+- `tool_index`: List of tool calls paired with results
+- `task`: Task JSON (for expected values, allowlists, etc.)
+- `info`: EpisodeInfo
 
-## Provider Mapping
+And return:
+```python
+{
+    "name": str,
+    "passed": bool,
+    "score": float,  # 0.0 to 1.0
+    "details": {...}
+}
+```
 
-### MultiModelProviderMap
+### Grader Types
 
-The `MultiModelProviderMap` class allows you to customize the routing behavior by mapping prefixes to specific provider instances. This enables:
+1. **Code-based graders**: Fast, objective, reproducible
+   - String matching (regex, contains)
+   - JSON validation
+   - Tool usage checks
+   - Transcript analysis
 
-- **Custom Providers**: Add your own model providers
-- **Multiple Ollama Instances**: Route different prefixes to different Ollama endpoints
-- **Provider Overrides**: Override default behavior for specific prefixes
+2. **LLM-as-judge graders**: Nuanced, handles subjective tasks
+   - Uses OpenAI to grade based on rubric
+   - Can grade final message or full transcript
+   - Configurable model and temperature
 
-### Example Custom Mapping
+3. **Outcome verification**: Checks environment state
+   - Takes verifier function
+   - Checks actual state, not just transcript
+   - Useful for verifying side effects (database changes, file writes, etc.)
 
-=== "Python"
+## Task Format
 
-    ```python
-    from timestep import MultiModelProvider, MultiModelProviderMap, OllamaModelProvider
+Tasks are JSON objects in JSONL files:
 
-    # Create custom mapping
-    provider_map = MultiModelProviderMap()
+```json
+{
+  "id": "task_01",
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."}
+  ],
+  "tools_allowed": ["calc", "echo"],
+  "expected": {
+    "final_regex": "^\\d+$",
+    "final_contains": "result",
+    "llm_judge_rubric": "Is the response helpful and accurate?"
+  },
+  "limits": {
+    "max_steps": 10,
+    "time_limit_s": 30
+  }
+}
+```
+
+### Task Fields
+
+- `id`: Unique identifier (auto-generated if missing)
+- `messages`: List of OpenAI-style messages
+- `tools_allowed`: Optional tool allowlist
+- `expected`: Optional expected values for graders
+- `limits`: Optional episode limits
+
+## Message Protocol
+
+Messages follow OpenAI chat completion format:
+
+- **System/User/Assistant messages**:
+  ```json
+  {
+    "role": "system" | "user" | "assistant",
+    "content": "string"
+  }
+  ```
+
+- **Assistant with tool calls**:
+  ```json
+  {
+    "role": "assistant",
+    "content": "string",
+    "tool_calls": [
+      {
+        "id": "call_123",
+        "type": "function",
+        "function": {
+          "name": "calc",
+          "arguments": "{\"expr\":\"2+2\"}"
+        }
+      }
+    ],
+    "usage": {  // Optional: token usage info
+      "prompt_tokens": 10,
+      "completion_tokens": 5,
+      "total_tokens": 15
+    }
+  }
+  ```
+
+- **Tool result messages**:
+  ```json
+  {
+    "role": "tool",
+    "tool_call_id": "call_123",
+    "content": "{\"value\":4}"
+  }
+  ```
+
+## Built-in Graders
+
+### Code-Based
+
+1. **FinalRegex**: Checks final assistant content matches regex
+2. **FinalContains**: Checks substring in final assistant content
+3. **FinalJSON**: Parses final assistant content as JSON and checks required keys
+4. **TranscriptContains**: Checks substring anywhere in transcript
+5. **TranscriptRegex**: Regex match anywhere in transcript
+6. **ForbiddenTools**: Fails if agent called tools not in allowlist
+7. **MaxToolCalls**: Fails if > N tool calls
+8. **MinToolCalls**: Fails if < N tool calls
+9. **ToolCallSequence**: Checks a tool name was called at least once
+10. **ToolCallOrder**: Verifies tool calls happened in expected sequence
+11. **ToolResultJSON**: Checks tool result JSON has required keys
+
+### LLM-as-Judge
+
+- **LLMJudge**: Uses OpenAI to grade based on rubric
+
+### Outcome Verification
+
+- **OutcomeVerifier**: Checks environment state via verifier function
+
+### Creating Custom Graders
+
+```python
+from timestep import Grader
+
+class MyGrader(Grader):
+    name = "MyGrader"
     
-    # Add custom Ollama instance
-    provider_map.add_provider(
-        "custom-ollama",
-        OllamaModelProvider(base_url="http://custom-ollama:11434")
-    )
-    
-    # Use in MultiModelProvider
-    model_provider = MultiModelProvider(provider_map=provider_map)
-    
-    # Now "custom-ollama/gpt-oss:20b-cloud" will route to the custom instance
-    ```
+    def grade(self, messages, tool_index, task, info):
+        # Your grading logic
+        return {
+            "name": self.name,
+            "passed": True,
+            "score": 1.0,
+            "details": {}
+        }
+```
 
-=== "TypeScript"
+## Output Structure
 
-    ```typescript
-    import { MultiModelProvider, MultiModelProviderMap, OllamaModelProvider } from '@timestep-ai/timestep';
+Running an evaluation suite creates:
 
-    // Create custom mapping
-    const providerMap = new MultiModelProviderMap();
-    
-    // Add custom Ollama instance
-    providerMap.addProvider(
-      'custom-ollama',
-      new OllamaModelProvider({ baseURL: 'http://custom-ollama:11434' })
-    );
-    
-    // Use in MultiModelProvider
-    const modelProvider = new MultiModelProvider({ provider_map: providerMap });
-    
-    // Now "custom-ollama/gpt-oss:20b-cloud" will route to the custom instance
-    ```
-
-## Ollama Integration
-
-### Local vs Cloud Detection
-
-Timestep automatically detects whether to use local or [Ollama Cloud](https://ollama.com/cloud) based on:
-
-1. **Model Name Suffix**: Models ending with `-cloud` automatically use Ollama Cloud
-2. **API Key Presence**: If `OLLAMA_API_KEY` is set, uses Ollama Cloud
-3. **Base URL**: Explicit `base_url` parameter overrides automatic detection
-
-### Lazy Client Initialization
-
-The `OllamaModelProvider` uses lazy initialization to avoid errors when Ollama isn't available:
-
-- The Ollama client is only created when `get_model()` is first called
-- This allows the provider to be instantiated even if Ollama isn't running
-- Errors only occur when actually trying to use an Ollama model
-
-=== "Python"
-
-    ```python
-    # This won't fail even if Ollama isn't running
-    provider = OllamaModelProvider()
-    
-    # Error only occurs here if Ollama isn't available
-    model = provider.get_model("llama3")
-    ```
-
-=== "TypeScript"
-
-    ```typescript
-    // This won't fail even if Ollama isn't running
-    const provider = new OllamaModelProvider();
-    
-    // Error only occurs here if Ollama isn't available
-    const model = await provider.getModel('llama3');
-    ```
-
-## Response Format Conversion
-
-### Ollama to OpenAI Format
-
-The `OllamaModel` class converts Ollama API responses to OpenAI-compatible format. This includes:
-
-1. **Message Format**: Converting Ollama's message format to OpenAI's format
-2. **Tool Calls**: Converting Ollama function calls to OpenAI tool calls
-3. **Streaming**: Handling streaming responses and converting chunks
-4. **Usage Statistics**: Converting token usage information
-5. **IDs**: Generating OpenAI-compatible IDs for completions and tool calls
-
-### Key Conversions
-
-| Ollama Format | OpenAI Format |
-|--------------|---------------|
-| `message.content` | `choices[0].message.content` |
-| `message.role` | `choices[0].message.role` |
-| `done` (streaming) | `choices[0].finish_reason` |
-| Function calls | Tool calls with `function` format |
-
-## Package Structure
-
-Timestep is organized into clear modules for maintainability and clarity:
-
-### Core Modules
-- **`core/`**: Core agent execution functions (`run_agent`/`runAgent`, `default_result_processor`/`defaultResultProcessor`)
-
-### Configuration
-
-### Data Access Layer
-- **`stores/`**: Data access layer with organized subfolders
-  - **`agent_store/`**: Agent configuration persistence
-  - **`session_store/`**: Session data persistence
-  - **`run_state_store/`**: Run state persistence
-  - **`shared/`**: Shared database utilities (`db_connection`, `schema`)
-  - **`guardrail_registry.py`/`guardrail_registry.ts`**: Guardrail registration (in-memory, future: persistent)
-  - **`tool_registry.py`/`tool_registry.ts`**: Tool registration (in-memory, future: persistent)
-
-### Tools and Models
-- **`tools/`**: Agent tools (e.g., `web_search`/`webSearch`)
-- **`model_providers/`**: Model provider implementations (`OllamaModelProvider`, `MultiModelProvider`)
-- **`models/`**: Model implementations (`OllamaModel`)
-
-This structure provides clear separation of concerns and makes the codebase easier to navigate and maintain.
-
-## Design Notes
-
-- Durable execution: pause/resume with a single `RunStateStore` call.
-- Cross-language: same state format; same APIs.
-- Prefix-based routing: model names stay self-documenting; defaults stay OpenAI.
-- Lazy initialization: providers are created only when needed; Ollama client comes up on first use.
-- Organized architecture: clear module separation for maintainability.
+```
+runs/demo/
+├── run_meta.json          # Run metadata
+├── results.jsonl          # One line per trial
+└── trials/
+    └── task_id/
+        └── trial_XX/
+            ├── transcript.json    # Full message transcript
+            ├── tool_index.json    # Tool calls paired with results
+            ├── grades.json        # Grader results
+            └── info.json          # Episode info (steps, duration, tokens, etc.)
+```
 
 ## Cross-Language Parity
 
-- Same API names/signatures.
-- Same routing behavior and state format.
-- State records in the database are interchangeable between languages.
-
-## Performance Considerations
-
-- PostgreSQL is the recommended backend for all environments.
-- Minimal overhead in routing; provider instances are cached.
-
-## Security Considerations
-
-- Keep API keys in env vars.
-- Lock down state storage (permissions, encryption) if you persist real data.
+Python and TypeScript implementations:
+- Use same function/class names
+- Same parameter names and types
+- Same task format
+- Same result format
+- Compatible task JSONL files
+- Core and eval modules have identical APIs

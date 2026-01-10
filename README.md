@@ -1,265 +1,383 @@
 # Timestep AI Agents SDK
 
-Durable OpenAI Agents with one API across Python and TypeScript. Pause and resume runs (even across languages), keep state in one place, and route models with simple prefixes.
+A universal **agents SDK** built around the core **agent-environment loop** using OpenAI-style chat message protocol. The SDK provides a clean foundation for building agents, with an **evaluation harness** as one powerful use case.
+
+## Core Concepts
+
+Timestep is built on a simple, universal pattern:
+
+- **Agent harness** (or scaffold): System that enables a model to act as an agent - the `AgentFn` interface that takes messages and context, returns assistant messages. The harness processes inputs, orchestrates tool calls, and returns results.
+- **Agent-environment loop**: Core execution pattern implemented by `run_episode()` that orchestrates the agent harness, executes tools, and manages the conversation flow. The loop runs the harness in a multi-turn pattern until completion.
+- **Evaluation harness**: Infrastructure that runs evaluation suites end-to-end - one use case of the core SDK
+- **Transcript**: Complete record of an episode (all messages)
+- **Outcome**: Final state in environment (separate from transcript)
 
 ## What Timestep gives you
-- **Durable runs**: Save and resume `RunState` without changing your agent code.
-- **Cross-language parity**: Same API surface in Python and TypeScript; state stays compatible across languages.
-- **Single storage story**: Use `PG_CONNECTION_URI` for PostgreSQL.
-- **Model routing**: Prefix models (`ollama/gpt-oss:20b-cloud`) and let `MultiModelProvider` pick the backend.
-- **Minimal concepts**: `run_agent` / `runAgent`, `RunStateStore`.
-- **Organized architecture**: Clean separation of concerns with `core/`, `config/`, `stores/`, `tools/`, `model_providers/`, and `models/` modules.
+
+### Core SDK
+- **Universal protocol**: OpenAI chat message format - works with any agent framework
+- **Simple agent interface**: Just a function `(messages, context) => assistant_message`
+- **Tool execution**: Deterministic tool execution with automatic indexing
+- **Cross-language parity**: Same API in Python and TypeScript
+
+### Evaluation Harness
+- **Built-in graders**: Code-based (regex, contains, JSON), LLM-as-judge, outcome verification
+- **Token tracking**: Automatic tracking of input/output tokens and costs
+- **JSONL task format**: Simple, human-readable task definitions
+- **CLI interface**: Run eval suites and generate reports
 
 ## Prerequisites
-- `OPENAI_API_KEY`
-- **PostgreSQL**: Set `PG_CONNECTION_URI=postgresql://user:pass@host/db`
 
-## Quick start
+- **Python 3.11+** or **Node.js 20+**
+- **OpenAI API key** (optional, for agents that use OpenAI or LLM-as-judge graders)
 
-### Python (async)
+## Quick Start
+
+### Using the Core Agent-Environment Loop
+
+The core SDK lets you run the agent-environment loop (which orchestrates the agent harness) without evaluation:
 
 ```python
-from timestep import run_agent, RunStateStore
-from agents import (
-    Agent,
-    OpenAIConversationsSession,
-    ModelSettings,
-    function_tool,
-    input_guardrail,
-    output_guardrail,
-    GuardrailFunctionOutput,
-    RunContextWrapper,
-    TResponseInputItem,
-)
+from timestep import run_episode, agent_builtin_echo, DEFAULT_TOOLS
+from timestep.core.types import Message
 
-# Define a tool with approval requirement
-async def needs_approval_for_weather(ctx, args, call_id):
-    """Require approval for sensitive cities."""
-    return args.get("city", "").lower() in ["berkeley", "san francisco"]
-
-@function_tool
-def get_weather(city: str) -> str:
-    """Get weather information for a city."""
-    return f"The weather in {city} is sunny and 72°F"
-
-get_weather.needs_approval = needs_approval_for_weather
-
-# Define guardrails
-@input_guardrail(run_in_parallel=True)
-async def content_filter(
-    ctx: RunContextWrapper[None],
-    agent: Agent,
-    input: str | list[TResponseInputItem]
-) -> GuardrailFunctionOutput:
-    """Block inappropriate content."""
-    input_text = input if isinstance(input, str) else str(input)
-    blocked = any(word in input_text.lower() for word in ["spam", "scam"])
-    return GuardrailFunctionOutput(
-        output_info={"blocked": blocked},
-        tripwire_triggered=blocked,
-    )
-
-@output_guardrail
-async def output_safety(
-    ctx: RunContextWrapper,
-    agent: Agent,
-    output: str
-) -> GuardrailFunctionOutput:
-    """Ensure safe output."""
-    unsafe = "password" in output.lower() or "api key" in output.lower()
-    return GuardrailFunctionOutput(
-        output_info={"unsafe": unsafe},
-        tripwire_triggered=unsafe,
-    )
-
-# Create specialized weather agent
-weather_agent = Agent(
-    instructions="You are a weather assistant. Use get_weather for all weather queries.",
-    model="gpt-4.1",
-    model_settings=ModelSettings(temperature=0),
-    name="Weather Assistant",
-    tools=[get_weather],
-)
-
-# Create main assistant with handoffs and guardrails
-assistant = Agent(
-    handoffs=[weather_agent],
-    instructions="You are a helpful personal assistant.",
-    model="gpt-4.1",
-    model_settings=ModelSettings(temperature=0),
-    name="Personal Assistant",
-    input_guardrails=[content_filter],
-    output_guardrails=[output_safety],
-)
-
-# Initialize session and state store
-session = OpenAIConversationsSession()
-session_id = await session._get_session_id()
-state_store = RunStateStore(agent=assistant, session_id=session_id)
-
-# Run multiple conversation turns
-conversations = [
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's 2+2?"}]}],
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Oakland?"}]}],
-    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in Berkeley?"}]}],
+# Define initial messages
+messages: list[Message] = [
+    {"role": "system", "content": "You are helpful."},
+    {"role": "user", "content": "Calculate 5 + 3 using the calc tool."}
 ]
 
-for input_items in conversations:
-    result = await run_agent(assistant, input_items, session, stream=False)
-    
-    # Handle interruptions (e.g., tool approval needed)
-    if result.interruptions:
-        state = result.to_state()
-        await state_store.save(state)
-        
-        # Load, approve, and resume
-        loaded_state = await state_store.load()
-        for interruption in loaded_state.get_interruptions():
-            loaded_state.approve(interruption)
-        
-        result = await run_agent(assistant, loaded_state, session, stream=False)
+# Run a single episode
+transcript, info = run_episode(
+    initial_messages=messages,
+    agent=agent_builtin_echo,  # Your agent harness (AgentFn)
+    tools=DEFAULT_TOOLS,
+    tools_allowed=["calc"],
+    limits={"max_steps": 10, "time_limit_s": 30},
+    task_meta={"id": "demo"},
+    seed=0,
+)
+
+print(f"Steps: {info.steps}, Tool calls: {info.tool_calls}")
+print(f"Final message: {transcript[-1]['content']}")
+```
+
+### Using the Evaluation Harness
+
+The evaluation harness builds on the core to run evaluation suites:
+
+```python
+from timestep import run_suite, report, agent_builtin_echo, DEFAULT_TOOLS
+from timestep import FinalContains, ForbiddenTools, LLMJudge
+from pathlib import Path
+
+# Create tasks file (tasks.jsonl)
+tasks = [
+    {
+        "id": "hello_01",
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Say hello to Mike in one sentence."}
+        ],
+        "expected": {"final_contains": "Mike"},
+        "limits": {"max_steps": 5, "time_limit_s": 30}
+    }
+]
+
+# Write tasks to JSONL
+import json
+with open("tasks.jsonl", "w") as f:
+    for task in tasks:
+        f.write(json.dumps(task) + "\n")
+
+# Run eval suite
+run_suite(
+    tasks_path=Path("tasks.jsonl"),
+    outdir=Path("runs/demo"),
+    agent=agent_builtin_echo,
+    tools=DEFAULT_TOOLS,
+    graders=[
+        FinalContains(),  # Code-based grader
+        ForbiddenTools(),  # Tool usage checker
+        # LLMJudge(rubric="Is the response friendly and appropriate?"),  # LLM-as-judge
+    ],
+    trials=3,
+    seed=0,
+    agent_timeout_s=120,
+)
+
+# Generate report
+report(Path("runs/demo"))
 ```
 
 ### TypeScript
 
 ```typescript
-import { runAgent, RunStateStore } from '@timestep-ai/timestep';
-import {
-  Agent,
-  OpenAIConversationsSession,
-  tool,
-  InputGuardrail,
-  OutputGuardrail,
-} from '@openai/agents';
-import type { AgentInputItem } from '@openai/agents-core';
+import { runEpisode, agentBuiltinEcho, DEFAULT_TOOLS } from '@timestep-ai/timestep';
+import type { Message } from '@timestep-ai/timestep';
 
-// Define a tool with approval requirement
-const getWeather = tool({
-  name: 'get_weather',
-  description: 'Get weather information for a city.',
-  parameters: {
-    type: 'object',
-    properties: {
-      city: { type: 'string' }
-    },
-    required: ['city'],
-    additionalProperties: false
-  } as any,
-  needsApproval: async (_ctx: any, args: any) => {
-    // Require approval for sensitive cities
-    return ['berkeley', 'san francisco'].includes(args.city?.toLowerCase() || '');
-  },
-  execute: async (args: any): Promise<string> => {
-    return `The weather in ${args.city} is sunny and 72°F`;
-  }
-});
-
-// Define guardrails
-const contentFilter: InputGuardrail = {
-  name: 'Content Filter',
-  runInParallel: true,
-  execute: async ({ input }) => {
-    const inputText = typeof input === 'string' ? input : JSON.stringify(input);
-    const blocked = ['spam', 'scam'].some(word => 
-      inputText.toLowerCase().includes(word)
-    );
-    return {
-      outputInfo: { blocked },
-      tripwireTriggered: blocked,
-    };
-  },
-};
-
-const outputSafety: OutputGuardrail<any> = {
-  name: 'Output Safety',
-  execute: async ({ agentOutput }) => {
-    const outputText = typeof agentOutput === 'string' 
-      ? agentOutput 
-      : JSON.stringify(agentOutput);
-    const unsafe = outputText.toLowerCase().includes('password') || 
-                   outputText.toLowerCase().includes('api key');
-    return {
-      outputInfo: { unsafe },
-      tripwireTriggered: unsafe,
-    };
-  },
-};
-
-// Create specialized weather agent
-const weatherAgent = new Agent({
-  instructions: 'You are a weather assistant. Use get_weather for all weather queries.',
-  model: 'gpt-4.1',
-  modelSettings: { temperature: 0 },
-  name: 'Weather Assistant',
-  tools: [getWeather],
-});
-
-// Create main assistant with handoffs and guardrails
-const assistant = new Agent({
-  handoffs: [weatherAgent],
-  instructions: 'You are a helpful personal assistant.',
-  model: 'gpt-4.1',
-  modelSettings: { temperature: 0 },
-  name: 'Personal Assistant',
-  inputGuardrails: [contentFilter],
-  outputGuardrails: [outputSafety],
-});
-
-// Initialize session and state store
-const session = new OpenAIConversationsSession();
-const sessionId = await session.getSessionId();
-const stateStore = new RunStateStore({ agent: assistant, sessionId });
-
-// Run multiple conversation turns
-const conversations: AgentInputItem[][] = [
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's 2+2?" }] }],
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Oakland?" }] }],
-  [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: "What's the weather in Berkeley?" }] }],
+// Core usage
+const messages: Message[] = [
+  { role: 'system', content: 'You are helpful.' },
+  { role: 'user', content: 'Calculate 5 + 3 using the calc tool.' }
 ];
 
-for (const inputItems of conversations) {
-  let result = await runAgent(assistant, inputItems, session, false);
-  
-  // Handle interruptions (e.g., tool approval needed)
-  if (result.interruptions?.length) {
-    await stateStore.save(result.state);
+const [transcript, info] = await runEpisode(
+  messages,
+  agentBuiltinEcho,
+  DEFAULT_TOOLS,
+  ['calc'],
+  { max_steps: 10, time_limit_s: 30 },
+  { id: 'demo' },
+  0
+);
+
+console.log(`Steps: ${info.steps}, Tool calls: ${info.tool_calls}`);
+```
+
+## Agent Harness Interface
+
+The agent harness is the `AgentFn` interface - a function that enables a model to act as an agent. The agent-environment loop orchestrates this harness:
+
+```python
+from timestep import AgentFn, Message, JSON
+
+def my_agent(messages: list[Message], context: JSON) -> Message:
+    """
+    Agent harness function.
     
-    // Load, approve, and resume
-    const loadedState = await stateStore.load();
-    for (const interruption of loadedState.getInterruptions()) {
-      loadedState.approve(interruption);
+    Args:
+        messages: Full conversation history (transcript so far)
+        context: Context dict with tools_schema, task, seed, limits
+    
+    Returns:
+        Assistant message (may include tool_calls)
+    """
+    # Your agent logic here
+    # Use OpenAI, Anthropic, or any other provider
+    return {
+        "role": "assistant",
+        "content": "Hello!",
+        "tool_calls": [...]  # Optional
     }
-    
-    result = await runAgent(assistant, loadedState, session, false);
-  }
+```
+
+### Built-in Agent Harnesses
+
+- `agent_builtin_echo`: Echoes the last user message (for testing)
+- `agent_cmd_factory`: Wraps external command as agent harness (AgentFn)
+
+## Tools
+
+Tools are deterministic functions that take arguments and return results:
+
+```python
+from timestep import ToolFn, JSON
+
+def my_tool(args: JSON) -> Any:
+    """Your tool logic."""
+    return {"result": "value"}
+```
+
+### Built-in Tools
+
+- `tool_calc`: Calculates arithmetic expressions (demo only, uses eval - not production-safe)
+- `tool_echo`: Echoes back arguments
+
+## Evaluation Graders
+
+Graders evaluate agent performance. Timestep supports multiple grader types:
+
+### Code-Based Graders
+
+- `FinalRegex`: Checks final assistant content matches regex
+- `FinalContains`: Checks substring in final assistant content
+- `FinalJSON`: Parses final assistant content as JSON and checks required keys
+- `TranscriptContains`: Checks substring anywhere in transcript
+- `TranscriptRegex`: Regex match anywhere in transcript
+- `ForbiddenTools`: Fails if agent called tools not in allowlist
+- `MaxToolCalls`: Fails if > N tool calls
+- `MinToolCalls`: Fails if < N tool calls
+- `ToolCallSequence`: Checks a tool name was called at least once
+- `ToolCallOrder`: Verifies tool calls happened in expected sequence
+- `ToolResultJSON`: Checks tool result JSON has required keys
+
+### LLM-as-Judge Grader
+
+Uses an LLM to grade based on a rubric:
+
+```python
+from timestep import LLMJudge
+
+graders = [
+    LLMJudge(
+        rubric="Is the response helpful, accurate, and friendly?",
+        model="gpt-4o-mini",
+        temperature=0.0,
+        grade_transcript=False  # True to grade full transcript, False for final message only
+    )
+]
+```
+
+### Outcome Verification
+
+Checks environment state, not just the transcript:
+
+```python
+from timestep import OutcomeVerifier
+
+def check_database_state(messages, tool_index, task):
+    """Verify the outcome in the environment (e.g., database state)."""
+    # Check actual state, not just what agent said
+    return True  # or False
+
+graders = [
+    OutcomeVerifier(verifier_fn=check_database_state)
+]
+```
+
+## Task Format (JSONL)
+
+Each line in the tasks file is a JSON object representing one task:
+
+```json
+{
+  "id": "calc_01",
+  "messages": [
+    {"role": "system", "content": "You must use the calc tool."},
+    {"role": "user", "content": "Compute 19*7 using the calc tool, then answer with only the number."}
+  ],
+  "tools_allowed": ["calc"],
+  "expected": {
+    "final_regex": "^133$",
+    "final_contains": "133"
+  },
+  "limits": {"max_steps": 10, "time_limit_s": 30}
 }
 ```
 
-## Cross-language resume
+### Task Fields
 
-1) Start in Python, save state on interruption:
+- `id` (optional): Unique task identifier. Auto-generated if missing.
+- `messages`: List of OpenAI-style messages (system/user/assistant/tool).
+- `tools_allowed` (optional): Allowlist of tool names the agent can use.
+- `expected` (optional): Expected values for graders (e.g., `final_regex`, `final_contains`, `llm_judge_rubric`).
+- `limits` (optional): Episode limits (`max_steps`, `time_limit_s`).
+
+## Episode Info
+
+The `EpisodeInfo` object tracks episode metadata:
+
 ```python
-state = result.to_state()
-await state_store.save(state)
+@dataclass
+class EpisodeInfo:
+    task_id: str
+    trial: int
+    seed: int
+    steps: int
+    tool_calls: int
+    duration_s: float
+    terminated_reason: str  # final_answer | max_steps | time_limit | error
+    error: Optional[str] = None
+    # Token tracking (if agent provides usage info)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
 ```
-2) Load and continue in TypeScript:
-```typescript
-const saved = await stateStore.load();
-for (const interruption of saved.getInterruptions()) saved.approve(interruption);
-await runAgent(agent, saved, session, false);
+
+## Output Structure
+
+Running an evaluation suite creates:
+
+```
+runs/demo/
+├── run_meta.json          # Run metadata
+├── results.jsonl          # One line per trial
+└── trials/
+    └── task_id/
+        └── trial_XX/
+            ├── transcript.json    # Full message transcript
+            ├── tool_index.json    # Tool calls paired with results
+            ├── grades.json        # Grader results
+            └── info.json          # Episode info (steps, duration, tokens, etc.)
 ```
 
+## CLI Usage
 
-## Routing models
-- `gpt-4.1` or `openai/gpt-4.1` → OpenAI
-- `ollama/gpt-oss:20b` → Ollama (local)
-- `ollama/gpt-oss:20b-cloud` → [Ollama Cloud](https://ollama.com/cloud) (note: `-cloud` suffix determines cloud usage)
-- Add your own prefixes via `MultiModelProviderMap`.
+### Python
 
-## Docs
+```bash
+# Install
+pip install timestep
+
+# Run eval suite
+timestep run \
+  --tasks tasks.jsonl \
+  --outdir runs/demo \
+  --agent builtin:echo \
+  --trials 3 \
+  --graders FinalContains ForbiddenTools
+
+# Generate report
+timestep report --outdir runs/demo
+```
+
+### TypeScript
+
+```bash
+# Build first
+cd typescript
+pnpm build
+
+# Run eval suite
+node dist/eval/cli.js run \
+  --tasks tasks.jsonl \
+  --outdir runs/demo \
+  --agent builtin:echo \
+  --trials 3 \
+  --graders FinalContains ForbiddenTools
+
+# Generate report
+node dist/eval/cli.js report --outdir runs/demo
+```
+
+## Architecture
+
+Timestep is organized into two main modules:
+
+- **`core/`**: Core agent-environment loop - orchestrates the agent harness, can be used independently
+- **`eval/`**: Evaluation harness - builds on core to run evaluation suites
+
+The core module provides:
+- Agent harness interface (`AgentFn`) - enables a model to act as an agent
+- Episode runner (`run_episode`) - orchestrates the agent harness in the agent-environment loop
+- Tool execution and indexing
+- Episode info tracking (including tokens)
+
+The eval module provides:
+- Suite runner (`run_suite`)
+- Graders (code-based, LLM-as-judge, outcome verification)
+- Reporting (`report`)
+
+## Cross-Language Compatibility
+
+Tasks created in Python work in TypeScript and vice versa. The JSONL format and result structures are identical.
+
+## Examples
+
+See `python/examples/` and `typescript/examples/` for complete examples:
+- Core agent-environment loop usage
+- Evaluation harness usage
+- Custom agent harnesses
+- Custom graders
+
+## Documentation
+
 - Full docs: https://timestep-ai.github.io/timestep/
-- Python notes: python/README.md
-- TypeScript notes: typescript/README.md
+- Python notes: `python/README.md`
+- TypeScript notes: `typescript/README.md`
 
 ## License
+
 MIT License - see `LICENSE`.
