@@ -1,9 +1,9 @@
 /** Built-in graders for evaluation. */
 
-import type { Message } from '../utils/messages.js';
-import { lastAssistantContent } from '../utils/messages.js';
-import { clamp01 } from '../utils/io.js';
-import type { ToolCallRecord, EpisodeInfo } from '../core/episode.js';
+import type { Message } from '../utils/messages';
+import { lastAssistantContent } from '../utils/messages';
+import { clamp01 } from '../utils/io';
+import type { ToolCallRecord, EpisodeInfo } from '../core/episode';
 
 export type JSON = Record<string, any>;
 

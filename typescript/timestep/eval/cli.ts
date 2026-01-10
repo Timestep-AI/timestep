@@ -1,9 +1,9 @@
 /** CLI interface for evaluation harness. */
 
-import { agentBuiltinEcho, agentCmdFactory } from '../core/index.js';
-import { parseGraderSpec } from './graders.js';
-import { runSuite, report } from './suite.js';
-import { DEFAULT_TOOLS } from '../core/index.js';
+import { agentBuiltinEcho, agentCmdFactory } from '../core/index';
+import { parseGraderSpec } from './graders';
+import { runSuite, report } from './suite';
+import { DEFAULT_TOOLS } from '../core/index';
 
 export async function main(args: string[]): Promise<void> {
   /** Main CLI entry point. */

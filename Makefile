@@ -7,12 +7,12 @@ patch:
 
 test:
 	@echo "Running Python tests..."
-	cd python && uv run pytest
+	cd python && uv pip install -e ".[dev]" && uv run python -m pytest
 	@echo "Running TypeScript tests..."
 	cd typescript && pnpm install && pnpm test
 
 test-python:
-	cd python && uv run pytest
+	cd python && uv pip install -e ".[dev]" && uv run python -m pytest
 
 test-typescript:
 	cd typescript && pnpm install && pnpm test

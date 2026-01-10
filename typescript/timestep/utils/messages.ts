@@ -1,6 +1,6 @@
 /** Message utilities for OpenAI chat protocol. */
 
-import { stableHash } from './hashing.js';
+import { stableHash } from './hashing';
 
 export type Message = Record<string, any>;
 export type JSON = Record<string, any>;

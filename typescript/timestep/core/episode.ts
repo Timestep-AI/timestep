@@ -2,8 +2,8 @@
 
 import { AgentFn, JSON, Message, ToolFn } from './types';
 import { buildToolsSchema } from './tools';
-import { isAssistantMessage } from '../../utils/messages';
-import { now } from '../../utils/io';
+import { isAssistantMessage } from '../utils/messages';
+import { now } from '../utils/io';
 
 export interface EpisodeInfo {
   task_id: string;

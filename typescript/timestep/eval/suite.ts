@@ -1,12 +1,12 @@
 /** Suite runner for evaluation harness. */
 
-import { readJsonl, writeJsonl } from '../utils/jsonl.js';
-import { writeJson, now } from '../utils/io.js';
-import { ensureTaskId } from '../utils/messages.js';
-import type { AgentFn, ToolFn, EpisodeInfo } from '../core/index.js';
-import { runEpisode, indexToolCalls } from '../core/index.js';
-import type { Grader } from './graders.js';
-import { aggregateGrades } from './graders.js';
+import { readJsonl, writeJsonl } from '../utils/jsonl';
+import { writeJson, now } from '../utils/io';
+import { ensureTaskId } from '../utils/messages';
+import type { AgentFn, ToolFn, EpisodeInfo } from '../core/index';
+import { runEpisode, indexToolCalls } from '../core/index';
+import type { Grader } from './graders';
+import { aggregateGrades } from './graders';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 
