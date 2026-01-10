@@ -7,34 +7,24 @@ allow-direct-references = true
 
 [project]
 name = "timestep"
-version = "2026.0.59"
-description = "Timestep AI - Agent execution framework with cross-language state persistence and multi-model support for OpenAI Agents"
+version = "2026.1.0"
+description = "Timestep AI Agents SDK - Core agent-environment loop with evaluation harness"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
-    "ollama>=0.6.1",
-    # openai-agents is vendored - see vendor_openai_agents.py
-    # chatkit-python is vendored - see vendor_chatkit.py
-    "openai>=2.9.0,<3",
-    "pydantic>=2.12.3,<3",  # Required by openai-agents and chatkit
-    "griffe>=1.5.6,<2",  # Required by openai-agents for function schema parsing
-    "typing-extensions>=4.12.2,<5",  # Required by openai-agents
-    "requests>=2.0,<3",  # Required by openai-agents
-    "types-requests>=2.0,<3",  # Type stubs for requests
-    "mcp>=1.11.0,<2; python_version >= '3.10'",  # Required by openai-agents for MCP support
-    "jinja2>=3.0.0",  # Required by chatkit
+    "openai>=1.0.0",
+]
+[project.optional-dependencies]
+dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "firecrawl-py>=1.0.0",
-    "asyncpg>=0.29.0",  # PostgreSQL async driver for database-backed state storage (optional)
 ]
+[project.scripts]
+timestep = "timestep.eval.cli:main"
 [tool.hatch.build.targets.wheel]
-packages = ["timestep", "agents", "chatkit"]
+packages = ["timestep"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-# Exclude cross-language tests that are orchestrated by TypeScript
-norecursedirs = []
-addopts = "-v -x --ignore=tests/test_cross_language_ts_to_py.py"
