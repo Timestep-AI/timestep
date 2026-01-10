@@ -8,8 +8,6 @@ This document provides guidance for AI coding agents working on the Timestep pro
 
 - **Python 3.11+** for Python development
 - **Node.js 20+** for TypeScript development
-- **PostgreSQL** (optional, for production-like testing)
-- **Docker** (optional, for testcontainers)
 
 ### Setup
 
@@ -23,7 +21,7 @@ This document provides guidance for AI coding agents working on the Timestep pro
    ```bash
    cd python
    pip install -e .
-   pip install -r requirements-docs.txt  # For documentation
+   pip install -e ".[dev]"  # For development dependencies
    ```
 
 3. **TypeScript setup**:
@@ -32,18 +30,10 @@ This document provides guidance for AI coding agents working on the Timestep pro
    pnpm install
    ```
 
-4. **Environment variables**:
+4. **Environment variables** (optional):
    ```bash
-   export OPENAI_API_KEY="your-key-here"
-   export PG_CONNECTION_URI="postgresql://user:pass@host/db"  # Optional
-   export FIRECRAWL_API_KEY="your-key-here"  # For web search tool
+   export OPENAI_API_KEY="your-key-here"  # For agents that use OpenAI
    ```
-
-### Database Setup
-
-For testing, you can use:
-- **PostgreSQL**: Set `PG_CONNECTION_URI` environment variable
-- **Testcontainers**: Used in tests for isolated PostgreSQL instances
 
 ## Project Structure
 
@@ -51,16 +41,18 @@ The codebase is organized into clear modules:
 
 ```
 timestep/
-├── core/              # Core agent execution functions
-├── config/            # Configuration utilities
-├── stores/            # Data access layer
-│   ├── agent_store/   # Agent persistence
-│   ├── session_store/ # Session persistence
-│   ├── run_state_store/ # Run state persistence
-│   └── shared/        # Shared DB utilities
-├── tools/             # Agent tools
-├── model_providers/   # Model provider implementations
-└── models/            # Model implementations
+├── python/timestep/
+│   ├── eval/              # Eval framework core
+│   │   ├── agent.py       # Agent function interface
+│   │   ├── episode.py     # Episode runner
+│   │   ├── tools.py        # Tool execution
+│   │   ├── graders.py      # Built-in graders
+│   │   ├── suite.py        # Suite runner
+│   │   └── cli.py          # CLI interface
+│   └── utils/              # Utilities (JSONL, hashing, etc.)
+└── typescript/timestep/
+    ├── eval/               # Same structure as Python
+    └── utils/
 ```
 
 **Important**: Both Python and TypeScript follow the same structure for cross-language parity.
@@ -85,14 +77,14 @@ pnpm test
 
 - Tests are in `tests/` directories
 - Test files follow `test_*.py` or `test_*.ts` naming
-- Cross-language tests verify state compatibility between Python and TypeScript
+- Cross-language tests verify task format compatibility
 
 ### Writing Tests
 
-1. **Use async/await** for all async operations
-2. **Clean up resources** (close connections, clear state)
+1. **Use async/await** for all async operations (if needed)
+2. **Clean up resources** (temporary files, etc.)
 3. **Test both success and error cases**
-4. **Verify cross-language compatibility** when testing state persistence
+4. **Verify cross-language compatibility** when testing task formats
 
 ## Code Style and Conventions
 
@@ -100,7 +92,6 @@ pnpm test
 
 - Follow PEP 8 style guide
 - Use type hints for all function signatures
-- Use `async`/`await` for async operations
 - Docstrings should follow Google style
 
 ### TypeScript
@@ -116,16 +107,16 @@ pnpm test
 - Have the same API surface
 - Use the same function/class names
 - Follow the same parameter naming conventions
-- Produce compatible state formats
+- Produce compatible task and result formats
 
 ## Pull Request Guidelines
 
 ### Before Submitting
 
 1. **Run all tests**: Ensure both Python and TypeScript tests pass
-2. **Check imports**: Verify all imports use the new module structure
+2. **Check imports**: Verify all imports use correct module paths
 3. **Update documentation**: Update relevant docs if adding features
-4. **Cross-language testing**: Test that state can be saved in one language and loaded in the other
+4. **Cross-language testing**: Test that tasks work in both languages
 
 ### PR Checklist
 
@@ -133,82 +124,127 @@ pnpm test
 - [ ] Code follows project conventions
 - [ ] Imports use correct module paths
 - [ ] Documentation updated (if needed)
-- [ ] Cross-language compatibility verified (if state-related)
+- [ ] Cross-language compatibility verified (if task-related)
 - [ ] No breaking changes (or clearly documented)
 
 ### Commit Messages
 
 Use clear, descriptive commit messages:
-- `feat: Add new tool for X`
-- `fix: Resolve issue with state loading`
-- `refactor: Reorganize stores module`
-- `docs: Update README with new structure`
+- `feat: Add new grader for X`
+- `fix: Resolve issue with tool execution`
+- `refactor: Reorganize eval modules`
+- `docs: Update README with new examples`
 
 ## Common Tasks
 
+### Adding a New Grader
+
+1. Create grader class in `eval/graders.py` (Python) or `eval/graders.ts` (TypeScript)
+2. Extend the `Grader` base class
+3. Implement `grade()` method
+4. Add to `BUILTIN_GRADERS` dictionary
+5. Update `parse_grader_spec()` if needed
+6. Add tests
+7. Update documentation
+
 ### Adding a New Tool
 
-1. Create tool file in `tools/` directory (e.g., `tools/my_tool.py` or `tools/my_tool.ts`)
-2. Export from `tools/__init__.py` or `tools/index.ts`
-3. Update main `__init__.py` or `index.ts` to export
-4. Add tests in `tests/test_tools.py` or `tests/test_tools.ts`
-5. Update documentation
+1. Create tool function in `eval/tools.py` (Python) or `eval/tools.ts` (TypeScript)
+2. Add to `DEFAULT_TOOLS` dictionary
+3. Add tests
+4. Update documentation
 
-### Adding a New Model Provider
+### Creating an Agent Adapter
 
-1. Create provider in `model_providers/` directory
-2. Create model implementation in `models/` directory
-3. Update `MultiModelProvider` to support new prefix
-4. Add tests
-5. Update documentation
+Agents are functions that take `(messages, context)` and return an assistant message:
 
-### Modifying Store Functions
+```python
+def my_agent(messages: list[Message], context: JSON) -> Message:
+    # Use OpenAI library or other model provider
+    # Return OpenAI-style assistant message
+    return {"role": "assistant", "content": "...", "tool_calls": [...]}
+```
 
-**Important**: Store functions manage their own database connections internally. Do not pass `db` parameters to public store functions.
+For command-based agents, use `agent_cmd_factory()`.
 
-- Public functions: `save_agent(agent)`, `load_agent(agent_id)`, etc.
-- Internal functions: `_save_agent_internal(agent, db)`, `_load_agent_internal(agent_id, db)`, etc.
+## Eval Framework Architecture
 
-### Working with DBOS Workflows
+### Core Concepts
 
-- Workflows are in `core/agent_workflow.py`/`core/agent_workflow.ts`
-- Use `@DBOS.workflow()` decorator (Python) or `DBOS.registerWorkflow()` (TypeScript)
-- Steps use `@DBOS.step()` decorator (Python) or `DBOS.registerStep()` (TypeScript)
-- Always ensure DBOS is configured before using workflows
+1. **Agent Function**: `(messages, context) => assistant_message`
+   - Takes list of messages and context
+   - Returns one assistant message
+   - May include `tool_calls` for tool-using agents
+
+2. **Episode Runner**: `run_episode()`
+   - Runs agent-environment loop
+   - Executes tool calls automatically
+   - Tracks steps, tool calls, duration
+   - Returns transcript and episode info
+
+3. **Tool Execution**: Deterministic functions
+   - Tools are simple functions `(args) => result`
+   - Results are JSON-serialized
+   - Tool calls are automatically indexed
+
+4. **Graders**: Evaluation functions
+   - Take transcript, tool index, task, episode info
+   - Return `{name, passed, score, details}`
+   - Can be aggregated
+
+5. **Suite Runner**: `run_suite()`
+   - Runs multiple trials per task
+   - Persists transcripts, tool indices, grades
+   - Generates results.jsonl
+
+### Task Format
+
+Tasks are JSON objects with:
+- `id`: Unique identifier
+- `messages`: List of OpenAI-style messages
+- `tools_allowed`: Optional tool allowlist
+- `expected`: Optional expected values for graders
+- `limits`: Optional episode limits
+
+### Message Protocol
+
+Messages follow OpenAI chat completion format:
+- `role`: "system" | "user" | "assistant" | "tool"
+- `content`: String content
+- `tool_calls`: Array of tool call objects (assistant messages)
+- `tool_call_id`: String ID (tool messages)
 
 ## Debugging Tips
 
-### State Persistence Issues
+### Task Format Issues
 
-1. Check database connection string
-2. Verify schema is initialized
-3. Check that state is being serialized correctly
-4. Verify cross-language state format compatibility
+1. Check JSONL file is valid
+2. Verify messages array structure
+3. Check tool names match available tools
+4. Verify expected values match grader requirements
 
-### Import Errors
+### Agent Issues
 
-- Ensure imports use the new module structure
-- Check that `__init__.py` files export correctly
-- Verify TypeScript exports in `index.ts`
+1. Check agent returns valid assistant message
+2. Verify tool_calls format if using tools
+3. Check agent handles context correctly
+4. Test with builtin:echo first
 
-### DBOS Workflow Issues
+### Cross-Language Issues
 
-1. Ensure `configure_dbos()`/`configureDBOS()` is called
-2. Check that `ensure_dbos_launched()`/`ensureDBOSLaunched()` is called
-3. Verify connection string is available
-4. Check workflow registration
+1. Verify task JSON is valid in both languages
+2. Check result formats match
+3. Test with same seed for reproducibility
 
 ## Resources
 
 - **Documentation**: https://timestep-ai.github.io/timestep/
-- **OpenAI Agents SDK**: See `_vendored/` directory for vendored SDK code
-- **DBOS Documentation**: https://dbos.dev/
+- **OpenAI API Reference**: https://platform.openai.com/docs/api-reference
 
 ## Notes for AI Agents
 
 - **Always maintain cross-language parity**: Changes in one language should be reflected in the other
-- **Test state compatibility**: When modifying state-related code, verify cross-language compatibility
+- **Test task compatibility**: When modifying task format or results, verify cross-language compatibility
 - **Follow the module structure**: Use the organized folder structure; don't create files at the root level
-- **Store functions are self-contained**: They manage their own DB connections; don't pass `db` parameters
+- **Keep it simple**: The eval framework is intentionally minimal - avoid over-engineering
 - **Documentation matters**: Update docs when adding features or changing behavior
-

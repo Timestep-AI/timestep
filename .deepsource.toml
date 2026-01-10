@@ -1,14 +1,12 @@
 version = 1
 
 exclude_patterns = [
-  "3rdparty/**",
   "**/node_modules/**",
   "dist/**",
   "build/**",
   "**/__pycache__/**",
   ".git/**",
-  "docs/**",
-  "data/**"
+  "docs/**"
 ]
 
 [[analyzers]]
