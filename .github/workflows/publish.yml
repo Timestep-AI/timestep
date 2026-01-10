@@ -7,31 +7,14 @@ on:
 
 jobs:
   test:
-    name: Run Behavior Tests
+    name: Run Tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
     
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: timestep_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -58,18 +41,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          uv venv
-          uv pip install --force-reinstall ../3rdparty/openai-agents-python
-          uv run python vendor_openai_agents.py
-          uv sync
-          # Reinstall agents package after sync (needed for vendored imports to work)
-          uv pip install --force-reinstall ../3rdparty/openai-agents-python
-      
-      - name: Build submodule dependencies
-        run: |
-          cd 3rdparty/openai-agents-js
-          pnpm install
-          pnpm build
+          uv pip install -e ".[dev]"
       
       - name: Install TypeScript dependencies
         run: |
@@ -79,10 +51,9 @@ jobs:
       - name: Run Python tests
         run: |
           cd python
-          uv run pytest
+          uv run python -m pytest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PG_CONNECTION_URI: postgresql://postgres:postgres@localhost:5432/timestep_test?sslmode=disable
       
       - name: Run TypeScript tests
         run: |
@@ -90,7 +61,6 @@ jobs:
           pnpm test
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PG_CONNECTION_URI: postgresql://postgres:postgres@localhost:5432/timestep_test?sslmode=disable
 
   publish-python:
     name: Publish Python Package to PyPI
@@ -102,8 +72,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -122,11 +90,6 @@ jobs:
           VERSION=$(grep -E '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using version: $VERSION"
-      
-      - name: Vendor dependencies
-        run: |
-          cd python
-          python3 vendor_openai_agents.py
       
       - name: Build package
         run: |
@@ -150,8 +113,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
       
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -173,12 +134,6 @@ jobs:
           VERSION=$(grep -E '"version"' package.json | sed 's/.*"version": "\(.*\)".*/\1/' | head -1)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using version: $VERSION"
-      
-      - name: Build submodule dependencies
-        run: |
-          cd 3rdparty/openai-agents-js
-          pnpm install
-          pnpm build
       
       - name: Install dependencies
         run: |
@@ -209,8 +164,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v5

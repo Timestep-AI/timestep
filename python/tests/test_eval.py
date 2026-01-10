@@ -1,5 +1,6 @@
 """Tests for Timestep AI Agents SDK - core and eval modules."""
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from timestep import (
     run_episode,
+    stream_episode,
     agent_builtin_echo,
     DEFAULT_TOOLS,
     tool_calc,
@@ -270,3 +272,189 @@ def test_ensure_task_id():
     task2 = {"messages": [{"role": "user", "content": "test"}]}
     task_id2 = ensure_task_id(task2)
     assert task_id == task_id2
+
+
+@pytest.mark.asyncio
+async def test_stream_episode_non_streaming():
+    """Test stream_episode with non-streaming agent."""
+    messages = [
+        {"role": "user", "content": "Hello"}
+    ]
+    
+    events = []
+    async for event in stream_episode(
+        initial_messages=messages,
+        agent=agent_builtin_echo,
+        tools=DEFAULT_TOOLS,
+        limits={"max_steps": 5},
+        task_meta={"id": "test"},
+        seed=0,
+    ):
+        events.append(event)
+    
+    # Should have step_start, agent_response_complete, step_complete, episode_complete
+    assert len(events) >= 4
+    assert events[0]["type"] == "step_start"
+    assert events[-1]["type"] == "episode_complete"
+    
+    # Check episode_complete has correct structure
+    final_event = events[-1]
+    assert "transcript" in final_event
+    assert "info" in final_event
+    assert final_event["info"].terminated_reason == "final_answer"
+
+
+@pytest.mark.asyncio
+async def test_stream_episode_streaming_agent():
+    """Test stream_episode with streaming agent."""
+    async def simple_streaming_agent(messages, context):
+        """Simple streaming agent that yields chunks."""
+        chunks = ["Hello", " ", "world", "!"]
+        for chunk in chunks:
+            yield {"type": "content", "delta": chunk}
+        yield {"type": "done"}
+    
+    messages = [
+        {"role": "user", "content": "Say hello"}
+    ]
+    
+    events = []
+    content_chunks = []
+    async for event in stream_episode(
+        initial_messages=messages,
+        agent=simple_streaming_agent,
+        tools=DEFAULT_TOOLS,
+        limits={"max_steps": 5},
+        task_meta={"id": "test"},
+        seed=0,
+    ):
+        events.append(event)
+        if event["type"] == "content_delta":
+            content_chunks.append(event["delta"])
+    
+    # Should have received content chunks
+    assert len(content_chunks) == 4
+    assert "".join(content_chunks) == "Hello world!"
+    
+    # Should have agent_response_complete with accumulated content
+    agent_complete = next(e for e in events if e["type"] == "agent_response_complete")
+    assert agent_complete["message"]["content"] == "Hello world!"
+    
+    # Should end with episode_complete
+    assert events[-1]["type"] == "episode_complete"
+
+
+@pytest.mark.asyncio
+async def test_stream_episode_with_tool_calls():
+    """Test stream_episode with tool calls."""
+    def agent_with_tool(messages, context):
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "calc",
+                    "arguments": '{"expr": "2+2"}'
+                }
+            }]
+        }
+    
+    messages = [
+        {"role": "user", "content": "Calculate 2+2"}
+    ]
+    
+    events = []
+    tool_call_events = []
+    async for event in stream_episode(
+        initial_messages=messages,
+        agent=agent_with_tool,
+        tools=DEFAULT_TOOLS,
+        tools_allowed=["calc"],
+        limits={"max_steps": 5},
+        task_meta={"id": "test"},
+        seed=0,
+    ):
+        events.append(event)
+        if event["type"] in ["tool_call_start", "tool_call_result"]:
+            tool_call_events.append(event)
+    
+    # Should have tool call events
+    assert len(tool_call_events) >= 2
+    assert tool_call_events[0]["type"] == "tool_call_start"
+    assert tool_call_events[1]["type"] == "tool_call_result"
+    assert tool_call_events[1]["result"]["value"] == 4
+
+
+@pytest.mark.asyncio
+async def test_stream_episode_streaming_tool_calls():
+    """Test stream_episode with streaming agent that yields tool calls."""
+    async def streaming_agent_with_tool(messages, context):
+        """Streaming agent that yields tool call chunks."""
+        # Yield tool call chunks
+        yield {"type": "tool_call", "delta": {"id": "call_1", "function": {"name": "calc"}}}
+        yield {"type": "tool_call", "delta": {"id": "call_1", "function": {"arguments": '{"expr":'}}}
+        yield {"type": "tool_call", "delta": {"id": "call_1", "function": {"arguments": ' "3+3"'}}}
+        yield {"type": "tool_call", "delta": {"id": "call_1", "function": {"arguments": "}"}}}
+        yield {"type": "done"}
+    
+    messages = [
+        {"role": "user", "content": "Calculate 3+3"}
+    ]
+    
+    events = []
+    tool_call_deltas = []
+    async for event in stream_episode(
+        initial_messages=messages,
+        agent=streaming_agent_with_tool,
+        tools=DEFAULT_TOOLS,
+        tools_allowed=["calc"],
+        limits={"max_steps": 5},
+        task_meta={"id": "test"},
+        seed=0,
+    ):
+        events.append(event)
+        if event["type"] == "tool_call_delta":
+            tool_call_deltas.append(event["delta"])
+    
+    # Should have received tool call deltas
+    assert len(tool_call_deltas) > 0
+    
+    # Should have agent_response_complete with accumulated tool call
+    agent_complete = next(e for e in events if e["type"] == "agent_response_complete")
+    assert "tool_calls" in agent_complete["message"]
+    assert len(agent_complete["message"]["tool_calls"]) == 1
+    assert agent_complete["message"]["tool_calls"][0]["function"]["name"] == "calc"
+
+
+@pytest.mark.asyncio
+async def test_stream_episode_error_handling():
+    """Test stream_episode error handling."""
+    async def error_streaming_agent(messages, context):
+        """Streaming agent that yields an error."""
+        yield {"type": "error", "error": "test_error"}
+    
+    messages = [
+        {"role": "user", "content": "Test"}
+    ]
+    
+    events = []
+    async for event in stream_episode(
+        initial_messages=messages,
+        agent=error_streaming_agent,
+        tools=DEFAULT_TOOLS,
+        limits={"max_steps": 5},
+        task_meta={"id": "test"},
+        seed=0,
+    ):
+        events.append(event)
+    
+    # Should have agent_error event
+    error_events = [e for e in events if e["type"] == "agent_error"]
+    assert len(error_events) > 0
+    assert error_events[0]["error"] == "test_error"
+    
+    # Should end with episode_complete with error
+    assert events[-1]["type"] == "episode_complete"
+    assert events[-1]["info"].error is not None

@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   runEpisode,
+  streamEpisode,
   agentBuiltinEcho,
   DEFAULT_TOOLS,
   toolCalc,
@@ -277,5 +278,196 @@ describe('Task ID Generation', () => {
     const task2: any = { messages: [{ role: 'user', content: 'test' }] };
     const taskId2 = ensureTaskId(task2);
     expect(taskId).toBe(taskId2);
+  });
+});
+
+describe('Streaming Episode Runner', () => {
+  it('should stream events with non-streaming agent', async () => {
+    const messages = [
+      { role: 'user', content: 'Hello' }
+    ];
+    
+    const events: any[] = [];
+    for await (const event of streamEpisode(
+      messages,
+      agentBuiltinEcho,
+      DEFAULT_TOOLS,
+      undefined,
+      { max_steps: 5 },
+      { id: 'test' },
+      0
+    )) {
+      events.push(event);
+    }
+    
+    // Should have step_start, agent_response_complete, step_complete, episode_complete
+    expect(events.length).toBeGreaterThanOrEqual(4);
+    expect(events[0].type).toBe('step_start');
+    expect(events[events.length - 1].type).toBe('episode_complete');
+    
+    // Check episode_complete has correct structure
+    const finalEvent = events[events.length - 1];
+    expect(finalEvent.transcript).toBeDefined();
+    expect(finalEvent.info).toBeDefined();
+    expect(finalEvent.info.terminated_reason).toBe('final_answer');
+  });
+
+  it('should stream chunks with streaming agent', async () => {
+    async function* simpleStreamingAgent(messages: any[], context: any) {
+      const chunks = ['Hello', ' ', 'world', '!'];
+      for (const chunk of chunks) {
+        yield { type: 'content', delta: chunk };
+      }
+      yield { type: 'done' };
+    }
+    
+    const messages = [
+      { role: 'user', content: 'Say hello' }
+    ];
+    
+    const events: any[] = [];
+    const contentChunks: string[] = [];
+    for await (const event of streamEpisode(
+      messages,
+      simpleStreamingAgent,
+      DEFAULT_TOOLS,
+      undefined,
+      { max_steps: 5 },
+      { id: 'test' },
+      0
+    )) {
+      events.push(event);
+      if (event.type === 'content_delta') {
+        contentChunks.push(event.delta);
+      }
+    }
+    
+    // Should have received content chunks
+    expect(contentChunks.length).toBe(4);
+    expect(contentChunks.join('')).toBe('Hello world!');
+    
+    // Should have agent_response_complete with accumulated content
+    const agentComplete = events.find((e: any) => e.type === 'agent_response_complete');
+    expect(agentComplete).toBeDefined();
+    expect(agentComplete.message.content).toBe('Hello world!');
+    
+    // Should end with episode_complete
+    expect(events[events.length - 1].type).toBe('episode_complete');
+  });
+
+  it('should stream events with tool calls', async () => {
+    const agentWithTool = async (messages: any[], context: any) => ({
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'call_1',
+        type: 'function',
+        function: {
+          name: 'calc',
+          arguments: '{"expr": "2+2"}'
+        }
+      }]
+    });
+    
+    const messages = [
+      { role: 'user', content: 'Calculate 2+2' }
+    ];
+    
+    const events: any[] = [];
+    const toolCallEvents: any[] = [];
+    for await (const event of streamEpisode(
+      messages,
+      agentWithTool,
+      DEFAULT_TOOLS,
+      ['calc'],
+      { max_steps: 5 },
+      { id: 'test' },
+      0
+    )) {
+      events.push(event);
+      if (event.type === 'tool_call_start' || event.type === 'tool_call_result') {
+        toolCallEvents.push(event);
+      }
+    }
+    
+    // Should have tool call events
+    expect(toolCallEvents.length).toBeGreaterThanOrEqual(2);
+    expect(toolCallEvents[0].type).toBe('tool_call_start');
+    expect(toolCallEvents[1].type).toBe('tool_call_result');
+    expect(toolCallEvents[1].result.value).toBe(4);
+  });
+
+  it('should stream tool call chunks from streaming agent', async () => {
+    async function* streamingAgentWithTool(messages: any[], context: any) {
+      // Yield tool call chunks
+      yield { type: 'tool_call', delta: { id: 'call_1', function: { name: 'calc' } } };
+      yield { type: 'tool_call', delta: { id: 'call_1', function: { arguments: '{"expr":' } } };
+      yield { type: 'tool_call', delta: { id: 'call_1', function: { arguments: ' "3+3"' } } };
+      yield { type: 'tool_call', delta: { id: 'call_1', function: { arguments: '}' } } };
+      yield { type: 'done' };
+    }
+    
+    const messages = [
+      { role: 'user', content: 'Calculate 3+3' }
+    ];
+    
+    const events: any[] = [];
+    const toolCallDeltas: any[] = [];
+    for await (const event of streamEpisode(
+      messages,
+      streamingAgentWithTool,
+      DEFAULT_TOOLS,
+      ['calc'],
+      { max_steps: 5 },
+      { id: 'test' },
+      0
+    )) {
+      events.push(event);
+      if (event.type === 'tool_call_delta') {
+        toolCallDeltas.push(event.delta);
+      }
+    }
+    
+    // Should have received tool call deltas
+    expect(toolCallDeltas.length).toBeGreaterThan(0);
+    
+    // Should have agent_response_complete with accumulated tool call
+    const agentComplete = events.find((e: any) => e.type === 'agent_response_complete');
+    expect(agentComplete).toBeDefined();
+    expect(agentComplete.message.tool_calls).toBeDefined();
+    expect(agentComplete.message.tool_calls.length).toBe(1);
+    expect(agentComplete.message.tool_calls[0].function.name).toBe('calc');
+  });
+
+  it('should handle streaming agent errors', async () => {
+    async function* errorStreamingAgent(messages: any[], context: any) {
+      yield { type: 'error', error: 'test_error' };
+    }
+    
+    const messages = [
+      { role: 'user', content: 'Test' }
+    ];
+    
+    const events: any[] = [];
+    for await (const event of streamEpisode(
+      messages,
+      errorStreamingAgent,
+      DEFAULT_TOOLS,
+      undefined,
+      { max_steps: 5 },
+      { id: 'test' },
+      0
+    )) {
+      events.push(event);
+    }
+    
+    // Should have agent_error event
+    const errorEvents = events.filter((e: any) => e.type === 'agent_error');
+    expect(errorEvents.length).toBeGreaterThan(0);
+    expect(errorEvents[0].error).toBe('test_error');
+    
+    // Should end with episode_complete with error
+    expect(events[events.length - 1].type).toBe('episode_complete');
+    expect(events[events.length - 1].info.error).toBeDefined();
   });
 });

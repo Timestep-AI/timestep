@@ -6,12 +6,15 @@ from .core import (
     JSON,
     Message,
     AgentFn,
+    StreamingAgentFn,
     ToolFn,
     # Agent harness
     agent_builtin_echo,
     agent_cmd_factory,
+    create_openai_streaming_agent,
     # Episode runner
     run_episode,
+    stream_episode,
     EpisodeInfo,
     # Tools
     tool_calc,
@@ -50,12 +53,15 @@ __all__ = [
     "JSON",
     "Message",
     "AgentFn",
+    "StreamingAgentFn",
     "ToolFn",
     # Core agent harness
     "agent_builtin_echo",
     "agent_cmd_factory",
+    "create_openai_streaming_agent",
     # Core episode runner
     "run_episode",
+    "stream_episode",
     "EpisodeInfo",
     # Core tools
     "tool_calc",
