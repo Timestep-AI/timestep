@@ -1,7 +1,6 @@
 /** Agent harness interface and adapters. */
 
-import { spawn } from 'child_process';
-import { AgentFn, JSON, Message, StreamingAgentFn } from './types';
+import { JSON, Message, StreamingAgentFn } from './types';
 
 export function agentBuiltinEcho(messages: Message[], context: JSON): Message {
   /** Builtin agent harness that finishes immediately by echoing the last user message. */
@@ -15,16 +14,14 @@ export function agentBuiltinEcho(messages: Message[], context: JSON): Message {
   return { role: 'assistant', content: `Echo: ${lastUser}` };
 }
 
-export function agentCmdFactory(agentCmd: string, timeoutS: number = 120): AgentFn {
+export function _agentCmdFactory(agentCmd: string, timeoutS: number = 120): any {
   /**
-   * Creates an agent harness function that shells out to `agentCmd`.
-   * 
-   * Protocol:
-   *   - send JSON to stdin: {"messages":[...], "tools":[...], "task":{...}, "seed":..., "limits":...}
-   *   - expect stdout JSON: assistant message dict
-   * 
-   * Note: This returns a Promise-based agent for async command execution.
+   * Internal function for CLI use only - creates an agent harness that shells out to a command.
+   * Not exported from the package.
    */
+  const { spawn } = require('child_process');
+  const { AgentFn } = require('./types');
+  
   return async function _agent(messages: Message[], context: JSON): Promise<Message> {
     const payload = {
       messages,
@@ -72,7 +69,6 @@ export function agentCmdFactory(agentCmd: string, timeoutS: number = 120): Agent
           if (stderr) msg._agent_stderr = stderr;
           resolve(msg);
         } catch {
-          // If agent prints plain text, treat as assistant content
           resolve({ role: 'assistant', content: stdout.trim() });
         }
       });
@@ -83,9 +79,20 @@ export function agentCmdFactory(agentCmd: string, timeoutS: number = 120): Agent
   };
 }
 
-export function createOpenAIStreamingAgent(apiKey?: string): StreamingAgentFn {
+export function createAgent(
+  apiKey?: string,
+  baseUrl?: string,
+  model: string = 'gpt-4o-mini',
+  temperature: number = 0.0,
+  maxTokens?: number,
+  timeoutS: number = 120,
+): StreamingAgentFn {
   /**
-   * Creates a streaming agent harness function that uses OpenAI's streaming API.
+   * Creates a streaming agent harness function that uses OpenAI-compatible streaming API.
+   * 
+   * This is the single agent function for the Timestep library. It always uses streaming.
+   * Supports any OpenAI-compatible API (OpenAI, Anthropic via proxy, local models, etc.)
+   * via the baseUrl parameter.
    * 
    * Yields chunks in Timestep format:
    * - {type: "content", delta: string} - content chunk
@@ -98,7 +105,14 @@ export function createOpenAIStreamingAgent(apiKey?: string): StreamingAgentFn {
     try {
       // Dynamic import to avoid requiring openai at module load time
       const { OpenAI } = await import('openai');
-      client = new OpenAI({ apiKey });
+      const clientOptions: any = {};
+      if (apiKey || process.env.OPENAI_API_KEY) {
+        clientOptions.apiKey = apiKey || process.env.OPENAI_API_KEY;
+      }
+      if (baseUrl || process.env.OPENAI_BASE_URL) {
+        clientOptions.baseURL = baseUrl || process.env.OPENAI_BASE_URL;
+      }
+      client = new OpenAI(clientOptions);
     } catch (e) {
       yield { type: 'error', error: 'openai package required. Install with: npm install openai' };
       return;
@@ -108,20 +122,42 @@ export function createOpenAIStreamingAgent(apiKey?: string): StreamingAgentFn {
     const tools = context.tools_schema || [];
 
     try {
-      // Call OpenAI with streaming
-      const stream = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
+      // Prepare request parameters
+      const requestParams: any = {
+        model,
         messages,
-        tools: tools.length > 0 ? tools : undefined,
-        tool_choice: tools.length > 0 ? 'auto' : undefined,
+        temperature,
         stream: true,
-      });
+      };
+      if (maxTokens !== undefined) {
+        requestParams.max_tokens = maxTokens;
+      }
+      if (tools.length > 0) {
+        requestParams.tools = tools;
+        requestParams.tool_choice = 'auto';
+      }
+
+      // Call OpenAI with streaming
+      const stream = await client.chat.completions.create(requestParams);
 
       // Track accumulated message state
       let accumulatedContent = '';
       const accumulatedToolCalls: Record<string, any> = {};
 
       for await (const chunk of stream) {
+        // Check for usage information (OpenAI provides this in the final chunk)
+        if ((chunk as any).usage) {
+          const usage = (chunk as any).usage;
+          yield {
+            type: 'usage',
+            usage: {
+              prompt_tokens: usage.prompt_tokens || 0,
+              completion_tokens: usage.completion_tokens || 0,
+              total_tokens: usage.total_tokens || 0,
+            },
+          };
+        }
+
         if (!chunk.choices || chunk.choices.length === 0) {
           continue;
         }

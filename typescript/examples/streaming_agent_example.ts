@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /** Example of creating a streaming agent harness using OpenAI's streaming API. */
 
-import { streamEpisode, createOpenAIStreamingAgent, DEFAULT_TOOLS } from '../timestep';
+import { streamEpisode, createAgent, DEFAULT_TOOLS } from '../timestep';
 import type { Message } from '../timestep/core/types';
 
 async function main() {
   // Create streaming agent (requires OpenAI API key)
   let agent;
   try {
-    agent = createOpenAIStreamingAgent(process.env.OPENAI_API_KEY);
+    agent = createAgent(process.env.OPENAI_API_KEY);
   } catch (e: any) {
     console.error('OpenAI not available:', e.message);
     console.error('Install with: npm install openai');

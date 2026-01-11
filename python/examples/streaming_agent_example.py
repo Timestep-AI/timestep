@@ -2,7 +2,7 @@
 """Example of creating a streaming agent harness using OpenAI's streaming API."""
 
 import asyncio
-from timestep import stream_episode, create_openai_streaming_agent, DEFAULT_TOOLS
+from timestep import stream_episode, create_agent, DEFAULT_TOOLS
 from timestep.core.types import Message
 
 
@@ -10,7 +10,7 @@ async def main():
     """Example of using a streaming agent with stream_episode."""
     # Create streaming agent (requires OpenAI API key)
     try:
-        agent = create_openai_streaming_agent()
+        agent = create_agent()
     except ImportError:
         print("OpenAI not available. Install with: pip install openai")
         print("Setting OPENAI_API_KEY environment variable is required.")

@@ -16,3 +16,6 @@ test-python:
 
 test-typescript:
 	cd typescript && pnpm install && pnpm test
+
+gaia-eval:
+	uv run scripts/gaia_eval.py

@@ -132,6 +132,7 @@ async function* _runEpisodeStream(
       let accumulatedContent = '';
       const accumulatedToolCalls: Record<string, any> = {};
       const toolCallIds: string[] = [];
+      let usageInfo: JSONType | undefined;
       
       for await (const chunk of result as AsyncGenerator<JSONType>) {
         const chunkType = chunk.type || '';
@@ -187,6 +188,9 @@ async function* _runEpisodeStream(
             toolCallId: tcId,
             chunk: chunkData,
           };
+        } else if (chunkType === 'usage') {
+          // Capture usage information
+          usageInfo = chunk.usage as JSONType;
         } else if (chunkType === 'done') {
           break;
         } else if (chunkType === 'error') {
@@ -205,6 +209,10 @@ async function* _runEpisodeStream(
       assistantMsg.content = accumulatedContent;
       if (Object.keys(accumulatedToolCalls).length > 0) {
         assistantMsg.tool_calls = toolCallIds.map(tcId => accumulatedToolCalls[tcId]);
+      }
+      // Include usage information if available
+      if (usageInfo) {
+        assistantMsg.usage = usageInfo;
       }
     } else {
       // Non-streaming agent - result is a Message (or Promise<Message>)

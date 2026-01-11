@@ -362,6 +362,124 @@ Respond with a JSON object with:
             return {"name": self.name, "passed": False, "score": 0.0, "details": {"error": "llm_judge_failed", "exception": repr(e)}}
 
 
+class CostGrader(Grader):
+    """
+    Grades based on token costs.
+    
+    Useful for tracking and optimizing agent costs during development.
+    """
+    name = "CostGrader"
+    
+    def __init__(self, max_cost_usd: Optional[float] = None, from_expected_key: str = "max_cost_usd"):
+        """
+        Args:
+            max_cost_usd: Maximum allowed cost in USD (fails if exceeded)
+            from_expected_key: Key in task.expected to read max_cost_usd from
+        """
+        self.max_cost_usd = max_cost_usd
+        self.from_expected_key = from_expected_key
+    
+    def grade(self, messages: List[Message], tool_index: List[ToolCallRecord], task: JSON, info: EpisodeInfo) -> JSON:
+        max_cost = self.max_cost_usd or (task.get("expected", {}) or {}).get(self.from_expected_key)
+        if max_cost is None:
+            # No limit set, just track cost
+            return {
+                "name": self.name,
+                "passed": True,
+                "score": 1.0,
+                "details": {"cost_usd": info.cost_usd, "tracking_only": True}
+            }
+        
+        max_cost = float(max_cost)
+        passed = info.cost_usd <= max_cost
+        # Score decreases linearly as cost approaches max
+        score = clamp01(1.0 - (info.cost_usd / max_cost) if max_cost > 0 else 1.0)
+        return {
+            "name": self.name,
+            "passed": passed,
+            "score": score,
+            "details": {"cost_usd": info.cost_usd, "max_cost_usd": max_cost}
+        }
+
+
+class LatencyGrader(Grader):
+    """
+    Grades based on response latency (duration).
+    
+    Useful for tracking and optimizing agent speed during development.
+    """
+    name = "LatencyGrader"
+    
+    def __init__(self, max_duration_s: Optional[float] = None, from_expected_key: str = "max_duration_s"):
+        """
+        Args:
+            max_duration_s: Maximum allowed duration in seconds (fails if exceeded)
+            from_expected_key: Key in task.expected to read max_duration_s from
+        """
+        self.max_duration_s = max_duration_s
+        self.from_expected_key = from_expected_key
+    
+    def grade(self, messages: List[Message], tool_index: List[ToolCallRecord], task: JSON, info: EpisodeInfo) -> JSON:
+        max_duration = self.max_duration_s or (task.get("expected", {}) or {}).get(self.from_expected_key)
+        if max_duration is None:
+            # No limit set, just track duration
+            return {
+                "name": self.name,
+                "passed": True,
+                "score": 1.0,
+                "details": {"duration_s": info.duration_s, "tracking_only": True}
+            }
+        
+        max_duration = float(max_duration)
+        passed = info.duration_s <= max_duration
+        # Score decreases linearly as duration approaches max
+        score = clamp01(1.0 - (info.duration_s / max_duration) if max_duration > 0 else 1.0)
+        return {
+            "name": self.name,
+            "passed": passed,
+            "score": score,
+            "details": {"duration_s": info.duration_s, "max_duration_s": max_duration}
+        }
+
+
+class ConsistencyGrader(Grader):
+    """
+    Checks consistency across multiple trials of the same task.
+    
+    This grader should be used with multiple trials and checks if the agent
+    produces consistent results. It compares the final assistant content
+    across trials.
+    """
+    name = "ConsistencyGrader"
+    
+    def __init__(self, min_consistency: float = 0.8):
+        """
+        Args:
+            min_consistency: Minimum consistency score (0.0-1.0) to pass
+        """
+        self.min_consistency = min_consistency
+    
+    def grade(self, messages: List[Message], tool_index: List[ToolCallRecord], task: JSON, info: EpisodeInfo) -> JSON:
+        """
+        Note: This grader requires access to results from other trials.
+        For now, it just tracks the final content for later comparison.
+        In a full implementation, you'd need to aggregate across trials.
+        """
+        final_content = last_assistant_content(messages)
+        
+        # For single-trial evaluation, we can't compute consistency
+        # Return a placeholder that indicates consistency tracking
+        return {
+            "name": self.name,
+            "passed": True,  # Always pass for single trial
+            "score": 1.0,
+            "details": {
+                "final_content": final_content,
+                "note": "Consistency requires multiple trials - use aggregate_consistency() to compare across trials"
+            }
+        }
+
+
 BUILTIN_GRADERS = {
     # Code-based
     "FinalRegex": FinalRegex,
@@ -379,6 +497,10 @@ BUILTIN_GRADERS = {
     "OutcomeVerifier": OutcomeVerifier,
     # LLM-as-judge
     "LLMJudge": LLMJudge,
+    # Development-focused graders
+    "CostGrader": CostGrader,
+    "LatencyGrader": LatencyGrader,
+    "ConsistencyGrader": ConsistencyGrader,
 }
 
 

@@ -141,6 +141,7 @@ async def _run_episode_stream(
             accumulated_content = ""
             accumulated_tool_calls: Dict[str, Dict[str, Any]] = {}
             tool_call_ids: List[str] = []
+            usage_info: Optional[Dict[str, Any]] = None
             
             async for chunk in result:  # type: ignore
                 chunk_type = chunk.get("type", "")
@@ -194,6 +195,9 @@ async def _run_episode_stream(
                         "toolCallId": str(tc_id),
                         "chunk": chunk_data,
                     }
+                elif chunk_type == "usage":
+                    # Capture usage information
+                    usage_info = chunk.get("usage", {})
                 elif chunk_type == "done":
                     break
                 elif chunk_type == "error":
@@ -210,6 +214,9 @@ async def _run_episode_stream(
             assistant_msg["content"] = accumulated_content
             if accumulated_tool_calls:
                 assistant_msg["tool_calls"] = [accumulated_tool_calls[tc_id] for tc_id in tool_call_ids]
+            # Include usage information if available
+            if usage_info:
+                assistant_msg["usage"] = usage_info
         else:
             # Non-streaming agent - result is a Message (or Promise<Message>)
             if hasattr(result, "__await__"):
