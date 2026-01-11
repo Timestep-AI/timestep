@@ -134,6 +134,7 @@ def create_agent(
             "messages": messages,
             "temperature": temperature,
             "stream": True,
+            "stream_options": {"include_usage": True},  # Request usage info in streaming responses
         }
         if max_tokens is not None:
             request_params["max_tokens"] = max_tokens
@@ -150,7 +151,7 @@ def create_agent(
             accumulated_tool_calls = {}  # tool_call_id -> tool_call dict
             
             for chunk in stream:
-                # Check for usage information (OpenAI provides this in the final chunk)
+                # Check for usage information first (OpenAI provides this in the final chunk, which may not have choices)
                 if hasattr(chunk, 'usage') and chunk.usage:
                     usage = chunk.usage
                     yield {
@@ -161,6 +162,7 @@ def create_agent(
                             "total_tokens": getattr(usage, 'total_tokens', 0) or 0,
                         }
                     }
+                    # Usage chunk may be the last one, continue to process if there are choices
                 
                 if not chunk.choices:
                     continue

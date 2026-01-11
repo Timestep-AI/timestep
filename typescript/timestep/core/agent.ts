@@ -128,6 +128,7 @@ export function createAgent(
         messages,
         temperature,
         stream: true,
+        stream_options: { include_usage: true },  // Request usage info in streaming responses
       };
       if (maxTokens !== undefined) {
         requestParams.max_tokens = maxTokens;
