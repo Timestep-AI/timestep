@@ -292,16 +292,17 @@ async def test_stream_episode_non_streaming():
     ):
         events.append(event)
     
-    # Should have step_start, agent_response_complete, step_complete, episode_complete
-    assert len(events) >= 4
-    assert events[0]["type"] == "step_start"
-    assert events[-1]["type"] == "episode_complete"
+    # Should have RunStarted, StepStarted, TextMessageStart/Content/End, StepFinished, RunFinished
+    assert len(events) >= 5
+    assert events[0]["type"] == "RunStarted"
+    assert events[-1]["type"] == "RunFinished"
     
-    # Check episode_complete has correct structure
+    # Check RunFinished has correct structure
     final_event = events[-1]
-    assert "transcript" in final_event
-    assert "info" in final_event
-    assert final_event["info"].terminated_reason == "final_answer"
+    assert "result" in final_event
+    assert "transcript" in final_event["result"]
+    assert "episodeInfo" in final_event["result"]
+    assert final_event["result"]["episodeInfo"]["terminated_reason"] == "final_answer"
 
 
 @pytest.mark.asyncio
@@ -329,19 +330,19 @@ async def test_stream_episode_streaming_agent():
         seed=0,
     ):
         events.append(event)
-        if event["type"] == "content_delta":
+        if event["type"] == "TextMessageContent":
             content_chunks.append(event["delta"])
     
     # Should have received content chunks
     assert len(content_chunks) == 4
     assert "".join(content_chunks) == "Hello world!"
     
-    # Should have agent_response_complete with accumulated content
-    agent_complete = next(e for e in events if e["type"] == "agent_response_complete")
-    assert agent_complete["message"]["content"] == "Hello world!"
+    # Should have TextMessageEnd
+    message_end = next((e for e in events if e["type"] == "TextMessageEnd"), None)
+    assert message_end is not None
     
-    # Should end with episode_complete
-    assert events[-1]["type"] == "episode_complete"
+    # Should end with RunFinished
+    assert events[-1]["type"] == "RunFinished"
 
 
 @pytest.mark.asyncio
@@ -366,7 +367,6 @@ async def test_stream_episode_with_tool_calls():
     ]
     
     events = []
-    tool_call_events = []
     async for event in stream_episode(
         initial_messages=messages,
         agent=agent_with_tool,
@@ -377,14 +377,13 @@ async def test_stream_episode_with_tool_calls():
         seed=0,
     ):
         events.append(event)
-        if event["type"] in ["tool_call_start", "tool_call_result"]:
-            tool_call_events.append(event)
     
     # Should have tool call events
-    assert len(tool_call_events) >= 2
-    assert tool_call_events[0]["type"] == "tool_call_start"
-    assert tool_call_events[1]["type"] == "tool_call_result"
-    assert tool_call_events[1]["result"]["value"] == 4
+    tool_call_starts = [e for e in events if e["type"] == "ToolCallStart"]
+    tool_call_results = [e for e in events if e["type"] == "ToolCallResult"]
+    assert len(tool_call_starts) > 0
+    assert len(tool_call_results) > 0
+    assert tool_call_results[0]["result"]["value"] == 4
 
 
 @pytest.mark.asyncio
@@ -415,17 +414,16 @@ async def test_stream_episode_streaming_tool_calls():
         seed=0,
     ):
         events.append(event)
-        if event["type"] == "tool_call_delta":
-            tool_call_deltas.append(event["delta"])
+        if event["type"] == "ToolCallChunk":
+            tool_call_deltas.append(event["chunk"])
     
-    # Should have received tool call deltas
+    # Should have received tool call chunks
     assert len(tool_call_deltas) > 0
     
-    # Should have agent_response_complete with accumulated tool call
-    agent_complete = next(e for e in events if e["type"] == "agent_response_complete")
-    assert "tool_calls" in agent_complete["message"]
-    assert len(agent_complete["message"]["tool_calls"]) == 1
-    assert agent_complete["message"]["tool_calls"][0]["function"]["name"] == "calc"
+    # Should have ToolCallStart
+    tool_call_start = next((e for e in events if e["type"] == "ToolCallStart"), None)
+    assert tool_call_start is not None
+    assert tool_call_start["name"] == "calc"
 
 
 @pytest.mark.asyncio
@@ -450,11 +448,11 @@ async def test_stream_episode_error_handling():
     ):
         events.append(event)
     
-    # Should have agent_error event
-    error_events = [e for e in events if e["type"] == "agent_error"]
+    # Should have RunError event
+    error_events = [e for e in events if e["type"] == "RunError"]
     assert len(error_events) > 0
-    assert error_events[0]["error"] == "test_error"
+    assert error_events[0]["message"] == "test_error"
     
-    # Should end with episode_complete with error
-    assert events[-1]["type"] == "episode_complete"
-    assert events[-1]["info"].error is not None
+    # Should end with RunFinished with error
+    assert events[-1]["type"] == "RunFinished"
+    assert events[-1]["result"]["episodeInfo"]["error"] is not None

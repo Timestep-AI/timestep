@@ -3,9 +3,9 @@
 import type { Message } from '../utils/messages';
 import { lastAssistantContent } from '../utils/messages';
 import { clamp01 } from '../utils/io';
-import type { ToolCallRecord, EpisodeInfo } from '../core/episode';
-
-export type JSON = Record<string, any>;
+import type { EpisodeInfo } from '../core/episode';
+import type { ToolCallRecord } from '../core/tools';
+import type { JSON } from '../core/types';
 
 export abstract class Grader {
   name: string = 'Grader';

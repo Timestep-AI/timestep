@@ -11,6 +11,7 @@ Welcome! Timestep is a universal **Agents SDK** built around the core **agent-en
 
 - Getting started: [Installation and Quick Start](getting-started.md)
 - Core concepts: [Architecture](architecture.md)
+- Eval-driven development: [Eval-Driven Development Guide](eval-driven-development.md)
 - Examples: See `examples/` directory in the repository
 
 ## Core Features

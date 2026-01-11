@@ -5,6 +5,21 @@ import { buildToolsSchema } from './tools';
 import { isAssistantMessage } from '../utils/messages';
 import { now } from '../utils/io';
 
+function generateMessageId(): string {
+  return `msg_${Math.random().toString(36).substring(2, 14)}`;
+}
+
+function generateRunId(taskId: string, trial?: number): string {
+  if (trial !== undefined) {
+    return `run_${taskId}_trial_${trial}`;
+  }
+  return `run_${taskId}`;
+}
+
+function generateThreadId(taskId: string): string {
+  return `thread_${taskId}`;
+}
+
 export interface EpisodeInfo {
   task_id: string;
   trial: number;
@@ -41,10 +56,14 @@ async function* _runEpisodeStream(
   seed: number = 0,
 ): AsyncGenerator<JSONType> {
   /**
-   * Internal implementation that yields events as the episode progresses.
+   * Internal implementation that yields AG-UI protocol events as the episode progresses.
    * Supports both streaming and non-streaming agents.
    */
   const taskId = String((taskMeta || {}).id || 'unknown');
+  const trial = (taskMeta || {})._trial as number | undefined;
+  const threadId = generateThreadId(taskId);
+  const runId = generateRunId(taskId, trial);
+  
   const maxSteps = Number((limits || {}).max_steps || 30);
   const timeLimitS = Number((limits || {}).time_limit_s || 120);
 
@@ -64,6 +83,23 @@ async function* _runEpisodeStream(
 
   // Provide schema to agent via context (optional)
   const toolsSchema = buildToolsSchema(tools, toolsAllowed);
+  
+  // Emit RunStarted
+  yield {
+    type: 'RunStarted',
+    threadId,
+    runId,
+    input: {
+      messages: initialMessages,
+      tools_allowed: toolsAllowed,
+      limits,
+      task_meta: taskMeta,
+      seed,
+    }
+  };
+  
+  let currentMessageId: string | undefined = undefined;
+  let currentStepName: string | undefined = undefined;
 
   for (let step = 0; step < maxSteps; step++) {
     if (now() - t0 > timeLimitS) {
@@ -71,7 +107,11 @@ async function* _runEpisodeStream(
       break;
     }
 
-    yield { type: 'step_start', step: step + 1 };
+    currentStepName = `step_${step + 1}`;
+    yield {
+      type: 'StepStarted',
+      stepName: currentStepName,
+    };
 
     const context = {
       tools_schema: toolsSchema,
@@ -92,6 +132,7 @@ async function* _runEpisodeStream(
       let accumulatedContent = '';
       const accumulatedToolCalls: Record<string, any> = {};
       const toolCallIds: string[] = [];
+      let usageInfo: JSONType | undefined;
       
       for await (const chunk of result as AsyncGenerator<JSONType>) {
         const chunkType = chunk.type || '';
@@ -99,7 +140,20 @@ async function* _runEpisodeStream(
         if (chunkType === 'content') {
           const delta = String(chunk.delta || '');
           accumulatedContent += delta;
-          yield { type: 'content_delta', delta, step: step + 1 };
+          // Generate message ID on first content chunk
+          if (!currentMessageId) {
+            currentMessageId = generateMessageId();
+            yield {
+              type: 'TextMessageStart',
+              messageId: currentMessageId,
+              role: 'assistant',
+            };
+          }
+          yield {
+            type: 'TextMessageContent',
+            messageId: currentMessageId,
+            delta,
+          };
         } else if (chunkType === 'tool_call') {
           const delta = chunk.delta || {};
           const tcId = String(delta.id || '');
@@ -123,13 +177,30 @@ async function* _runEpisodeStream(
             }
           }
           
-          yield { type: 'tool_call_delta', delta, step: step + 1 };
+          // AG-UI ToolCallChunk
+          const chunkFnDelta = delta.function || {};
+          const chunkData: JSONType = {};
+          if (chunkFnDelta.arguments) {
+            chunkData._partial = chunkFnDelta.arguments;
+          }
+          yield {
+            type: 'ToolCallChunk',
+            toolCallId: tcId,
+            chunk: chunkData,
+          };
+        } else if (chunkType === 'usage') {
+          // Capture usage information
+          usageInfo = chunk.usage as JSONType;
         } else if (chunkType === 'done') {
           break;
         } else if (chunkType === 'error') {
           err = String(chunk.error || 'unknown_error');
           terminatedReason = 'error';
-          yield { type: 'agent_error', error: err, step: step + 1 };
+          yield {
+            type: 'RunError',
+            message: err,
+            code: 'AGENT_ERROR',
+          };
           break;
         }
       }
@@ -138,6 +209,10 @@ async function* _runEpisodeStream(
       assistantMsg.content = accumulatedContent;
       if (Object.keys(accumulatedToolCalls).length > 0) {
         assistantMsg.tool_calls = toolCallIds.map(tcId => accumulatedToolCalls[tcId]);
+      }
+      // Include usage information if available
+      if (usageInfo) {
+        assistantMsg.usage = usageInfo;
       }
     } else {
       // Non-streaming agent - result is a Message (or Promise<Message>)
@@ -152,7 +227,11 @@ async function* _runEpisodeStream(
       terminatedReason = 'error';
       err = 'agent_returned_non_assistant_message';
       messages.push({ role: 'assistant', content: '', _error: err });
-      yield { type: 'agent_error', error: err, step: step + 1 };
+      yield {
+        type: 'RunError',
+        message: err,
+        code: 'AGENT_ERROR',
+      };
       break;
     }
 
@@ -167,7 +246,32 @@ async function* _runEpisodeStream(
     messages.push(assistantMsg);
     steps++;
 
-    yield { type: 'agent_response_complete', message: assistantMsg, step: step + 1 };
+    // Handle message lifecycle for AG-UI
+    if (assistantMsg.content && !currentMessageId) {
+      currentMessageId = generateMessageId();
+      yield {
+        type: 'TextMessageStart',
+        messageId: currentMessageId,
+        role: assistantMsg.role || 'assistant',
+      };
+      // Emit content as single chunk if not already streamed
+      if (assistantMsg.content) {
+        yield {
+          type: 'TextMessageContent',
+          messageId: currentMessageId,
+          delta: String(assistantMsg.content || ''),
+        };
+      }
+    }
+    
+    // End the message
+    if (currentMessageId) {
+      yield {
+        type: 'TextMessageEnd',
+        messageId: currentMessageId,
+      };
+      currentMessageId = undefined;
+    }
 
     const tcs = assistantMsg.tool_calls || [];
     if (tcs.length > 0) {
@@ -179,7 +283,37 @@ async function* _runEpisodeStream(
         const name = String(fn.name || '');
         const argStr = fn.arguments || '{}';
 
-        yield { type: 'tool_call_start', tool_call: tc, step: step + 1 };
+        // AG-UI ToolCallStart
+        yield {
+          type: 'ToolCallStart',
+          toolCallId: tcId,
+          name,
+        };
+        
+        // Parse arguments for ToolCallArgs
+        let args: JSONType = {};
+        try {
+          args = typeof argStr === 'string' ? JSON.parse(argStr) : (argStr || {});
+          if (typeof args !== 'object' || Array.isArray(args)) {
+            args = { _non_dict_args: args };
+          }
+        } catch {
+          args = {};
+        }
+        
+        // Emit ToolCallArgs if we have arguments
+        if (Object.keys(args).length > 0) {
+          yield {
+            type: 'ToolCallArgs',
+            toolCallId: tcId,
+            args,
+          };
+        }
+        
+        yield {
+          type: 'ToolCallEnd',
+          toolCallId: tcId,
+        };
 
         // Enforce allowlist
         if (toolAllow && !toolAllow.has(name)) {
@@ -189,7 +323,11 @@ async function* _runEpisodeStream(
             tool_call_id: tcId,
             content: JSON.stringify(result),
           });
-          yield { type: 'tool_call_result', tool_call_id: tcId, result, step: step + 1 };
+          yield {
+            type: 'ToolCallResult',
+            toolCallId: tcId,
+            result,
+          };
           continue;
         }
 
@@ -201,26 +339,36 @@ async function* _runEpisodeStream(
             tool_call_id: tcId,
             content: JSON.stringify(result),
           });
-          yield { type: 'tool_call_result', tool_call_id: tcId, result, step: step + 1 };
+          yield {
+            type: 'ToolCallResult',
+            toolCallId: tcId,
+            result,
+          };
           continue;
         }
 
-        // Parse arguments
-        let args: JSONType = {};
-        try {
-          args = typeof argStr === 'string' ? JSON.parse(argStr) : (argStr || {});
-          if (typeof args !== 'object' || Array.isArray(args)) {
-            args = { _non_dict_args: args };
+        // Parse arguments (reuse args from ToolCallArgs parsing above)
+        // If args wasn't set above (shouldn't happen), parse again
+        if (!args || Object.keys(args).length === 0) {
+          try {
+            args = typeof argStr === 'string' ? JSON.parse(argStr) : (argStr || {});
+            if (typeof args !== 'object' || Array.isArray(args)) {
+              args = { _non_dict_args: args };
+            }
+          } catch {
+            const result = { error: 'invalid_tool_arguments_json' };
+            messages.push({
+              role: 'tool',
+              tool_call_id: tcId,
+              content: JSON.stringify(result),
+            });
+            yield {
+              type: 'ToolCallResult',
+              toolCallId: tcId,
+              result,
+            };
+            continue;
           }
-        } catch {
-          const result = { error: 'invalid_tool_arguments_json' };
-          messages.push({
-            role: 'tool',
-            tool_call_id: tcId,
-            content: JSON.stringify(result),
-          });
-          yield { type: 'tool_call_result', tool_call_id: tcId, result, step: step + 1 };
-          continue;
         }
 
         // Invoke tool
@@ -236,17 +384,34 @@ async function* _runEpisodeStream(
           tool_call_id: tcId,
           content: JSON.stringify(res),
         });
-        yield { type: 'tool_call_result', tool_call_id: tcId, result: res, step: step + 1 };
+        yield {
+          type: 'ToolCallResult',
+          toolCallId: tcId,
+          result: res,
+        };
       }
 
       // Continue loop (not done)
-      yield { type: 'step_complete', step: step + 1, messages: [...messages] };
+      // Continue loop (not done)
+      if (currentStepName) {
+        yield {
+          type: 'StepFinished',
+          stepName: currentStepName,
+        };
+        currentStepName = undefined;
+      }
       continue;
     }
 
     // No tool calls => final answer => done
     terminatedReason = 'final_answer';
-    yield { type: 'step_complete', step: step + 1, messages: [...messages] };
+    if (currentStepName) {
+      yield {
+        type: 'StepFinished',
+        stepName: currentStepName,
+      };
+      currentStepName = undefined;
+    }
     break;
   }
 
@@ -269,7 +434,28 @@ async function* _runEpisodeStream(
     total_tokens: totalTokens,
     cost_usd: 0.0,
   };
-  yield { type: 'episode_complete', transcript: messages, info };
+  yield {
+    type: 'RunFinished',
+    threadId,
+    runId,
+    result: {
+      transcript: messages,
+      episodeInfo: {
+        task_id: info.task_id,
+        trial: info.trial,
+        seed: info.seed,
+        steps: info.steps,
+        tool_calls: info.tool_calls,
+        duration_s: info.duration_s,
+        terminated_reason: info.terminated_reason,
+        error: info.error,
+        input_tokens: info.input_tokens,
+        output_tokens: info.output_tokens,
+        total_tokens: info.total_tokens,
+        cost_usd: info.cost_usd,
+      }
+    }
+  };
 }
 
 export async function runEpisode(
@@ -454,16 +640,11 @@ export async function* streamEpisode(
    * Supports both streaming agents (StreamingAgentFn) and non-streaming agents (AgentFn).
    * 
    * Yields:
-   * - Chunk events (from streaming agents):
-   *   - `{type: "content_delta", delta: string, step: number}` - content chunk
-   *   - `{type: "tool_call_delta", delta: {...}, step: number}` - tool call chunk
-   * - Control events:
-   *   - `{type: "step_start", step: number}`
-   *   - `{type: "agent_response_complete", message: Message, step: number}`
-   *   - `{type: "tool_call_start", tool_call: any, step: number}`
-   *   - `{type: "tool_call_result", tool_call_id: string, result: any, step: number}`
-   *   - `{type: "step_complete", step: number, messages: Message[]}`
-   *   - `{type: "episode_complete", transcript: Message[], info: EpisodeInfo}`
+   * Emits AG-UI protocol events:
+   *   - `RunStarted`, `StepStarted`, `StepFinished`, `RunFinished`
+   *   - `TextMessageStart`, `TextMessageContent`, `TextMessageEnd`
+   *   - `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd`, `ToolCallChunk`, `ToolCallResult`
+   *   - `RunError`
    */
   yield* _runEpisodeStream(
     initialMessages, agent, tools, toolsAllowed, limits, taskMeta, seed

@@ -10,8 +10,7 @@ from .core import (
     ToolFn,
     # Agent harness
     agent_builtin_echo,
-    agent_cmd_factory,
-    create_openai_streaming_agent,
+    create_agent,
     # Episode runner
     run_episode,
     stream_episode,
@@ -57,8 +56,7 @@ __all__ = [
     "ToolFn",
     # Core agent harness
     "agent_builtin_echo",
-    "agent_cmd_factory",
-    "create_openai_streaming_agent",
+    "create_agent",
     # Core episode runner
     "run_episode",
     "stream_episode",

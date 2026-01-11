@@ -2,7 +2,7 @@
 """Example of creating a streaming agent harness using OpenAI's streaming API."""
 
 import asyncio
-from timestep import stream_episode, create_openai_streaming_agent, DEFAULT_TOOLS
+from timestep import stream_episode, create_agent, DEFAULT_TOOLS
 from timestep.core.types import Message
 
 
@@ -10,7 +10,7 @@ async def main():
     """Example of using a streaming agent with stream_episode."""
     # Create streaming agent (requires OpenAI API key)
     try:
-        agent = create_openai_streaming_agent()
+        agent = create_agent()
     except ImportError:
         print("OpenAI not available. Install with: pip install openai")
         print("Setting OPENAI_API_KEY environment variable is required.")
@@ -35,17 +35,17 @@ async def main():
     ):
         event_type = event.get("type")
         
-        if event_type == "content_delta":
+        if event_type == "TextMessageContent":
             # Content chunks arrive in real-time (like OpenAI streaming)
             print(event["delta"], end="", flush=True)
-        elif event_type == "tool_call_delta":
-            print(f"\n[Tool call chunk: {event['delta']}]")
-        elif event_type == "agent_response_complete":
-            print(f"\n\n[Agent response complete]")
-        elif event_type == "episode_complete":
-            info = event["info"]
+        elif event_type == "ToolCallChunk":
+            print(f"\n[Tool call chunk: {event['chunk']}]")
+        elif event_type == "TextMessageEnd":
+            print(f"\n\n[Message complete]")
+        elif event_type == "RunFinished":
+            info = event["result"]["episodeInfo"]
             print(f"\n\nEpisode complete!")
-            print(f"Steps: {info.steps}, Duration: {info.duration_s}s")
+            print(f"Steps: {info['steps']}, Duration: {info['duration_s']}s")
 
 
 if __name__ == "__main__":

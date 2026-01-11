@@ -1,9 +1,9 @@
 /** Message utilities for OpenAI chat protocol. */
 
 import { stableHash } from './hashing';
+import type { JSON, Message } from '../core/types';
 
-export type Message = Record<string, any>;
-export type JSON = Record<string, any>;
+export type { Message, JSON };
 
 export function isAssistantMessage(msg: Message): boolean {
   return msg.role === 'assistant';

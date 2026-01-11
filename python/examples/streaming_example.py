@@ -26,28 +26,30 @@ async def main():
     ):
         event_type = event.get("type")
         
-        if event_type == "step_start":
-            print(f"Step {event['step']} started")
-        elif event_type == "content_delta":
+        if event_type == "RunStarted":
+            print(f"Run started: {event['runId']}")
+        elif event_type == "StepStarted":
+            print(f"Step {event['stepName']} started")
+        elif event_type == "TextMessageContent":
             # Stream content chunks in real-time
-            print(f"Content chunk: {event['delta']}", end="", flush=True)
-        elif event_type == "tool_call_delta":
-            print(f"\nTool call chunk: {event['delta']}")
-        elif event_type == "agent_response_complete":
-            print(f"\nAgent response complete: {event['message'].get('content', '')[:50]}...")
-        elif event_type == "tool_call_start":
-            print(f"Tool call started: {event['tool_call'].get('function', {}).get('name', 'unknown')}")
-        elif event_type == "tool_call_result":
+            print(f"{event['delta']}", end="", flush=True)
+        elif event_type == "ToolCallChunk":
+            print(f"\nTool call chunk: {event['chunk']}")
+        elif event_type == "TextMessageEnd":
+            print(f"\nMessage complete")
+        elif event_type == "ToolCallStart":
+            print(f"\nTool call started: {event['name']}")
+        elif event_type == "ToolCallResult":
             print(f"Tool call result: {event['result']}")
-        elif event_type == "step_complete":
-            print(f"Step {event['step']} completed")
-        elif event_type == "episode_complete":
-            info = event["info"]
+        elif event_type == "StepFinished":
+            print(f"Step {event['stepName']} completed")
+        elif event_type == "RunFinished":
+            info = event["result"]["episodeInfo"]
             print(f"\nEpisode complete!")
-            print(f"Steps: {info.steps}, Tool calls: {info.tool_calls}")
-            print(f"Duration: {info.duration_s}s")
-            if info.total_tokens > 0:
-                print(f"Tokens: {info.total_tokens} (input: {info.input_tokens}, output: {info.output_tokens})")
+            print(f"Steps: {info['steps']}, Tool calls: {info['tool_calls']}")
+            print(f"Duration: {info['duration_s']}s")
+            if info['total_tokens'] > 0:
+                print(f"Tokens: {info['total_tokens']} (input: {info['input_tokens']}, output: {info['output_tokens']})")
 
 
 # Example FastAPI integration:

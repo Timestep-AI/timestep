@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from ..core.agent import agent_builtin_echo, agent_cmd_factory
+from ..core.agent import agent_builtin_echo, _agent_cmd_factory as agent_cmd_factory
 from ..core.tools import DEFAULT_TOOLS
 from .graders import parse_grader_spec
 from .suite import run_suite, report

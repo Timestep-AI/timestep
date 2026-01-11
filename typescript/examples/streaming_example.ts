@@ -23,25 +23,25 @@ async function main() {
   )) {
     const eventType = event.type;
     
-    if (eventType === 'step_start') {
-      console.log(`Step ${event.step} started`);
-    } else if (eventType === 'content_delta') {
+    if (eventType === 'RunStarted') {
+      console.log(`Run started: ${event.runId}`);
+    } else if (eventType === 'StepStarted') {
+      console.log(`Step ${event.stepName} started`);
+    } else if (eventType === 'TextMessageContent') {
       // Stream content chunks in real-time
       process.stdout.write(event.delta as string);
-    } else if (eventType === 'tool_call_delta') {
-      console.log(`\nTool call chunk:`, event.delta);
-    } else if (eventType === 'agent_response_complete') {
-      const msg = event.message as Message;
-      console.log(`\nAgent response complete: ${(msg.content || '').substring(0, 50)}...`);
-    } else if (eventType === 'tool_call_start') {
-      const tc = event.tool_call as any;
-      console.log(`Tool call started: ${tc.function?.name || 'unknown'}`);
-    } else if (eventType === 'tool_call_result') {
+    } else if (eventType === 'ToolCallChunk') {
+      console.log(`\nTool call chunk:`, event.chunk);
+    } else if (eventType === 'TextMessageEnd') {
+      console.log(`\nMessage complete`);
+    } else if (eventType === 'ToolCallStart') {
+      console.log(`Tool call started: ${event.name}`);
+    } else if (eventType === 'ToolCallResult') {
       console.log(`Tool call result:`, event.result);
-    } else if (eventType === 'step_complete') {
-      console.log(`Step ${event.step} completed`);
-    } else if (eventType === 'episode_complete') {
-      const info = event.info as any;
+    } else if (eventType === 'StepFinished') {
+      console.log(`Step ${event.stepName} completed`);
+    } else if (eventType === 'RunFinished') {
+      const info = event.result.episodeInfo as any;
       console.log(`\nEpisode complete!`);
       console.log(`Steps: ${info.steps}, Tool calls: ${info.tool_calls}`);
       console.log(`Duration: ${info.duration_s}s`);

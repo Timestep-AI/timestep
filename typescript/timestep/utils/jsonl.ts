@@ -2,8 +2,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-
-export type JSON = Record<string, any>;
+import type { JSON } from '../core/types';
 
 export function* readJsonl(path: string): Generator<JSON> {
   const content = readFileSync(path, 'utf-8');

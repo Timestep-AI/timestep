@@ -1,6 +1,6 @@
 /** CLI interface for evaluation harness. */
 
-import { agentBuiltinEcho, agentCmdFactory } from '../core/index';
+import { agentBuiltinEcho, _agentCmdFactory as agentCmdFactory } from '../core/index';
 import { parseGraderSpec } from './graders';
 import { runSuite, report } from './suite';
 import { DEFAULT_TOOLS } from '../core/index';

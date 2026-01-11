@@ -130,20 +130,40 @@ def report(outdir: Path) -> None:
 
     task_summaries = []
     for tid, rs in by_task.items():
-        pr = sum(1 for x in rs if x.get("passed")) / len(rs)
-        ms = sum(float(x.get("score", 0.0)) for x in rs) / len(rs)
-        md = sum(float(x.get("duration_s", 0.0)) for x in rs) / len(rs)
-        mt = sum(float(x.get("total_tokens", 0)) for x in rs) / len(rs)
-        task_summaries.append((tid, pr, ms, md, mt, len(rs)))
+        k = len(rs)
+        passed_count = sum(1 for x in rs if x.get("passed"))
+        pr = passed_count / k if k > 0 else 0.0
+        ms = sum(float(x.get("score", 0.0)) for x in rs) / k if k > 0 else 0.0
+        md = sum(float(x.get("duration_s", 0.0)) for x in rs) / k if k > 0 else 0.0
+        mt = sum(float(x.get("total_tokens", 0)) for x in rs) / k if k > 0 else 0.0
+        pass_at_k = 1.0 if passed_count > 0 else 0.0
+        pass_power_k = 1.0 if passed_count == k else 0.0
+        task_summaries.append((tid, pr, ms, md, mt, k, pass_at_k, pass_power_k))
 
     task_summaries.sort(key=lambda x: (x[1], x[2]))  # worst first
+
+    # Overall pass@k and pass^k
+    total_tasks = len(by_task)
+    tasks_with_any_pass = sum(1 for _, rs in by_task.items() if any(r.get("passed") for r in rs))
+    tasks_with_all_pass = sum(1 for _, rs in by_task.items() if all(r.get("passed") for r in rs))
+    overall_pass_at_k = tasks_with_any_pass / total_tasks if total_tasks > 0 else 0.0
+    overall_pass_power_k = tasks_with_all_pass / total_tasks if total_tasks > 0 else 0.0
 
     print(f"Run: {outdir}")
     print(f"Trials: {len(rows)}")
     print(f"Overall pass rate: {overall_pass:.3f}")
     print(f"Overall mean score: {overall_score:.3f}")
+    print(f"Overall pass@k: {overall_pass_at_k:.3f}")
+    print(f"Overall pass^k: {overall_pass_power_k:.3f}")
     print(f"Average tokens per trial: {avg_tokens:.0f}")
     print()
-    print("Worst tasks (task_id | pass_rate | mean_score | mean_duration_s | mean_tokens | trials):")
-    for tid, pr, ms, md, mt, n in task_summaries[:20]:
-        print(f"  {tid} | {pr:.3f} | {ms:.3f} | {md:.3f} | {mt:.0f} | {n}")
+    
+    # Format table with aligned columns
+    header = f"{'task_id':<40} {'pass_rate':>10} {'mean_score':>11} {'pass@k':>8} {'pass^k':>8} {'duration_s':>11} {'tokens':>8} {'trials':>7}"
+    print(f"Worst tasks:")
+    print(f"  {header}")
+    print(f"  {'-' * 40} {'-' * 10} {'-' * 11} {'-' * 8} {'-' * 8} {'-' * 11} {'-' * 8} {'-' * 7}")
+    for tid, pr, ms, md, mt, k, pass_at_k, pass_power_k in task_summaries[:20]:
+        # Truncate task_id if too long
+        tid_display = tid[:37] + "..." if len(tid) > 40 else tid
+        print(f"  {tid_display:<40} {pr:>10.3f} {ms:>11.3f} {pass_at_k:>8.3f} {pass_power_k:>8.3f} {md:>11.3f} {mt:>8.0f} {k:>7}")

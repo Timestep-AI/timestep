@@ -3,14 +3,12 @@
 import { readJsonl, writeJsonl } from '../utils/jsonl';
 import { writeJson, now } from '../utils/io';
 import { ensureTaskId } from '../utils/messages';
-import type { AgentFn, ToolFn, EpisodeInfo } from '../core/index';
+import type { AgentFn, ToolFn, EpisodeInfo, JSON } from '../core/index';
 import { runEpisode, indexToolCalls } from '../core/index';
 import type { Grader } from './graders';
 import { aggregateGrades } from './graders';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
-
-export type JSON = Record<string, any>;
 
 export async function runSuite(
   tasksPath: string,
@@ -35,7 +33,7 @@ export async function runSuite(
     return Math.floor(random() * (max - min)) + min;
   }
 
-  const runMeta = {
+  const runMeta: JSON = {
     version: 'eval_mvp_v1',
     tasks_path: tasksPath,
     trials,
@@ -170,25 +168,45 @@ export function report(outdir: string): void {
     byTask[tid].push(r);
   }
 
-  const taskSummaries: Array<[string, number, number, number, number, number]> = [];
+  const taskSummaries: Array<[string, number, number, number, number, number, number, number]> = [];
   for (const [tid, rs] of Object.entries(byTask)) {
-    const pr = rs.filter(x => x.passed).length / rs.length;
-    const ms = rs.reduce((sum, x) => sum + Number(x.score || 0), 0) / rs.length;
-    const md = rs.reduce((sum, x) => sum + Number(x.duration_s || 0), 0) / rs.length;
-    const mt = rs.reduce((sum, x) => sum + Number(x.total_tokens || 0), 0) / rs.length;
-    taskSummaries.push([tid, pr, ms, md, mt, rs.length]);
+    const k = rs.length;
+    const passedCount = rs.filter(x => x.passed).length;
+    const pr = passedCount / k;
+    const ms = rs.reduce((sum, x) => sum + Number(x.score || 0), 0) / k;
+    const md = rs.reduce((sum, x) => sum + Number(x.duration_s || 0), 0) / k;
+    const mt = rs.reduce((sum, x) => sum + Number(x.total_tokens || 0), 0) / k;
+    const passAtK = passedCount > 0 ? 1.0 : 0.0;
+    const passPowerK = passedCount === k ? 1.0 : 0.0;
+    taskSummaries.push([tid, pr, ms, md, mt, k, passAtK, passPowerK]);
   }
 
   taskSummaries.sort((a, b) => a[1] - b[1] || a[2] - b[2]); // worst first
+
+  // Overall pass@k and pass^k
+  const totalTasks = Object.keys(byTask).length;
+  const tasksWithAnyPass = Object.values(byTask).filter(rs => rs.some(r => r.passed)).length;
+  const tasksWithAllPass = Object.values(byTask).filter(rs => rs.every(r => r.passed)).length;
+  const overallPassAtK = totalTasks > 0 ? tasksWithAnyPass / totalTasks : 0.0;
+  const overallPassPowerK = totalTasks > 0 ? tasksWithAllPass / totalTasks : 0.0;
 
   console.log(`Run: ${outdir}`);
   console.log(`Trials: ${rows.length}`);
   console.log(`Overall pass rate: ${overallPass.toFixed(3)}`);
   console.log(`Overall mean score: ${overallScore.toFixed(3)}`);
+  console.log(`Overall pass@k: ${overallPassAtK.toFixed(3)}`);
+  console.log(`Overall pass^k: ${overallPassPowerK.toFixed(3)}`);
   console.log(`Average tokens per trial: ${avgTokens.toFixed(0)}`);
   console.log();
-  console.log('Worst tasks (task_id | pass_rate | mean_score | mean_duration_s | mean_tokens | trials):');
-  for (const [tid, pr, ms, md, mt, n] of taskSummaries.slice(0, 20)) {
-    console.log(`  ${tid} | ${pr.toFixed(3)} | ${ms.toFixed(3)} | ${md.toFixed(3)} | ${mt.toFixed(0)} | ${n}`);
+  
+  // Format table with aligned columns
+  const header = `${'task_id'.padEnd(40)} ${'pass_rate'.padStart(10)} ${'mean_score'.padStart(11)} ${'pass@k'.padStart(8)} ${'pass^k'.padStart(8)} ${'duration_s'.padStart(11)} ${'tokens'.padStart(8)} ${'trials'.padStart(7)}`;
+  console.log('Worst tasks:');
+  console.log(`  ${header}`);
+  console.log(`  ${'-'.repeat(40)} ${'-'.repeat(10)} ${'-'.repeat(11)} ${'-'.repeat(8)} ${'-'.repeat(8)} ${'-'.repeat(11)} ${'-'.repeat(8)} ${'-'.repeat(7)}`);
+  for (const [tid, pr, ms, md, mt, k, passAtK, passPowerK] of taskSummaries.slice(0, 20)) {
+    // Truncate task_id if too long
+    const tidDisplay = tid.length > 40 ? tid.slice(0, 37) + '...' : tid;
+    console.log(`  ${tidDisplay.padEnd(40)} ${pr.toFixed(3).padStart(10)} ${ms.toFixed(3).padStart(11)} ${passAtK.toFixed(3).padStart(8)} ${passPowerK.toFixed(3).padStart(8)} ${md.toFixed(3).padStart(11)} ${mt.toFixed(0).padStart(8)} ${String(k).padStart(7)}`);
   }
 }
