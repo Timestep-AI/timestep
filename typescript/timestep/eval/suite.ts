@@ -3,14 +3,12 @@
 import { readJsonl, writeJsonl } from '../utils/jsonl';
 import { writeJson, now } from '../utils/io';
 import { ensureTaskId } from '../utils/messages';
-import type { AgentFn, ToolFn, EpisodeInfo } from '../core/index';
+import type { AgentFn, ToolFn, EpisodeInfo, JSON } from '../core/index';
 import { runEpisode, indexToolCalls } from '../core/index';
 import type { Grader } from './graders';
 import { aggregateGrades } from './graders';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
-
-export type JSON = Record<string, any>;
 
 export async function runSuite(
   tasksPath: string,
@@ -35,7 +33,7 @@ export async function runSuite(
     return Math.floor(random() * (max - min)) + min;
   }
 
-  const runMeta = {
+  const runMeta: JSON = {
     version: 'eval_mvp_v1',
     tasks_path: tasksPath,
     trials,

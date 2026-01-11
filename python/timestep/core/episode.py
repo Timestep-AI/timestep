@@ -1,6 +1,7 @@
 """Episode runner - the core agent-environment loop."""
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, Union
 
@@ -8,6 +9,23 @@ from .types import AgentFn, JSON, Message, StreamingAgentFn, ToolFn
 from .tools import build_tools_schema
 from ..utils.messages import is_assistant_message
 from ..utils.io import now
+
+
+def _generate_message_id() -> str:
+    """Generate a unique message ID."""
+    return f"msg_{uuid.uuid4().hex[:12]}"
+
+
+def _generate_run_id(task_id: str, trial: Optional[int] = None) -> str:
+    """Generate a run ID from task ID and optional trial."""
+    if trial is not None:
+        return f"run_{task_id}_trial_{trial}"
+    return f"run_{task_id}"
+
+
+def _generate_thread_id(task_id: str) -> str:
+    """Generate a thread ID from task ID."""
+    return f"thread_{task_id}"
 
 
 @dataclass
@@ -48,10 +66,14 @@ async def _run_episode_stream(
     seed: int = 0,
 ) -> AsyncIterator[Dict[str, Any]]:
     """
-    Internal implementation that yields events as the episode progresses.
+    Internal implementation that yields AG-UI protocol events as the episode progresses.
     Supports both streaming and non-streaming agents.
     """
     task_id = str((task_meta or {}).get("id", "unknown"))
+    trial = (task_meta or {}).get("_trial")
+    thread_id = _generate_thread_id(task_id)
+    run_id = _generate_run_id(task_id, trial)
+    
     max_steps = int((limits or {}).get("max_steps", 30))
     time_limit_s = float((limits or {}).get("time_limit_s", 120))
 
@@ -71,13 +93,34 @@ async def _run_episode_stream(
 
     # Provide schema to agent via context (optional)
     tools_schema = build_tools_schema(tools, tools_allowed)
+    
+    # Emit RunStarted
+    yield {
+        "type": "RunStarted",
+        "threadId": thread_id,
+        "runId": run_id,
+        "input": {
+            "messages": initial_messages,
+            "tools_allowed": tools_allowed,
+            "limits": limits,
+            "task_meta": task_meta,
+            "seed": seed,
+        }
+    }
+    
+    current_message_id: Optional[str] = None
+    current_step_name: Optional[str] = None
 
     for step in range(max_steps):
         if now() - t0 > time_limit_s:
             terminated_reason = "time_limit"
             break
 
-        yield {"type": "step_start", "step": step + 1}
+        current_step_name = f"step_{step + 1}"
+        yield {
+            "type": "StepStarted",
+            "stepName": current_step_name,
+        }
 
         context = {
             "tools_schema": tools_schema,
@@ -105,7 +148,19 @@ async def _run_episode_stream(
                 if chunk_type == "content":
                     delta = chunk.get("delta", "")
                     accumulated_content += delta
-                    yield {"type": "content_delta", "delta": delta, "step": step + 1}
+                    # Generate message ID on first content chunk
+                    if current_message_id is None:
+                        current_message_id = _generate_message_id()
+                        yield {
+                            "type": "TextMessageStart",
+                            "messageId": current_message_id,
+                            "role": "assistant",
+                        }
+                    yield {
+                        "type": "TextMessageContent",
+                        "messageId": current_message_id,
+                        "delta": delta,
+                    }
                 elif chunk_type == "tool_call":
                     delta = chunk.get("delta", {})
                     tc_id = delta.get("id", "")
@@ -125,13 +180,30 @@ async def _run_episode_stream(
                         if "arguments" in fn_delta:
                             tc["function"]["arguments"] += fn_delta["arguments"]
                     
-                    yield {"type": "tool_call_delta", "delta": delta, "step": step + 1}
+                    # AG-UI ToolCallChunk
+                    tc_id = delta.get("id", "")
+                    fn_delta = delta.get("function", {})
+                    chunk_data = {}
+                    if "arguments" in fn_delta:
+                        try:
+                            chunk_data = {"_partial": fn_delta["arguments"]}
+                        except Exception:
+                            pass
+                    yield {
+                        "type": "ToolCallChunk",
+                        "toolCallId": str(tc_id),
+                        "chunk": chunk_data,
+                    }
                 elif chunk_type == "done":
                     break
                 elif chunk_type == "error":
                     err = chunk.get("error", "unknown_error")
                     terminated_reason = "error"
-                    yield {"type": "agent_error", "error": err, "step": step + 1}
+                    yield {
+                        "type": "RunError",
+                        "message": err,
+                        "code": "AGENT_ERROR",
+                    }
                     break
             
             # Build complete message from accumulated state
@@ -151,7 +223,11 @@ async def _run_episode_stream(
             terminated_reason = "error"
             err = "agent_returned_non_assistant_message"
             messages.append({"role": "assistant", "content": "", "_error": err})
-            yield {"type": "agent_error", "error": err, "step": step + 1}
+            yield {
+                "type": "RunError",
+                "message": err,
+                "code": "AGENT_ERROR",
+            }
             break
 
         # Extract token usage if available
@@ -165,7 +241,29 @@ async def _run_episode_stream(
         messages.append(assistant_msg)
         steps += 1
 
-        yield {"type": "agent_response_complete", "message": assistant_msg, "step": step + 1}
+        # Handle message lifecycle for AG-UI
+        if assistant_msg.get("content") and current_message_id is None:
+            current_message_id = _generate_message_id()
+            yield {
+                "type": "TextMessageStart",
+                "messageId": current_message_id,
+                "role": assistant_msg.get("role", "assistant"),
+            }
+            # Emit content as single chunk if not already streamed
+            if assistant_msg.get("content"):
+                yield {
+                    "type": "TextMessageContent",
+                    "messageId": current_message_id,
+                    "delta": assistant_msg.get("content", ""),
+                }
+        
+        # End the message
+        if current_message_id:
+            yield {
+                "type": "TextMessageEnd",
+                "messageId": current_message_id,
+            }
+            current_message_id = None
 
         tcs = assistant_msg.get("tool_calls") or []
         if tcs:
@@ -177,7 +275,33 @@ async def _run_episode_stream(
                 name = str(fn.get("name", ""))
                 arg_str = fn.get("arguments", "{}")
 
-                yield {"type": "tool_call_start", "tool_call": tc, "step": step + 1}
+                # AG-UI ToolCallStart
+                yield {
+                    "type": "ToolCallStart",
+                    "toolCallId": tc_id,
+                    "name": name,
+                }
+                
+                # Parse arguments for ToolCallArgs
+                try:
+                    args = json.loads(arg_str) if isinstance(arg_str, str) else (arg_str or {})
+                    if not isinstance(args, dict):
+                        args = {"_non_dict_args": args}
+                except Exception:
+                    args = {}
+                
+                # Emit ToolCallArgs if we have arguments
+                if args:
+                    yield {
+                        "type": "ToolCallArgs",
+                        "toolCallId": tc_id,
+                        "args": args,
+                    }
+                
+                yield {
+                    "type": "ToolCallEnd",
+                    "toolCallId": tc_id,
+                }
 
                 # Enforce allowlist
                 if tool_allow is not None and name not in tool_allow:
@@ -187,7 +311,11 @@ async def _run_episode_stream(
                         "tool_call_id": tc_id,
                         "content": json.dumps(result, ensure_ascii=False),
                     })
-                    yield {"type": "tool_call_result", "tool_call_id": tc_id, "result": result, "step": step + 1}
+                    yield {
+                        "type": "ToolCallResult",
+                        "toolCallId": tc_id,
+                        "result": result,
+                    }
                     continue
 
                 # Unknown tool
@@ -198,7 +326,11 @@ async def _run_episode_stream(
                         "tool_call_id": tc_id,
                         "content": json.dumps(result, ensure_ascii=False),
                     })
-                    yield {"type": "tool_call_result", "tool_call_id": tc_id, "result": result, "step": step + 1}
+                    yield {
+                        "type": "ToolCallResult",
+                        "toolCallId": tc_id,
+                        "result": result,
+                    }
                     continue
 
                 # Parse arguments
@@ -213,7 +345,11 @@ async def _run_episode_stream(
                         "tool_call_id": tc_id,
                         "content": json.dumps(result, ensure_ascii=False),
                     })
-                    yield {"type": "tool_call_result", "tool_call_id": tc_id, "result": result, "step": step + 1}
+                    yield {
+                        "type": "ToolCallResult",
+                        "toolCallId": tc_id,
+                        "result": result,
+                    }
                     continue
 
                 # Invoke tool
@@ -227,15 +363,29 @@ async def _run_episode_stream(
                     "tool_call_id": tc_id,
                     "content": json.dumps(res, ensure_ascii=False),
                 })
-                yield {"type": "tool_call_result", "tool_call_id": tc_id, "result": res, "step": step + 1}
+                yield {
+                    "type": "ToolCallResult",
+                    "toolCallId": tc_id,
+                    "result": res,
+                }
 
             # Continue loop (not done)
-            yield {"type": "step_complete", "step": step + 1, "messages": messages.copy()}
+            if current_step_name:
+                yield {
+                    "type": "StepFinished",
+                    "stepName": current_step_name,
+                }
+                current_step_name = None
             continue
 
         # No tool calls => final answer => done
         terminated_reason = "final_answer"
-        yield {"type": "step_complete", "step": step + 1, "messages": messages.copy()}
+        if current_step_name:
+            yield {
+                "type": "StepFinished",
+                "stepName": current_step_name,
+            }
+            current_step_name = None
         break
     else:
         terminated_reason = "max_steps"
@@ -255,7 +405,28 @@ async def _run_episode_stream(
         total_tokens=total_tokens,
         cost_usd=0.0,
     )
-    yield {"type": "episode_complete", "transcript": messages, "info": info}
+    yield {
+        "type": "RunFinished",
+        "threadId": thread_id,
+        "runId": run_id,
+        "result": {
+            "transcript": messages,
+            "episodeInfo": {
+                "task_id": info.task_id,
+                "trial": info.trial,
+                "seed": info.seed,
+                "steps": info.steps,
+                "tool_calls": info.tool_calls,
+                "duration_s": info.duration_s,
+                "terminated_reason": info.terminated_reason,
+                "error": info.error,
+                "input_tokens": info.input_tokens,
+                "output_tokens": info.output_tokens,
+                "total_tokens": info.total_tokens,
+                "cost_usd": info.cost_usd,
+            }
+        }
+    }
 
 
 def run_episode(

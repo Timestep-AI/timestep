@@ -300,16 +300,17 @@ describe('Streaming Episode Runner', () => {
       events.push(event);
     }
     
-    // Should have step_start, agent_response_complete, step_complete, episode_complete
-    expect(events.length).toBeGreaterThanOrEqual(4);
-    expect(events[0].type).toBe('step_start');
-    expect(events[events.length - 1].type).toBe('episode_complete');
+    // Should have RunStarted, StepStarted, TextMessageStart/Content/End, StepFinished, RunFinished
+    expect(events.length).toBeGreaterThanOrEqual(5);
+    expect(events[0].type).toBe('RunStarted');
+    expect(events[events.length - 1].type).toBe('RunFinished');
     
-    // Check episode_complete has correct structure
+    // Check RunFinished has correct structure
     const finalEvent = events[events.length - 1];
-    expect(finalEvent.transcript).toBeDefined();
-    expect(finalEvent.info).toBeDefined();
-    expect(finalEvent.info.terminated_reason).toBe('final_answer');
+    expect(finalEvent.result).toBeDefined();
+    expect(finalEvent.result.transcript).toBeDefined();
+    expect(finalEvent.result.episodeInfo).toBeDefined();
+    expect(finalEvent.result.episodeInfo.terminated_reason).toBe('final_answer');
   });
 
   it('should stream chunks with streaming agent', async () => {
@@ -337,7 +338,7 @@ describe('Streaming Episode Runner', () => {
       0
     )) {
       events.push(event);
-      if (event.type === 'content_delta') {
+      if (event.type === 'TextMessageContent') {
         contentChunks.push(event.delta);
       }
     }
@@ -346,13 +347,12 @@ describe('Streaming Episode Runner', () => {
     expect(contentChunks.length).toBe(4);
     expect(contentChunks.join('')).toBe('Hello world!');
     
-    // Should have agent_response_complete with accumulated content
-    const agentComplete = events.find((e: any) => e.type === 'agent_response_complete');
-    expect(agentComplete).toBeDefined();
-    expect(agentComplete.message.content).toBe('Hello world!');
+    // Should have TextMessageEnd
+    const messageEnd = events.find((e: any) => e.type === 'TextMessageEnd');
+    expect(messageEnd).toBeDefined();
     
-    // Should end with episode_complete
-    expect(events[events.length - 1].type).toBe('episode_complete');
+    // Should end with RunFinished
+    expect(events[events.length - 1].type).toBe('RunFinished');
   });
 
   it('should stream events with tool calls', async () => {
@@ -385,16 +385,17 @@ describe('Streaming Episode Runner', () => {
       0
     )) {
       events.push(event);
-      if (event.type === 'tool_call_start' || event.type === 'tool_call_result') {
+      if (event.type === 'ToolCallStart' || event.type === 'ToolCallResult') {
         toolCallEvents.push(event);
       }
     }
     
     // Should have tool call events
     expect(toolCallEvents.length).toBeGreaterThanOrEqual(2);
-    expect(toolCallEvents[0].type).toBe('tool_call_start');
-    expect(toolCallEvents[1].type).toBe('tool_call_result');
-    expect(toolCallEvents[1].result.value).toBe(4);
+    expect(toolCallEvents[0].type).toBe('ToolCallStart');
+    const toolCallResult = toolCallEvents.find((e: any) => e.type === 'ToolCallResult');
+    expect(toolCallResult).toBeDefined();
+    expect(toolCallResult!.result.value).toBe(4);
   });
 
   it('should stream tool call chunks from streaming agent', async () => {
@@ -423,20 +424,18 @@ describe('Streaming Episode Runner', () => {
       0
     )) {
       events.push(event);
-      if (event.type === 'tool_call_delta') {
-        toolCallDeltas.push(event.delta);
+      if (event.type === 'ToolCallChunk') {
+        toolCallDeltas.push(event.chunk);
       }
     }
     
-    // Should have received tool call deltas
+    // Should have received tool call chunks
     expect(toolCallDeltas.length).toBeGreaterThan(0);
     
-    // Should have agent_response_complete with accumulated tool call
-    const agentComplete = events.find((e: any) => e.type === 'agent_response_complete');
-    expect(agentComplete).toBeDefined();
-    expect(agentComplete.message.tool_calls).toBeDefined();
-    expect(agentComplete.message.tool_calls.length).toBe(1);
-    expect(agentComplete.message.tool_calls[0].function.name).toBe('calc');
+    // Should have ToolCallStart
+    const toolCallStart = events.find((e: any) => e.type === 'ToolCallStart');
+    expect(toolCallStart).toBeDefined();
+    expect(toolCallStart!.name).toBe('calc');
   });
 
   it('should handle streaming agent errors', async () => {
@@ -461,13 +460,13 @@ describe('Streaming Episode Runner', () => {
       events.push(event);
     }
     
-    // Should have agent_error event
-    const errorEvents = events.filter((e: any) => e.type === 'agent_error');
+    // Should have RunError event
+    const errorEvents = events.filter((e: any) => e.type === 'RunError');
     expect(errorEvents.length).toBeGreaterThan(0);
-    expect(errorEvents[0].error).toBe('test_error');
+    expect(errorEvents[0].message).toBe('test_error');
     
-    // Should end with episode_complete with error
-    expect(events[events.length - 1].type).toBe('episode_complete');
-    expect(events[events.length - 1].info.error).toBeDefined();
+    // Should end with RunFinished with error
+    expect(events[events.length - 1].type).toBe('RunFinished');
+    expect(events[events.length - 1].result.episodeInfo.error).toBeDefined();
   });
 });

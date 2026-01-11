@@ -35,17 +35,17 @@ async def main():
     ):
         event_type = event.get("type")
         
-        if event_type == "content_delta":
+        if event_type == "TextMessageContent":
             # Content chunks arrive in real-time (like OpenAI streaming)
             print(event["delta"], end="", flush=True)
-        elif event_type == "tool_call_delta":
-            print(f"\n[Tool call chunk: {event['delta']}]")
-        elif event_type == "agent_response_complete":
-            print(f"\n\n[Agent response complete]")
-        elif event_type == "episode_complete":
-            info = event["info"]
+        elif event_type == "ToolCallChunk":
+            print(f"\n[Tool call chunk: {event['chunk']}]")
+        elif event_type == "TextMessageEnd":
+            print(f"\n\n[Message complete]")
+        elif event_type == "RunFinished":
+            info = event["result"]["episodeInfo"]
             print(f"\n\nEpisode complete!")
-            print(f"Steps: {info.steps}, Duration: {info.duration_s}s")
+            print(f"Steps: {info['steps']}, Duration: {info['duration_s']}s")
 
 
 if __name__ == "__main__":

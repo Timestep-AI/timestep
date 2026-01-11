@@ -62,6 +62,7 @@ __all__ = [
     # Core episode runner
     "run_episode",
     "stream_episode",
+    "stream_episode_ag_ui",
     "EpisodeInfo",
     # Core tools
     "tool_calc",

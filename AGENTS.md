@@ -291,4 +291,4 @@ Messages follow OpenAI chat completion format:
 - **Test task compatibility**: When modifying task format or results, verify cross-language compatibility
 - **Follow the module structure**: Core is independent, eval builds on core
 - **Keep it simple**: The SDK is intentionally minimal - avoid over-engineering
-- **Documentation matters**: Update docs when adding features or changing behavior
+- **Do NOT create documentation files unless explicitly requested**: Only create markdown documentation files (like README, architecture docs, etc.) when the user explicitly asks for them. Do not create evaluation documents, mapping documents, or other analysis documents unless specifically requested.
