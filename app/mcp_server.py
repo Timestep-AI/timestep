@@ -97,7 +97,7 @@ if __name__ == "__main__":
     import asyncio
     
     # FastMCP handles running the server with HTTP transport
-    port = int(os.getenv("MCP_PORT", "3001"))
+    port = int(os.getenv("MCP_PORT", "8080"))
     
     async def main():
         await mcp.run_async(transport="http", port=port, json_response=True)

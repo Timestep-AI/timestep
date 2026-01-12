@@ -24,14 +24,14 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from a2a.client import ClientFactory, ClientConfig
 from a2a.client.helpers import create_text_message_object
-from a2a.types import TaskQueryParams
+from a2a.types import TransportProtocol, Role
 import uvicorn
 
 # Server URLs
 A2A_BASE_URL = os.getenv("A2A_URL", "http://localhost:8000")
 MCP_URL = os.getenv("MCP_URL", "http://localhost:3001")
 CLIENT_SAMPLING_PORT = int(os.getenv("CLIENT_SAMPLING_PORT", "3002"))
-CLIENT_SAMPLING_URL = f"http://localhost:{CLIENT_SAMPLING_PORT}"
+CLIENT_SAMPLING_URL = os.getenv("CLIENT_SAMPLING_URL", f"http://localhost:{CLIENT_SAMPLING_PORT}")
 
 # Agent IDs
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
@@ -184,7 +184,12 @@ async def handle_mcp_sampling_internal(
     
     # Create A2A client for the target agent
     httpx_client = httpx.AsyncClient(timeout=60.0)
-    config = ClientConfig(streaming=False, polling=True, httpx_client=httpx_client)
+    config = ClientConfig(
+        streaming=True,
+        polling=False,
+        httpx_client=httpx_client,
+        supported_transports=[TransportProtocol.http_json],  # Support HTTP+JSON transport
+    )
     
     try:
         a2a_client = await ClientFactory.connect(agent_url, client_config=config)
@@ -208,10 +213,10 @@ async def handle_mcp_sampling_internal(
                 task, update = event
                 task_id = task.id
                 
-                # Collect assistant messages
-                if task.messages:
-                    for msg in task.messages:
-                        if msg.role == "assistant":
+                # Collect agent messages (Task has 'history' not 'messages')
+                if task.history:
+                    for msg in task.history:
+                        if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
                             if hasattr(msg, 'parts'):
                                 for part in msg.parts:
                                     if hasattr(part, 'kind') and part.kind == 'text':
@@ -227,10 +232,11 @@ async def handle_mcp_sampling_internal(
                 if task.status.state.value == "input-required":
                     # Check for tool calls
                     last_assistant = None
-                    for msg in reversed(task.messages):
-                        if msg.role == "assistant":
-                            last_assistant = msg
-                            break
+                    if task.history:
+                        for msg in reversed(task.history):
+                            if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
+                                last_assistant = msg
+                                break
                     
                     if last_assistant and hasattr(last_assistant, 'tool_calls') and last_assistant.tool_calls:
                         # Execute tool calls via MCP
@@ -258,9 +264,9 @@ async def handle_mcp_sampling_internal(
                                 if isinstance(event2, tuple):
                                     task2, update2 = event2
                                     # Update final message
-                                    if task2.messages:
-                                        for msg2 in task2.messages:
-                                            if msg2.role == "assistant":
+                                    if task2.history:
+                                        for msg2 in task2.history:
+                                            if msg2.role == Role.agent or (hasattr(msg2, 'role') and str(msg2.role) == "agent"):
                                                 if hasattr(msg2, 'parts'):
                                                     for part in msg2.parts:
                                                         if hasattr(part, 'kind') and part.kind == 'text':
@@ -270,26 +276,6 @@ async def handle_mcp_sampling_internal(
                                     
                                     if task2.status.state.value == "completed":
                                         break
-        
-        # Poll for final updates if needed
-        if task_id:
-            while True:
-                task = await a2a_client.get_task(TaskQueryParams(task_id=task_id))
-                
-                if task.status.state.value == "completed":
-                    # Get final message
-                    if task.messages:
-                        for msg in task.messages:
-                            if msg.role == "assistant":
-                                if hasattr(msg, 'parts'):
-                                    for part in msg.parts:
-                                        if hasattr(part, 'kind') and part.kind == 'text':
-                                            final_message += part.text
-                                elif hasattr(msg, 'content'):
-                                    final_message += msg.content
-                    break
-                
-                await asyncio.sleep(0.5)
         
         return final_message.strip() or "Task completed."
     
@@ -303,14 +289,22 @@ async def run_client_loop(
 ) -> None:
     """Main client loop that orchestrates A2A and MCP (fully async)."""
     
-    # Construct A2A URL with agent path
+    # Construct A2A URL with agent path - ClientFactory will fetch agent card from /.well-known/agent-card.json
     agent_url = f"{A2A_BASE_URL}/agents/{agent_id}"
     
     # Create A2A client using ClientFactory
+    # The client will fetch the agent card from {agent_url}/.well-known/agent-card.json
     httpx_client = httpx.AsyncClient(timeout=60.0)
-    config = ClientConfig(streaming=False, polling=True, httpx_client=httpx_client)
+    config = ClientConfig(
+        streaming=True,
+        polling=False,
+        httpx_client=httpx_client,
+        supported_transports=[TransportProtocol.http_json],  # Support HTTP+JSON transport
+    )
     
     try:
+        # ClientFactory.connect expects a URL that points to where the agent card can be fetched
+        # It will append /.well-known/agent-card.json to the URL
         a2a_client = await ClientFactory.connect(agent_url, client_config=config)
     except Exception as e:
         print(f"Error connecting to A2A server: {e}")
@@ -325,127 +319,124 @@ async def run_client_loop(
         
         # Send message to A2A server and process events
         task_id = None
-        async for event in a2a_client.send_message(message):
-            if isinstance(event, tuple):
-                task, update = event
-                task_id = task.id
-                
-                # Print assistant messages
-                if task.messages:
-                    for msg in task.messages:
-                        if msg.role == "assistant":
-                            if hasattr(msg, 'parts'):
-                                for part in msg.parts:
-                                    if hasattr(part, 'kind') and part.kind == 'text':
-                                        print(part.text, end="", flush=True)
-                            elif hasattr(msg, 'content'):
-                                print(msg.content, end="", flush=True)
-                
-                # Check if task is completed
-                if task.status.state.value == "completed":
-                    print("\n[Task completed]")
-                    break
-                
-                # Check if input is required (tool calls)
-                if task.status.state.value == "input-required":
-                    # Check for tool calls in the last assistant message
-                    last_assistant = None
-                    for msg in reversed(task.messages):
-                        if msg.role == "assistant":
-                            last_assistant = msg
-                            break
+        try:
+            async for event in a2a_client.send_message(message):
+                if isinstance(event, tuple):
+                    task, update = event
+                    task_id = task.id
                     
-                    if last_assistant and hasattr(last_assistant, 'tool_calls') and last_assistant.tool_calls:
-                        # Execute tool calls via MCP
-                        pending_events = []
+                    # Print agent messages (Task has 'history' not 'messages')
+                    if task.history:
+                        for msg in task.history:
+                            if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
+                                if hasattr(msg, 'parts'):
+                                    for part in msg.parts:
+                                        if hasattr(part, 'kind') and part.kind == 'text':
+                                            print(part.text, end="", flush=True)
+                                elif hasattr(msg, 'content'):
+                                    print(msg.content, end="", flush=True)
+                    
+                    # Check if task is completed
+                    if task.status.state.value == "completed":
+                        print("\n[Task completed]")
+                        break
+                    
+                    # Check if input is required (tool calls)
+                    if task.status.state.value == "input-required":
+                        # Check for tool calls in the last agent message
+                        last_assistant = None
+                        if task.history:
+                            for msg in reversed(task.history):
+                                if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
+                                    last_assistant = msg
+                                    break
                         
-                        for tool_call in last_assistant.tool_calls:
-                            tool_id = tool_call.id
-                            tool_name = tool_call.function.name
-                            tool_args_str = tool_call.function.arguments
+                        if last_assistant and hasattr(last_assistant, 'tool_calls') and last_assistant.tool_calls:
+                            # Execute tool calls via MCP
+                            pending_events = []
                             
-                            # Parse arguments
-                            try:
-                                tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
-                            except:
-                                tool_args = {}
+                            for tool_call in last_assistant.tool_calls:
+                                tool_id = tool_call.id
+                                tool_name = tool_call.function.name
+                                tool_args_str = tool_call.function.arguments
+                                
+                                # Parse arguments
+                                try:
+                                    tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
+                                except:
+                                    tool_args = {}
+                                
+                                print(f"\n[Calling tool: {tool_name}]")
+                                
+                                # Check if it's a handoff
+                                if tool_name == "handoff":
+                                    # Inject agent_uri (client sampling endpoint with agent_id) if not present
+                                    if "agent_uri" not in tool_args:
+                                        # Extract agent_id from tool_args if present, otherwise use default
+                                        agent_id = tool_args.get("agent_id", WEATHER_ASSISTANT_ID)
+                                        tool_args["agent_uri"] = f"{CLIENT_SAMPLING_URL}/sampling/complete?agent_id={agent_id}"
+                                        # Remove agent_id from tool_args since we're using agent_uri now
+                                        if "agent_id" in tool_args:
+                                            del tool_args["agent_id"]
+                                    
+                                    # Call the handoff tool - it will make HTTP request to agent_uri
+                                    handoff_result = await call_mcp_tool("handoff", tool_args)
+                                    
+                                    # The handoff_result should contain the sampling response
+                                    # Add tool result as event
+                                    pending_events.append({
+                                        "kind": "tool-result",
+                                        "toolCallId": tool_id,
+                                        "content": json.dumps(handoff_result),
+                                    })
+                                else:
+                                    # Regular tool call (e.g., get_weather)
+                                    result = await call_mcp_tool(tool_name, tool_args)
+                                    print(f"[Tool result: {result}]")
+                                    
+                                    # Add tool result as event
+                                    pending_events.append({
+                                        "kind": "tool-result",
+                                        "toolCallId": tool_id,
+                                        "content": json.dumps(result),
+                                    })
                             
-                            print(f"\n[Calling tool: {tool_name}]")
-                            
-                            # Check if it's a handoff
-                            if tool_name == "handoff":
-                                # Inject agent_uri (client sampling endpoint with agent_id) if not present
-                                if "agent_uri" not in tool_args:
-                                    # Extract agent_id from tool_args if present, otherwise use default
-                                    agent_id = tool_args.get("agent_id", WEATHER_ASSISTANT_ID)
-                                    tool_args["agent_uri"] = f"{CLIENT_SAMPLING_URL}/sampling/complete?agent_id={agent_id}"
-                                    # Remove agent_id from tool_args since we're using agent_uri now
-                                    if "agent_id" in tool_args:
-                                        del tool_args["agent_id"]
-                                
-                                # Call the handoff tool - it will make HTTP request to agent_uri
-                                handoff_result = await call_mcp_tool("handoff", tool_args)
-                                
-                                # The handoff_result should contain the sampling response
-                                # Add tool result as event
-                                pending_events.append({
-                                    "kind": "tool-result",
-                                    "toolCallId": tool_id,
-                                    "content": json.dumps(handoff_result),
-                                })
-                            else:
-                                # Regular tool call (e.g., get_weather)
-                                result = await call_mcp_tool(tool_name, tool_args)
-                                print(f"[Tool result: {result}]")
-                                
-                                # Add tool result as event
-                                pending_events.append({
-                                    "kind": "tool-result",
-                                    "toolCallId": tool_id,
-                                    "content": json.dumps(result),
-                                })
-                        
-                        # Send all tool results back to A2A
-                        if pending_events:
-                            # We need to send tool results as messages
-                            # The A2A protocol expects tool results as part of the message
-                            for event in pending_events:
-                                tool_result_msg = create_text_message_object(
-                                    role="user",
-                                    content=event["content"],
-                                )
-                                
-                                # Continue the loop with tool result
-                                async for event2 in a2a_client.send_message(tool_result_msg):
-                                    if isinstance(event2, tuple):
-                                        task2, update2 = event2
-                                        
-                                        # Print assistant messages
-                                        if task2.messages:
-                                            for msg in task2.messages:
-                                                if msg.role == "assistant":
-                                                    if hasattr(msg, 'parts'):
-                                                        for part in msg.parts:
-                                                            if hasattr(part, 'kind') and part.kind == 'text':
-                                                                print(part.text, end="", flush=True)
-                                                    elif hasattr(msg, 'content'):
-                                                        print(msg.content, end="", flush=True)
-                                        
-                                        if task2.status.state.value == "completed":
-                                            print("\n[Task completed]")
-                                            return
-                                        break
-        
-        # Poll for final updates if needed
-        if task_id:
-            while True:
-                task = await a2a_client.get_task(TaskQueryParams(task_id=task_id))
-                
-                if task.status.state.value == "completed":
-                    print("\n[Task completed]")
+                            # Send all tool results back to A2A
+                            if pending_events:
+                                # We need to send tool results as messages
+                                # The A2A protocol expects tool results as part of the message
+                                for event in pending_events:
+                                    tool_result_msg = create_text_message_object(
+                                        role="user",
+                                        content=event["content"],
+                                    )
+                                    
+                                    # Continue the loop with tool result
+                                    async for event2 in a2a_client.send_message(tool_result_msg):
+                                        if isinstance(event2, tuple):
+                                            task2, update2 = event2
+                                            
+                                            # Print agent messages (Task has 'history' not 'messages')
+                                            if task2.history:
+                                                for msg in task2.history:
+                                                    if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
+                                                        if hasattr(msg, 'parts'):
+                                                            for part in msg.parts:
+                                                                if hasattr(part, 'kind') and part.kind == 'text':
+                                                                    print(part.text, end="", flush=True)
+                                                        elif hasattr(msg, 'content'):
+                                                            print(msg.content, end="", flush=True)
+                                            
+                                            if task2.status.state.value == "completed":
+                                                print("\n[Task completed]")
+                                                return
+                                            break
+                elif isinstance(event, Exception):
+                    print(f"\n[Error from A2A server: {event}]")
                     break
-                
-                await asyncio.sleep(0.5)
+        except Exception as e:
+            print(f"\n[Error in client loop: {e}]")
+            raise
     
     finally:
         await httpx_client.aclose()
@@ -480,13 +471,16 @@ async def main():
             # Run the client loop
             await run_client_loop(message, agent_id=PERSONAL_ASSISTANT_ID)
         finally:
-            # Cleanup
+            # Cleanup - gracefully shutdown the server
             server.should_exit = True
-            server_task.cancel()
-            try:
-                await server_task
-            except asyncio.CancelledError:
-                pass
+            # Give the server a moment to shutdown gracefully
+            await asyncio.sleep(0.1)
+            if not server_task.done():
+                server_task.cancel()
+                try:
+                    await server_task
+                except (asyncio.CancelledError, Exception):
+                    pass  # Ignore cancellation errors during cleanup
     
     await run_with_sampling()
 

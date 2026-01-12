@@ -115,8 +115,9 @@ class MultiAgentExecutor(AgentExecutor):
         messages = task_messages[task_key]
         
         # Get new message from request context
-        if context.request and context.request.message:
-            msg = context.request.message
+        # RequestContext has a 'message' property, not 'request.message'
+        if context.message:
+            msg = context.message
             # Extract text from message parts
             text_content = ""
             if hasattr(msg, 'parts'):
@@ -189,15 +190,16 @@ class MultiAgentExecutor(AgentExecutor):
             assistant_content = assistant_message.content or ""
             
             # Build A2A message using helper function
+            # Role.agent is the correct role for assistant messages in A2A
             a2a_message = create_text_message_object(
-                role=Role.assistant,
+                role=Role.agent,
                 content=assistant_content,
             )
             a2a_message.context_id = context_id
             a2a_message.task_id = task_id
             
             # Publish assistant message
-            event_queue.enqueue(a2a_message)
+            await event_queue.enqueue_event(a2a_message)
             
             # If there are tool calls, publish them and update status
             if tool_calls:
@@ -208,7 +210,7 @@ class MultiAgentExecutor(AgentExecutor):
                     status=TaskStatus(state=TaskState.input_required),
                     final=False,
                 )
-                event_queue.enqueue(status_update)
+                await event_queue.enqueue_event(status_update)
             else:
                 # No tool calls, task is complete
                 status_update = TaskStatusUpdateEvent(
@@ -217,7 +219,7 @@ class MultiAgentExecutor(AgentExecutor):
                     status=TaskStatus(state=TaskState.completed),
                     final=True,
                 )
-                event_queue.enqueue(status_update)
+                await event_queue.enqueue_event(status_update)
             
             # Update task messages
             messages.append({
@@ -243,7 +245,7 @@ class MultiAgentExecutor(AgentExecutor):
                 status=TaskStatus(state=TaskState.failed, message=create_text_message_object(content=str(e))),
                 final=True,
             )
-            event_queue.enqueue(status_update)
+            await event_queue.enqueue_event(status_update)
             raise
     
     async def cancel(
@@ -262,7 +264,7 @@ class MultiAgentExecutor(AgentExecutor):
             status=TaskStatus(state=TaskState.canceled),
             final=True,
         )
-        event_queue.enqueue(status_update)
+        await event_queue.enqueue_event(status_update)
 
 
 def create_agent_card(agent_id: str, agent_name: str, description: str) -> AgentCard:
@@ -276,7 +278,7 @@ def create_agent_card(agent_id: str, agent_name: str, description: str) -> Agent
         preferred_transport=TransportProtocol.http_json,
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
-        capabilities=AgentCapabilities(),
+        capabilities=AgentCapabilities(streaming=True),
         skills=[AgentSkill(id=agent_id, name=agent_name, description=description, tags=[])],
     )
 

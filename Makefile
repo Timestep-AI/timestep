@@ -19,3 +19,16 @@ test-typescript:
 
 gaia-eval:
 	uv run scripts/gaia_eval.py
+
+test-app:
+	@echo "Starting servers..."
+	@OPENAI_API_KEY=$$OPENAI_API_KEY docker compose up -d
+	@echo "Waiting for servers to be ready..."
+	@sleep 3
+	@echo "Following logs and running test client..."
+	@(docker compose logs -f & echo $$! > /tmp/compose-logs.pid) && \
+	uv run app/test_client.py "$${TEST_MESSAGE:-What's the weather in Oakland?}"; \
+	CLIENT_EXIT=$$?; \
+	kill $$(cat /tmp/compose-logs.pid 2>/dev/null) 2>/dev/null || true; \
+	docker compose down; \
+	exit $$CLIENT_EXIT

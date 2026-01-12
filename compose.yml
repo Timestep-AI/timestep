@@ -1,0 +1,26 @@
+services:
+  a2a_server:
+    image: ghcr.io/astral-sh/uv:python3.11-trixie
+    volumes:
+      - .:/workspace
+    command: uv run /workspace/app/a2a_server.py
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    develop:
+      watch:
+        - action: restart
+          path: ./app/a2a_server.py
+
+  mcp_server:
+    image: ghcr.io/astral-sh/uv:python3.11-trixie
+    volumes:
+      - .:/workspace
+    command: uv run /workspace/app/mcp_server.py
+    ports:
+      - "8080:8080"
+    develop:
+      watch:
+        - action: restart
+          path: ./app/mcp_server.py
