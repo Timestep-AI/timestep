@@ -27,14 +27,15 @@ from contextlib import asynccontextmanager
 from a2a.client import ClientFactory, ClientConfig
 from a2a.client.helpers import create_text_message_object
 from a2a.types import TransportProtocol, Role
-from mcp import ClientSession
+from mcp import ClientSession, types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent
+from mcp.shared.context import RequestContext
 import uvicorn
 
 # Server URLs
 A2A_BASE_URL = os.getenv("A2A_URL", "http://localhost:8000")
-MCP_URL = os.getenv("MCP_URL", "http://localhost:8080")
+MCP_URL = os.getenv("MCP_URL", "http://localhost:8080/mcp")
 
 # Agent IDs
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
@@ -75,13 +76,81 @@ def write_task(task: Any, agent_id: str) -> None:
         print(f"[Traceback: {traceback.format_exc()}]", file=sys.stderr)
 
 
+async def mcp_sampling_callback(
+    context: RequestContext["ClientSession", Any],
+    params: mcp_types.CreateMessageRequestParams,
+) -> mcp_types.CreateMessageResult | mcp_types.CreateMessageResultWithTools | mcp_types.ErrorData:
+    """
+    MCP sampling callback that handles sampling requests from the MCP server.
+    This is called when the server's handoff tool uses ctx.sample().
+    """
+    print(f"\n[DEBUG: mcp_sampling_callback called with params={params}]", file=sys.stderr)
+    
+    try:
+        # Extract messages from params
+        # CreateMessageRequestParams has a 'messages' field with ContentBlock items
+        messages_list = []
+        for msg in params.messages:
+            # Convert MCP ContentBlock to dict format expected by sampling_handler
+            if isinstance(msg, dict):
+                messages_list.append(msg)
+            elif hasattr(msg, 'text'):
+                # TextContent block
+                messages_list.append({"role": "user", "content": {"text": msg.text}})
+            elif hasattr(msg, 'role') and hasattr(msg, 'content'):
+                # Already in the right format
+                messages_list.append({"role": msg.role, "content": msg.content})
+            else:
+                # Try to extract text from content
+                content = getattr(msg, 'content', None)
+                if content and hasattr(content, 'text'):
+                    messages_list.append({"role": "user", "content": {"text": content.text}})
+                else:
+                    messages_list.append({"role": "user", "content": {"text": str(msg)}})
+        
+        # Extract context from params (if available)
+        # The context might be in params or we need to extract it from messages
+        mcp_context = {}
+        if hasattr(params, 'context') and params.context:
+            mcp_context = params.context
+        elif hasattr(params, 'metadata') and params.metadata:
+            mcp_context = params.metadata
+        
+        # Call the existing sampling_handler
+        result_text = await sampling_handler(
+            messages=messages_list,
+            params={},  # Empty params for now, can be extended if needed
+            context=mcp_context,
+        )
+        
+        # Convert result to CreateMessageResult
+        # CreateMessageResult requires role, content (single item), and model
+        return mcp_types.CreateMessageResult(
+            role="assistant",
+            content=mcp_types.TextContent(type="text", text=result_text),
+            model="a2a-agent"  # Model identifier for the A2A agent
+        )
+    except Exception as e:
+        print(f"[ERROR: mcp_sampling_callback error: {e}]", file=sys.stderr)
+        import traceback
+        print(f"[TRACEBACK: {traceback.format_exc()}]", file=sys.stderr)
+        return mcp_types.ErrorData(
+            code=mcp_types.INTERNAL_ERROR,
+            message=f"Sampling error: {str(e)}",
+        )
+
+
 async def call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Call MCP tool using MCP Python SDK client."""
+    print(f"\n[DEBUG: call_mcp_tool called with tool_name={tool_name}, arguments={arguments}]", file=sys.stderr)
+    print(f"[DEBUG: MCP_URL={MCP_URL}]", file=sys.stderr)
     try:
         async with streamable_http_client(MCP_URL) as (read, write, _):
-            async with ClientSession(read, write) as session:
+            async with ClientSession(read, write, sampling_callback=mcp_sampling_callback) as session:
+                print(f"[DEBUG: MCP session initialized, calling tool]", file=sys.stderr)
                 await session.initialize()
                 result: CallToolResult = await session.call_tool(tool_name, arguments)
+                print(f"[DEBUG: MCP tool call result: {result}]", file=sys.stderr)
                 
                 # Convert CallToolResult to dict format
                 # CallToolResult has a 'content' field which is a list of content items
@@ -149,17 +218,29 @@ async def sampling_handler(
             agent_id = agent_id_match.group(1)
     
     # Extract message content from messages
-    # FastMCP format: messages have 'role' and 'content' (with .text for text content)
+    # Messages can be dicts with 'role' and 'content', where content can be a dict or TextContent object
     message_text = None
     for msg in messages:
         if isinstance(msg, dict):
             content = msg.get("content", "")
-            if isinstance(content, dict) and "text" in content:
+            # Handle TextContent object
+            if hasattr(content, 'text'):
+                message_text = content.text
+            # Handle dict with 'text' key
+            elif isinstance(content, dict) and "text" in content:
                 message_text = content["text"]
+            # Handle string content
             elif isinstance(content, str):
                 message_text = content
         elif isinstance(msg, str):
             message_text = msg
+        # Handle SamplingMessage objects directly
+        elif hasattr(msg, 'content'):
+            content = msg.content
+            if hasattr(content, 'text'):
+                message_text = content.text
+            elif isinstance(content, dict) and "text" in content:
+                message_text = content["text"]
     
     if not message_text:
         message_text = "Please help with this task."
@@ -341,6 +422,17 @@ async def handle_mcp_sampling_internal(
             
             # Check if task is completed
             if task.status.state.value == "completed":
+                # Extract final message from task.status.message if available
+                if task.status.message and task.status.message.parts:
+                    for part in task.status.message.parts:
+                        if hasattr(part, 'kind') and part.kind == 'text':
+                            if hasattr(part, 'text'):
+                                final_message += part.text
+                        elif hasattr(part, 'root'):
+                            part_data = part.root
+                            if hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                if hasattr(part_data, 'text'):
+                                    final_message += part_data.text
                 break
             
             # Check if input is required (tool calls)
@@ -443,6 +535,17 @@ async def handle_mcp_sampling_internal(
                                                 final_message += msg2.content
                                 
                                 if task2.status.state.value == "completed":
+                                    # Extract final message from task2.status.message if available
+                                    if task2.status.message and task2.status.message.parts:
+                                        for part in task2.status.message.parts:
+                                            if hasattr(part, 'kind') and part.kind == 'text':
+                                                if hasattr(part, 'text'):
+                                                    final_message += part.text
+                                            elif hasattr(part, 'root'):
+                                                part_data = part.root
+                                                if hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                                    if hasattr(part_data, 'text'):
+                                                        final_message += part_data.text
                                     break
         
         return final_message.strip() or "Task completed."

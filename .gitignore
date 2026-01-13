@@ -50,4 +50,6 @@ htmlcov/
 
 # Eval outputs
 runs/
+tasks/
 tasks.jsonl
+traces/
