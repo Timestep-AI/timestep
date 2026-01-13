@@ -14,6 +14,8 @@ Handles task creation and continuation via A2A protocol.
 import os
 import uuid
 import json
+import datetime
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from fastapi import FastAPI, Request, HTTPException, APIRouter
 from fastapi.responses import JSONResponse
@@ -24,7 +26,7 @@ from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers.default_request_handler import DefaultRequestHandler
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.server.apps.rest.fastapi_app import A2ARESTFastAPIApplication
-from a2a.types import AgentCard, AgentCapabilities, AgentSkill, Message, TaskStatusUpdateEvent, TaskStatus, TaskState, Role, TransportProtocol
+from a2a.types import AgentCard, AgentCapabilities, AgentSkill, Message, TaskStatusUpdateEvent, TaskStatus, TaskState, Role, TransportProtocol, Task, Part, DataPart
 from a2a.client.helpers import create_text_message_object
 
 # Initialize OpenAI client
@@ -45,7 +47,7 @@ HANDOFF_TOOL = {
             "properties": {
                 "agent_uri": {
                     "type": "string",
-                    "description": "The URI to call for the handoff (client sampling endpoint URL)"
+                    "description": "The A2A URI of the agent to hand off to"
                 },
                 "context_id": {
                     "type": "string",
@@ -85,8 +87,94 @@ AGENT_TOOLS: Dict[str, List[Dict[str, Any]]] = {
     WEATHER_ASSISTANT_ID: [GET_WEATHER_TOOL],
 }
 
+# Agent descriptions
+AGENT_DESCRIPTIONS: Dict[str, str] = {
+    PERSONAL_ASSISTANT_ID: "Personal Assistant",
+    WEATHER_ASSISTANT_ID: "Weather Assistant",
+}
+
+
+def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
+    """Build system message explaining who the agent is and what tools are available."""
+    agent_name = AGENT_DESCRIPTIONS.get(agent_id, "Assistant")
+    
+    # Get base URL for agent endpoints
+    base_url = os.getenv("A2A_BASE_URL", "http://localhost:8000")
+    
+    system_parts = [f"You are a {agent_name}."]
+    
+    if tools:
+        system_parts.append("\nYou have access to the following tools:")
+        for tool in tools:
+            func = tool.get("function", {})
+            tool_name = func.get("name", "unknown")
+            tool_desc = func.get("description", "No description available")
+            params = func.get("parameters", {})
+            
+            # Build tool description with format
+            tool_info = f"- {tool_name}: {tool_desc}"
+            
+            # Add parameter details
+            if params and "properties" in params:
+                tool_info += "\n  Parameters:"
+                properties = params.get("properties", {})
+                required = params.get("required", [])
+                for param_name, param_spec in properties.items():
+                    param_type = param_spec.get("type", "string")
+                    param_desc = param_spec.get("description", "")
+                    required_marker = " (required)" if param_name in required else " (optional)"
+                    tool_info += f"\n    - {param_name} ({param_type}){required_marker}: {param_desc}"
+            
+            # Special handling for handoff tool - list available agent URIs from agent cards
+            if tool_name == "handoff":
+                tool_info += "\n  Available agents for handoff:"
+                # List all other agents (excluding current agent) with their A2A endpoint URLs
+                for other_agent_id, other_agent_name in AGENT_DESCRIPTIONS.items():
+                    if other_agent_id != agent_id:
+                        # Use the standard A2A agent endpoint URL (from agent card)
+                        agent_uri = f"{base_url}/agents/{other_agent_id}"
+                        tool_info += f"\n    - {other_agent_name} (ID: {other_agent_id[:8]}...): Use agent_uri=\"{agent_uri}\""
+            
+            system_parts.append(tool_info)
+    else:
+        system_parts.append("\nYou do not have access to any tools.")
+    
+    return "\n".join(system_parts)
+
+
 # Simple in-memory task storage (messages per task, keyed by agent_id:task_id)
 task_messages: Dict[str, List[Dict[str, Any]]] = {}
+
+# Track all task IDs per agent for listing
+agent_task_ids: Dict[str, List[str]] = {}
+
+def write_trace(task_id: str, agent_id: str, input_messages: List[Dict], input_tools: List[Dict], output_message: Dict) -> None:
+    """Write trace to traces/ folder."""
+    traces_dir = Path("/workspace/traces")
+    traces_dir.mkdir(exist_ok=True)
+    
+    timestamp = datetime.datetime.now().isoformat().replace(":", "-")
+    # Use short task_id for filename (first 8 chars)
+    task_id_short = task_id[:8] if task_id else "unknown"
+    agent_id_short = agent_id[:8] if agent_id else "unknown"
+    trace_file = traces_dir / f"{timestamp}_{task_id_short}_{agent_id_short}.json"
+    
+    trace = {
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "timestamp": timestamp,
+        "input": {
+            "messages": input_messages,
+            "tools": input_tools,
+        },
+        "output": {
+            "content": output_message.get("content", ""),
+            "tool_calls": output_message.get("tool_calls", []),
+        }
+    }
+    
+    with open(trace_file, "w") as f:
+        json.dump(trace, f, indent=2)
 
 
 class MultiAgentExecutor(AgentExecutor):
@@ -111,29 +199,64 @@ class MultiAgentExecutor(AgentExecutor):
         task_key = f"{self.agent_id}:{task_id}"
         if task_key not in task_messages:
             task_messages[task_key] = []
+            # Track task ID for this agent
+            if self.agent_id not in agent_task_ids:
+                agent_task_ids[self.agent_id] = []
+            if task_id and task_id not in agent_task_ids[self.agent_id]:
+                agent_task_ids[self.agent_id].append(task_id)
         
         messages = task_messages[task_key]
         
         # Get new message from request context
         # RequestContext has a 'message' property, not 'request.message'
+        # For Task-generating agents, the incoming message is automatically added to task history
+        # by the A2A SDK framework's TaskManager. We only need to extract it for OpenAI processing.
         if context.message:
             msg = context.message
-            # Extract text from message parts
+            # Extract text from message for OpenAI processing
+            # Message is a Pydantic model - access parts or content directly
             text_content = ""
-            if hasattr(msg, 'parts'):
+            
+            # Try to get content from parts first
+            if hasattr(msg, 'parts') and msg.parts:
                 for part in msg.parts:
                     if hasattr(part, 'kind') and part.kind == 'text':
-                        text_content += part.text
-            elif hasattr(msg, 'content'):
-                text_content = msg.content
+                        if hasattr(part, 'text'):
+                            text_content += part.text
+                        elif isinstance(part, dict):
+                            text_content += part.get('text', '')
             
-            # Check if this is a tool result (JSON content that might be a tool result)
-            # For now, treat all incoming messages as user messages
-            # The content might be a JSON string with tool result
-            messages.append({
-                "role": "user",
-                "content": text_content,
-            })
+            # If no content from parts, try direct content attribute
+            if not text_content and hasattr(msg, 'content'):
+                content = msg.content
+                if isinstance(content, str):
+                    text_content = content
+                elif isinstance(content, list):
+                    # Content might be a list of parts
+                    for part in content:
+                        if isinstance(part, dict) and part.get('kind') == 'text':
+                            text_content += part.get('text', '')
+                        elif hasattr(part, 'kind') and part.kind == 'text':
+                            text_content += part.text if hasattr(part, 'text') else ''
+            
+            # If still no content, try model_dump to get dict representation
+            if not text_content and hasattr(msg, 'model_dump'):
+                msg_dict = msg.model_dump(mode='python')
+                if 'parts' in msg_dict and msg_dict['parts']:
+                    for part in msg_dict['parts']:
+                        if isinstance(part, dict) and part.get('kind') == 'text':
+                            text_content += part.get('text', '')
+                elif 'content' in msg_dict:
+                    content = msg_dict['content']
+                    if isinstance(content, str):
+                        text_content = content
+            
+            # Only append if we got content
+            if text_content:
+                messages.append({
+                    "role": "user",
+                    "content": text_content,
+                })
         
         # Convert messages to OpenAI format
         openai_messages = []
@@ -155,10 +278,26 @@ class MultiAgentExecutor(AgentExecutor):
             if i > 0 and messages[i-1].get("role") == "assistant":
                 prev_tool_calls = messages[i-1].get("tool_calls", [])
                 if prev_tool_calls and len(prev_tool_calls) > 0:
-                    # This might be a tool result - try to match it to a tool call
-                    # For simplicity, we'll send tool results as user messages
-                    # OpenAI will process them in context
-                    pass
+                    # This is a tool result - format it as a tool message for OpenAI
+                    # Try to parse JSON content if it's a string
+                    tool_result_content = content
+                    if isinstance(content, str):
+                        try:
+                            tool_result_content = json.loads(content)
+                        except (json.JSONDecodeError, ValueError):
+                            pass  # Keep as string if not valid JSON
+                    
+                    # Find the matching tool call ID from the previous assistant message
+                    # For now, use the first tool call ID if available
+                    tool_call_id = prev_tool_calls[0].get("id") if prev_tool_calls else None
+                    if tool_call_id:
+                        openai_msg = {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": json.dumps(tool_result_content) if not isinstance(tool_result_content, str) else tool_result_content,
+                        }
+                        openai_messages.append(openai_msg)
+                        continue
             
             openai_msg = {"role": role, "content": content}
             
@@ -168,12 +307,24 @@ class MultiAgentExecutor(AgentExecutor):
             
             openai_messages.append(openai_msg)
         
+        # Ensure we have at least one message before calling OpenAI
+        if not openai_messages:
+            raise ValueError(f"No messages to send to OpenAI. Task: {task_id}, Agent: {self.agent_id}, Messages count: {len(messages)}, Context message: {context.message}")
+        
+        # Build system message explaining agent identity and available tools
+        system_message_content = build_system_message(self.agent_id, self.tools or [])
+        
+        # Add system message at the beginning
+        openai_messages_with_system = [
+            {"role": "system", "content": system_message_content}
+        ] + openai_messages
+        
         # Call OpenAI with agent-specific tools
         try:
             # Build request parameters
             request_params = {
                 "model": self.model,
-                "messages": openai_messages,
+                "messages": openai_messages_with_system,
                 "temperature": 0.0,
             }
             # Add tools if configured for this agent
@@ -189,6 +340,29 @@ class MultiAgentExecutor(AgentExecutor):
             # Convert OpenAI response to A2A format
             assistant_content = assistant_message.content or ""
             
+            # Capture trace: input messages + output message
+            output_message_dict = {
+                "content": assistant_content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ] if tool_calls else [],
+            }
+            write_trace(
+                task_id=task_id or "",
+                agent_id=self.agent_id,
+                input_messages=openai_messages_with_system,
+                input_tools=self.tools or [],
+                output_message=output_message_dict,
+            )
+            
             # Build A2A message using helper function
             # Role.agent is the correct role for assistant messages in A2A
             a2a_message = create_text_message_object(
@@ -198,16 +372,34 @@ class MultiAgentExecutor(AgentExecutor):
             a2a_message.context_id = context_id
             a2a_message.task_id = task_id
             
-            # Publish assistant message
-            await event_queue.enqueue_event(a2a_message)
+            # Add tool calls as a DataPart in the message parts (per A2A spec)
+            if tool_calls:
+                tool_calls_data = {
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ]
+                }
+                # Add DataPart with tool calls to message parts
+                a2a_message.parts.append(Part(DataPart(data=tool_calls_data)))
             
             # If there are tool calls, publish them and update status
             if tool_calls:
-                # Update status to input-required
+                # Update status to input-required with assistant message (per A2A spec 4.1.2)
                 status_update = TaskStatusUpdateEvent(
                     task_id=task_id or "",
                     context_id=context_id or "",
-                    status=TaskStatus(state=TaskState.input_required),
+                    status=TaskStatus(
+                        state=TaskState.input_required,
+                        message=a2a_message,  # Include assistant message with tool calls
+                    ),
                     final=False,
                 )
                 await event_queue.enqueue_event(status_update)
@@ -216,7 +408,10 @@ class MultiAgentExecutor(AgentExecutor):
                 status_update = TaskStatusUpdateEvent(
                     task_id=task_id or "",
                     context_id=context_id or "",
-                    status=TaskStatus(state=TaskState.completed),
+                    status=TaskStatus(
+                        state=TaskState.completed,
+                        message=a2a_message,  # Include final assistant message
+                    ),
                     final=True,
                 )
                 await event_queue.enqueue_event(status_update)
@@ -351,39 +546,22 @@ agent_a2a_apps: Dict[str, A2ARESTFastAPIApplication] = {
     WEATHER_ASSISTANT_ID: weather_a2a_app,
 }
 
-# Mount agent-specific routes
-for agent_id, a2a_app_instance in agent_a2a_apps.items():
-    # Get routes from the A2A app
-    a2a_app = a2a_app_instance.build()
-    
-    # Mount the A2A app under /agents/{agent_id}/
-    # We'll use a sub-application approach
-    from fastapi import APIRouter
-    agent_router = APIRouter()
-    
-    # Get routes from the built A2A app and add them to our router with agent prefix
-    # Since we can't easily inspect FastAPI routes, we'll manually add the routes we need
-    pass  # We'll handle routing manually below
+# Mount the A2A apps directly under /agents/{agent_id}/
+# This allows the A2A SDK to handle all routing including streaming
+app.mount("/agents/00000000-0000-0000-0000-000000000000", personal_app)
+app.mount("/agents/FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", weather_app)
 
-# Add routes for agent-specific A2A endpoints manually
-@app.post("/agents/{agent_id}/v1/message:send")
-async def agent_message_send(request: Request, agent_id: str):
-    """Handle message:send for a specific agent (standard A2A endpoint)."""
+@app.get("/agents/{agent_id}/v1/tasks")
+async def agent_list_tasks(request: Request, agent_id: str):
+    """List all tasks for a specific agent."""
     if agent_id not in agent_a2a_apps:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
     
-    a2a_app_instance = agent_a2a_apps[agent_id]
-    adapter = a2a_app_instance._adapter
+    # Get task IDs for this agent
+    task_ids = agent_task_ids.get(agent_id, [])
     
-    # Modify request path to remove agent prefix
-    scope = dict(request.scope)
-    scope["path"] = "/v1/message:send"
-    scope["raw_path"] = b"/v1/message:send"
-    from starlette.requests import Request as StarletteRequest
-    modified_request = StarletteRequest(scope, request.receive)
-    
-    # Use adapter's _handle_request method (it takes method, request)
-    return await adapter._handle_request(adapter.handler.on_message_send, modified_request)
+    # Return task IDs - client can query individual tasks if needed
+    return JSONResponse({"task_ids": task_ids, "count": len(task_ids)})
 
 @app.get("/agents/{agent_id}/v1/tasks/{task_id}")
 async def agent_get_task(request: Request, agent_id: str, task_id: str):

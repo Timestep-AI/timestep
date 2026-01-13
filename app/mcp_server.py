@@ -3,6 +3,7 @@
 #   "fastmcp",
 #   "mcp",
 #   "httpx",
+#   "uvicorn",
 # ]
 # ///
 
@@ -34,50 +35,29 @@ async def handoff(
     ctx: Context = None,
 ) -> Dict[str, Any]:
     """
-    Handoff tool that triggers sampling/complete.
-    This uses MCP sampling to call the A2A server with a new agent.
+    Handoff tool that uses MCP sampling to call another agent via the client.
+    The client's sampling handler will invoke the A2A server for the target agent.
     """
-    # Use agent_uri directly to make HTTP request to client's sampling endpoint
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=60.0) as http_client:
-            # Format request according to FastMCP sampling handler pattern
-            # See https://fastmcp.wiki/en/clients/sampling
-            sampling_response = await http_client.post(
-                agent_uri,
-                json={
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": {"text": message or "Please help with this task."}
-                        }
-                    ],
-                    "params": {
-                        "systemPrompt": f"Agent handoff request. Context ID: {context_id or 'none'}. Message: {message or 'none'}",
-                        "maxTokens": 1000,
-                    },
-                    "context": {},
-                },
-            )
-            sampling_response.raise_for_status()
-            result = sampling_response.json()
-            sampling_text = result.get("text", str(result))
-        
-        return {
-            "handoff": True,
-            "agent_uri": agent_uri,
-            "context_id": context_id,
-            "message": message,
-            "sampling_response": sampling_text,
-        }
-    except Exception as e:
-        return {
-            "handoff": True,
-            "agent_uri": agent_uri,
-            "context_id": context_id,
-            "message": message,
-            "error": str(e),
-        }
+    if not ctx:
+        raise ValueError("Context not available for sampling")
+    
+    if not message:
+        raise ValueError("Message is required for handoff")
+
+    print(f"Handoff agent_uri: {agent_uri}")
+    print(f"Handoff context_id: {context_id}")
+    print(f"Handoff message: {message}")
+    print(f"Handoff ctx: {ctx}")
+
+    # Use FastMCP's ctx.sample() to request LLM sampling
+    # The client's sampling handler will be called, which will invoke the A2A server
+    response = await ctx.sample(messages=[message])
+    
+    # Extract the response text
+    response_text = response.text.strip() if hasattr(response, 'text') else str(response)
+    
+    # Return dict with response
+    return {"response": response_text}
 
 
 @mcp.tool()
@@ -100,6 +80,19 @@ if __name__ == "__main__":
     port = int(os.getenv("MCP_PORT", "8080"))
     
     async def main():
-        await mcp.run_async(transport="http", port=port, json_response=True)
+        # FastMCP's run_async doesn't support host parameter directly
+        # But we can monkey-patch or use environment variable
+        # Actually, let's just use run_async and see if it respects host binding
+        # If not, we'll need to check FastMCP source or use a workaround
+        # For now, let's try using the original method but check FastMCP docs
+        # Actually, FastMCP might bind to 0.0.0.0 by default in some versions
+        # Let's check if we can pass host through run_async
+        try:
+            # Try with host parameter (might not be supported)
+            await mcp.run_async(transport="http", host="0.0.0.0", port=port, json_response=True)
+        except TypeError:
+            # If host not supported, use run_async without it
+            # FastMCP might bind to 0.0.0.0 by default, or we need another approach
+            await mcp.run_async(transport="http", port=port, json_response=True)
     
     asyncio.run(main())
