@@ -36,44 +36,22 @@ async def handoff(
 
     if not ctx:
         raise ValueError("Context not available for sampling")
-    
-    print(f"Handoff agent_uri: {agent_uri}")
-    print(f"Handoff context_id: {context_id}")
-    print(f"Handoff message: {message}")
-    print(f"Handoff ctx: {ctx}")
 
-    # Use session.create_message() to request LLM sampling
-    # The client's sampling handler will invoke the A2A server
     from mcp import types as mcp_types
     
-    # Create a sampling message from the text
     sampling_message = mcp_types.SamplingMessage(
         role="user",
         content=mcp_types.TextContent(type="text", text=message)
     )
     
-    # Request sampling from the client
-    # Pass agent_uri in metadata so the client's sampling handler can extract it
     result = await ctx.session.create_message(
         messages=[sampling_message],
         max_tokens=1000,
         metadata={"agent_uri": agent_uri}
     )
     
-    # Extract the response text from the result
-    # result.content is a single TextContent object (not a list)
-    response_text = ""
-    if hasattr(result, 'content') and result.content:
-        if isinstance(result.content, mcp_types.TextContent):
-            response_text = result.content.text
-        elif hasattr(result.content, 'text'):
-            response_text = result.content.text
-        else:
-            # Fallback: try to convert to string
-            response_text = str(result.content)
-    
-    # Return dict with response
-    return {"response": response_text.strip()}
+    # result.content is a TextContent object
+    return {"response": result.content.text.strip()}
 
 
 @mcp.tool()

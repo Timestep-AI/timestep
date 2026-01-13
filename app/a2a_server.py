@@ -207,104 +207,55 @@ class MultiAgentExecutor(AgentExecutor):
         
         messages = task_messages[task_key]
         
-        # Get new message from request context
-        # RequestContext has a 'message' property, not 'request.message'
-        # For Task-generating agents, the incoming message is automatically added to task history
-        # by the A2A SDK framework's TaskManager. We only need to extract it for OpenAI processing.
+        # Extract text from incoming message for OpenAI processing
         if context.message:
             msg = context.message
-            # Extract text from message for OpenAI processing
-            # Message is a Pydantic model - access parts or content directly
             text_content = ""
             
-            # Try to get content from parts first
-            if hasattr(msg, 'parts') and msg.parts:
+            # Extract from parts (preferred)
+            if msg.parts:
                 for part in msg.parts:
-                    if hasattr(part, 'kind') and part.kind == 'text':
-                        if hasattr(part, 'text'):
-                            text_content += part.text
-                        elif isinstance(part, dict):
-                            text_content += part.get('text', '')
+                    # Handle Part wrapper with root attribute
+                    if hasattr(part, 'root'):
+                        part_data = part.root
+                        if hasattr(part_data, 'kind') and part_data.kind == 'text' and hasattr(part_data, 'text'):
+                            text_content += part_data.text
+                    # Handle direct TextPart access
+                    elif hasattr(part, 'kind') and part.kind == 'text' and hasattr(part, 'text'):
+                        text_content += part.text
             
-            # If no content from parts, try direct content attribute
+            # Fallback to content attribute
             if not text_content and hasattr(msg, 'content'):
-                content = msg.content
-                if isinstance(content, str):
-                    text_content = content
-                elif isinstance(content, list):
-                    # Content might be a list of parts
-                    for part in content:
-                        if isinstance(part, dict) and part.get('kind') == 'text':
-                            text_content += part.get('text', '')
-                        elif hasattr(part, 'kind') and part.kind == 'text':
-                            text_content += part.text if hasattr(part, 'text') else ''
+                if isinstance(msg.content, str):
+                    text_content = msg.content
             
-            # If still no content, try model_dump to get dict representation
-            if not text_content and hasattr(msg, 'model_dump'):
-                msg_dict = msg.model_dump(mode='python')
-                if 'parts' in msg_dict and msg_dict['parts']:
-                    for part in msg_dict['parts']:
-                        if isinstance(part, dict) and part.get('kind') == 'text':
-                            text_content += part.get('text', '')
-                elif 'content' in msg_dict:
-                    content = msg_dict['content']
-                    if isinstance(content, str):
-                        text_content = content
-            
-            # Only append if we got content
             if text_content:
-                messages.append({
-                    "role": "user",
-                    "content": text_content,
-                })
+                messages.append({"role": "user", "content": text_content})
         
         # Convert messages to OpenAI format
         openai_messages = []
-        pending_tool_results = {}  # Track tool results by tool_call_id
         
         for i, msg in enumerate(messages):
             role = msg.get("role", "user")
             content = msg.get("content", "")
             
-            # Handle A2A message format (parts)
-            if isinstance(content, list):
-                text_content = ""
-                for part in content:
-                    if isinstance(part, dict) and part.get("kind") == "text":
-                        text_content += part.get("text", "")
-                content = text_content
-            
             # Check if this is a tool result (comes after assistant message with tool_calls)
             if i > 0 and messages[i-1].get("role") == "assistant":
                 prev_tool_calls = messages[i-1].get("tool_calls", [])
-                if prev_tool_calls and len(prev_tool_calls) > 0:
-                    # This is a tool result - format it as a tool message for OpenAI
-                    # Try to parse JSON content if it's a string
-                    tool_result_content = content
-                    if isinstance(content, str):
-                        try:
-                            tool_result_content = json.loads(content)
-                        except (json.JSONDecodeError, ValueError):
-                            pass  # Keep as string if not valid JSON
-                    
-                    # Find the matching tool call ID from the previous assistant message
-                    # For now, use the first tool call ID if available
-                    tool_call_id = prev_tool_calls[0].get("id") if prev_tool_calls else None
+                if prev_tool_calls:
+                    # Format as tool message for OpenAI
+                    tool_call_id = prev_tool_calls[0].get("id")
                     if tool_call_id:
-                        openai_msg = {
+                        openai_messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call_id,
-                            "content": json.dumps(tool_result_content) if not isinstance(tool_result_content, str) else tool_result_content,
-                        }
-                        openai_messages.append(openai_msg)
+                            "content": content,
+                        })
                         continue
             
             openai_msg = {"role": role, "content": content}
-            
-            # Add tool calls if present (for assistant messages)
             if role == "assistant" and "tool_calls" in msg:
                 openai_msg["tool_calls"] = msg["tool_calls"]
-            
             openai_messages.append(openai_msg)
         
         # Ensure we have at least one message before calling OpenAI
