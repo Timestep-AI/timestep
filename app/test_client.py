@@ -125,14 +125,28 @@ async def sampling_handler(
     Returns:
         Generated response text
     """
+    print(f"\n[DEBUG: Sampling handler called]", file=sys.stderr)
+    print(f"[DEBUG: messages={messages}]", file=sys.stderr)
+    print(f"[DEBUG: params={params}]", file=sys.stderr)
+    print(f"[DEBUG: context={context}]", file=sys.stderr)
+    
     # Extract agent_id from prompt (handoff tool includes it in the prompt)
     # Also check query parameter as fallback
     agent_id = None
     import re
     
-    # First try to get from query parameter (if passed via URL)
+    # Extract agent_uri from context (passed by handoff tool)
+    agent_uri = None
     if context:
-        agent_id = context.get("agent_id")
+        agent_uri = context.get("agent_uri")
+        agent_id = context.get("agent_id")  # Also check for direct agent_id
+    
+    # Extract agent_id from agent_uri if we have it
+    if agent_uri and not agent_id:
+        import re
+        agent_id_match = re.search(r'/agents/([^/\s]+)', agent_uri)
+        if agent_id_match:
+            agent_id = agent_id_match.group(1)
     
     # Extract message content from messages
     # FastMCP format: messages have 'role' and 'content' (with .text for text content)
@@ -181,8 +195,11 @@ async def sampling_handler(
         if message_match:
             actual_message = message_match.group(1).strip()
     
+    print(f"[DEBUG: Extracted agent_uri={agent_uri}, agent_id={agent_id}, context_id={context_id}, actual_message={actual_message}]", file=sys.stderr)
+    
     # If we have agent_id, handle the sampling by calling A2A agent
     if agent_id:
+        print(f"[DEBUG: Calling handle_mcp_sampling_internal with agent_id={agent_id}]", file=sys.stderr)
         return await handle_mcp_sampling_internal(
             agent_id=agent_id,
             context_id=context_id,
@@ -190,7 +207,9 @@ async def sampling_handler(
             task_ids_tracker=None,  # Can't track here easily, will be tracked in main loop
         )
     else:
-        return "Error: agent_id is required for sampling. Could not extract agent_id from prompt."
+        error_msg = "Error: agent_id is required for sampling. Could not extract agent_id from prompt."
+        print(f"[DEBUG: {error_msg}]", file=sys.stderr)
+        return error_msg
 
 
 @sampling_app.post("/sampling/complete")

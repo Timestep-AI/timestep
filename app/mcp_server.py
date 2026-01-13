@@ -50,8 +50,11 @@ async def handoff(
     print(f"Handoff ctx: {ctx}")
 
     # Use FastMCP's ctx.sample() to request LLM sampling
-    # The client's sampling handler will be called, which will invoke the A2A server
-    response = await ctx.sample(messages=[message])
+    # Pass agent_uri in context so the client's sampling handler can extract agent_id
+    response = await ctx.sample(
+        messages=[message],
+        context={"agent_uri": agent_uri}
+    )
     
     # Extract the response text
     response_text = response.text.strip() if hasattr(response, 'text') else str(response)
