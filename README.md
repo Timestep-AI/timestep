@@ -1,497 +1,165 @@
 # Timestep AI Agents SDK
 
-A universal **agents SDK** built around the core **agent-environment loop** using OpenAI-style chat message protocol. The SDK provides a clean foundation for building agents, with an **evaluation harness** as one powerful use case.
+A clean, low-level library for building **agentic systems** using the modern industry standards: **A2A (Agent-to-Agent)** and **MCP (Model Context Protocol)** protocols. Timestep provides a solid foundation for creating multi-agent systems with clear examples across multiple languages.
 
-## Core Concepts
+## Core Philosophy
 
-Timestep is built on a simple, universal pattern:
+Timestep follows the **Task-generating Agents** philosophy from the [A2A Protocol](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), where agents always respond with Task objects that can transition through various states (including `input-required` for tool calls). We use **MCP sampling** to enable seamless agent-to-agent handoffs, allowing agents to delegate work to specialized peers.
 
-- **Agent harness** (or scaffold): System that enables a model to act as an agent - the `AgentFn` interface that takes messages and context, returns assistant messages. The harness processes inputs, orchestrates tool calls, and returns results.
-- **Agent-environment loop**: Core execution pattern implemented by `run_episode()` that orchestrates the agent harness, executes tools, and manages the conversation flow. The loop runs the harness in a multi-turn pattern until completion.
-- **Evaluation harness**: Infrastructure that runs evaluation suites end-to-end - one use case of the core SDK
-- **Transcript**: Complete record of an episode (all messages)
-- **Outcome**: Final state in environment (separate from transcript)
+## Protocols
 
-## What Timestep gives you
+Timestep is built on two complementary industry standards:
 
-### Core SDK
-- **Universal protocol**: OpenAI chat message format - works with any agent framework
-- **Simple agent interface**: Just a function `(messages, context) => assistant_message`
-- **Tool execution**: Deterministic tool execution with automatic indexing
-- **Cross-language parity**: Same API in Python and TypeScript
+- **[A2A Protocol](https://a2a-protocol.org/latest/specification/)**: Agent-to-Agent communication standard for peer-to-peer agent collaboration
+- **[MCP Protocol](https://modelcontextprotocol.io/specification/latest)**: Model Context Protocol for tools, resources, and server-initiated LLM interactions (sampling)
 
-### Evaluation Harness
-- **Built-in graders**: Code-based (regex, contains, JSON), LLM-as-judge, outcome verification
-- **Token tracking**: Automatic tracking of input/output tokens and costs
-- **JSONL task format**: Simple, human-readable task definitions
-- **CLI interface**: Run eval suites and generate reports
+### How They Work Together
 
-## Prerequisites
+- **A2A** handles agent discovery, task management, and agent-to-agent communication
+- **MCP** provides tool execution and sampling capabilities
+- **Handoffs** are implemented using MCP's sampling feature: when an agent needs to hand off to another agent, the MCP server uses sampling to trigger an A2A request to the target agent
+- **Tool calls** are communicated via A2A's `input-required` task state with a `DataPart` containing the tool call information
 
-- **Python 3.11+** or **Node.js 20+**
-- **OpenAI API key** (optional, for agents that use OpenAI or LLM-as-judge graders)
+## First MVP: Handoffs
+
+Our first MVP focuses on **handoffs** - enabling agents to seamlessly delegate tasks to other specialized agents. This demonstrates the power of combining A2A and MCP:
+
+1. Agent receives a task via A2A
+2. Agent determines it should hand off to another agent
+3. Agent calls the MCP `handoff` tool
+4. MCP server uses sampling to trigger an A2A request to the target agent
+5. Target agent processes the request and returns results
+6. Original agent receives the response and continues
+
+## Project Structure
+
+```
+timestep/
+├── lib/                    # Future library code (to be extracted from examples)
+│   ├── python/             # Python library (reserved)
+│   └── typescript/         # TypeScript library (reserved)
+├── examples/               # Working examples showing A2A/MCP patterns
+│   ├── python/             # Python examples (A2A server, MCP server, test client)
+│   └── typescript/         # TypeScript examples (pending MCP SDK v2)
+└── app/                    # Web UI for testing/chatting with agents
+    ├── index.html
+    ├── index.css
+    └── index.js
+```
+
+## Implementation Status
+
+### Python
+✅ **Fully functional** - Python implementation is complete and working with handoffs.
+
+### TypeScript
+⚠️ **Pending v2 SDK release** - TypeScript implementation is incomplete.
+
+The TypeScript examples in `examples/typescript/` are pending the release of `@modelcontextprotocol/sdk` v2 (expected Q1 2026). The current v1.x SDK doesn't export the HTTP transport classes we need (`McpServer`, `StreamableHTTPServerTransport`, `createMcpExpressApp`).
+
+We explored multiple approaches to use v2 from GitHub (git dependencies, `bun create`, etc.), but none work with our requirement for inline dependencies without additional files. When v2 is published to npm, we'll update the TypeScript implementation to use the new APIs.
+
+See `examples/typescript/*.ts` files for detailed status comments and TODOs.
 
 ## Quick Start
 
-### Using the Core Agent-Environment Loop
+### Running the Examples
 
-The core SDK lets you run the agent-environment loop (which orchestrates the agent harness) without evaluation:
+The easiest way to get started is to run the working examples:
 
-```python
-from timestep import run_episode, agent_builtin_echo, DEFAULT_TOOLS
-from timestep.core.types import Message
-
-# Define initial messages
-messages: list[Message] = [
-    {"role": "system", "content": "You are helpful."},
-    {"role": "user", "content": "Calculate 5 + 3 using the calc tool."}
-]
-
-# Run a single episode
-transcript, info = run_episode(
-    initial_messages=messages,
-    agent=agent_builtin_echo,  # Your agent harness (AgentFn)
-    tools=DEFAULT_TOOLS,
-    tools_allowed=["calc"],
-    limits={"max_steps": 10, "time_limit_s": 30},
-    task_meta={"id": "demo"},
-    seed=0,
-)
-
-print(f"Steps: {info.steps}, Tool calls: {info.tool_calls}")
-print(f"Final message: {transcript[-1]['content']}")
-```
-
-### Using the Evaluation Harness
-
-The evaluation harness builds on the core to run evaluation suites:
-
-```python
-from timestep import run_suite, report, agent_builtin_echo, DEFAULT_TOOLS
-from timestep import FinalContains, ForbiddenTools, LLMJudge
-from pathlib import Path
-
-# Create tasks file (tasks.jsonl)
-tasks = [
-    {
-        "id": "hello_01",
-        "messages": [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "Say hello to Mike in one sentence."}
-        ],
-        "expected": {"final_contains": "Mike"},
-        "limits": {"max_steps": 5, "time_limit_s": 30}
-    }
-]
-
-# Write tasks to JSONL
-import json
-with open("tasks.jsonl", "w") as f:
-    for task in tasks:
-        f.write(json.dumps(task) + "\n")
-
-# Run eval suite
-run_suite(
-    tasks_path=Path("tasks.jsonl"),
-    outdir=Path("runs/demo"),
-    agent=agent_builtin_echo,
-    tools=DEFAULT_TOOLS,
-    graders=[
-        FinalContains(),  # Code-based grader
-        ForbiddenTools(),  # Tool usage checker
-        # LLMJudge(rubric="Is the response friendly and appropriate?"),  # LLM-as-judge
-    ],
-    trials=3,
-    seed=0,
-    agent_timeout_s=120,
-)
-
-# Generate report
-report(Path("runs/demo"))
-```
-
-### Streaming Support
-
-For real-time agent execution with chunked streaming (like OpenAI's streaming API), use `stream_episode()`:
-
-```python
-import asyncio
-from timestep import stream_episode, create_openai_streaming_agent, DEFAULT_TOOLS
-from timestep.core.types import Message
-
-async def main():
-    # Create streaming agent (yields chunks in real-time)
-    agent = create_openai_streaming_agent()
-    
-    messages: list[Message] = [
-        {"role": "system", "content": "You are helpful."},
-        {"role": "user", "content": "Count from 1 to 5."}
-    ]
-    
-    # Stream events and chunks
-    async for event in stream_episode(
-        initial_messages=messages,
-        agent=agent,  # Streaming agent
-        tools=DEFAULT_TOOLS,
-        limits={"max_steps": 5},
-        task_meta={"id": "streaming_demo"},
-    ):
-        if event["type"] == "content_delta":
-            # Content chunks arrive in real-time
-            print(event["delta"], end="", flush=True)
-        elif event["type"] == "episode_complete":
-            print(f"\n\nComplete! Steps: {event['info'].steps}")
-
-asyncio.run(main())
-```
-
-**Integration with HTTP servers:**
-
-```python
-# FastAPI example
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
-import json
-
-app = FastAPI()
-
-@app.post("/agent/stream")
-async def stream_agent(request: dict):
-    async def generate():
-        async for event in stream_episode(
-            initial_messages=request["messages"],
-            agent=create_openai_streaming_agent(),
-            tools=DEFAULT_TOOLS,
-            tools_allowed=request.get("tools_allowed"),
-            limits=request.get("limits", {}),
-        ):
-            yield f"data: {json.dumps(event)}\n\n"
-    
-    return StreamingResponse(generate(), media_type="text/event-stream")
-```
-
-The streaming function yields:
-- **Chunk events**: `content_delta`, `tool_call_delta` (from streaming agents)
-- **Control events**: `step_start`, `agent_response_complete`, `tool_call_start`, `tool_call_result`, `step_complete`, `episode_complete`
-
-Works with both streaming agents (`StreamingAgentFn`) and non-streaming agents (`AgentFn`).
-
-### TypeScript
-
-```typescript
-import { runEpisode, agentBuiltinEcho, DEFAULT_TOOLS } from '@timestep-ai/timestep';
-import type { Message } from '@timestep-ai/timestep';
-
-// Core usage
-const messages: Message[] = [
-  { role: 'system', content: 'You are helpful.' },
-  { role: 'user', content: 'Calculate 5 + 3 using the calc tool.' }
-];
-
-const [transcript, info] = await runEpisode(
-  messages,
-  agentBuiltinEcho,
-  DEFAULT_TOOLS,
-  ['calc'],
-  { max_steps: 10, time_limit_s: 30 },
-  { id: 'demo' },
-  0
-);
-
-console.log(`Steps: ${info.steps}, Tool calls: ${info.tool_calls}`);
-```
-
-**Streaming support:**
-
-```typescript
-import { streamEpisode, createOpenAIStreamingAgent, DEFAULT_TOOLS } from '@timestep-ai/timestep';
-
-// Create streaming agent
-const agent = createOpenAIStreamingAgent(process.env.OPENAI_API_KEY);
-
-// Stream events and chunks
-for await (const event of streamEpisode(
-  messages,
-  agent, // Streaming agent
-  DEFAULT_TOOLS,
-  undefined,
-  { max_steps: 5 },
-  { id: 'streaming_demo' },
-)) {
-  if (event.type === 'content_delta') {
-    // Content chunks arrive in real-time
-    process.stdout.write(event.delta as string);
-  } else if (event.type === 'episode_complete') {
-    console.log(`\n\nComplete! Steps: ${event.info.steps}`);
-  }
-}
-```
-
-**Express integration:**
-
-```typescript
-import express from 'express';
-import { streamEpisode, createOpenAIStreamingAgent, DEFAULT_TOOLS } from '@timestep-ai/timestep';
-
-app.post('/agent/stream', async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  
-  for await (const event of streamEpisode(
-    req.body.messages,
-    createOpenAIStreamingAgent(),
-    DEFAULT_TOOLS,
-    req.body.tools_allowed,
-    req.body.limits || {},
-  )) {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
-  }
-  
-  res.end();
-});
-```
-
-## Agent Harness Interface
-
-The agent harness is the `AgentFn` interface - a function that enables a model to act as an agent. The agent-environment loop orchestrates this harness:
-
-```python
-from timestep import AgentFn, Message, JSON
-
-def my_agent(messages: list[Message], context: JSON) -> Message:
-    """
-    Agent harness function.
-    
-    Args:
-        messages: Full conversation history (transcript so far)
-        context: Context dict with tools_schema, task, seed, limits
-    
-    Returns:
-        Assistant message (may include tool_calls)
-    """
-    # Your agent logic here
-    # Use OpenAI, Anthropic, or any other provider
-    return {
-        "role": "assistant",
-        "content": "Hello!",
-        "tool_calls": [...]  # Optional
-    }
-```
-
-### Built-in Agent Harnesses
-
-- `agent_builtin_echo`: Echoes the last user message (for testing)
-- `agent_cmd_factory`: Wraps external command as agent harness (AgentFn)
-
-## Tools
-
-Tools are deterministic functions that take arguments and return results:
-
-```python
-from timestep import ToolFn, JSON
-
-def my_tool(args: JSON) -> Any:
-    """Your tool logic."""
-    return {"result": "value"}
-```
-
-### Built-in Tools
-
-- `tool_calc`: Calculates arithmetic expressions (demo only, uses eval - not production-safe)
-- `tool_echo`: Echoes back arguments
-
-## Evaluation Graders
-
-Graders evaluate agent performance. Timestep supports multiple grader types:
-
-### Code-Based Graders
-
-- `FinalRegex`: Checks final assistant content matches regex
-- `FinalContains`: Checks substring in final assistant content
-- `FinalJSON`: Parses final assistant content as JSON and checks required keys
-- `TranscriptContains`: Checks substring anywhere in transcript
-- `TranscriptRegex`: Regex match anywhere in transcript
-- `ForbiddenTools`: Fails if agent called tools not in allowlist
-- `MaxToolCalls`: Fails if > N tool calls
-- `MinToolCalls`: Fails if < N tool calls
-- `ToolCallSequence`: Checks a tool name was called at least once
-- `ToolCallOrder`: Verifies tool calls happened in expected sequence
-- `ToolResultJSON`: Checks tool result JSON has required keys
-
-### LLM-as-Judge Grader
-
-Uses an LLM to grade based on a rubric:
-
-```python
-from timestep import LLMJudge
-
-graders = [
-    LLMJudge(
-        rubric="Is the response helpful, accurate, and friendly?",
-        model="gpt-4o-mini",
-        temperature=0.0,
-        grade_transcript=False  # True to grade full transcript, False for final message only
-    )
-]
-```
-
-### Outcome Verification
-
-Checks environment state, not just the transcript:
-
-```python
-from timestep import OutcomeVerifier
-
-def check_database_state(messages, tool_index, task):
-    """Verify the outcome in the environment (e.g., database state)."""
-    # Check actual state, not just what agent said
-    return True  # or False
-
-graders = [
-    OutcomeVerifier(verifier_fn=check_database_state)
-]
-```
-
-## Task Format (JSONL)
-
-Each line in the tasks file is a JSON object representing one task:
-
-```json
-{
-  "id": "calc_01",
-  "messages": [
-    {"role": "system", "content": "You must use the calc tool."},
-    {"role": "user", "content": "Compute 19*7 using the calc tool, then answer with only the number."}
-  ],
-  "tools_allowed": ["calc"],
-  "expected": {
-    "final_regex": "^133$",
-    "final_contains": "133"
-  },
-  "limits": {"max_steps": 10, "time_limit_s": 30}
-}
-```
-
-### Task Fields
-
-- `id` (optional): Unique task identifier. Auto-generated if missing.
-- `messages`: List of OpenAI-style messages (system/user/assistant/tool).
-- `tools_allowed` (optional): Allowlist of tool names the agent can use.
-- `expected` (optional): Expected values for graders (e.g., `final_regex`, `final_contains`, `llm_judge_rubric`).
-- `limits` (optional): Episode limits (`max_steps`, `time_limit_s`).
-
-## Episode Info
-
-The `EpisodeInfo` object tracks episode metadata:
-
-```python
-@dataclass
-class EpisodeInfo:
-    task_id: str
-    trial: int
-    seed: int
-    steps: int
-    tool_calls: int
-    duration_s: float
-    terminated_reason: str  # final_answer | max_steps | time_limit | error
-    error: Optional[str] = None
-    # Token tracking (if agent provides usage info)
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    cost_usd: float = 0.0
-```
-
-## Output Structure
-
-Running an evaluation suite creates:
-
-```
-runs/demo/
-├── run_meta.json          # Run metadata
-├── results.jsonl          # One line per trial
-└── trials/
-    └── task_id/
-        └── trial_XX/
-            ├── transcript.json    # Full message transcript
-            ├── tool_index.json    # Tool calls paired with results
-            ├── grades.json        # Grader results
-            └── info.json          # Episode info (steps, duration, tokens, etc.)
-```
-
-## CLI Usage
-
-### Python
-
+**Python:**
 ```bash
-# Install
-pip install timestep
-
-# Run eval suite
-timestep run \
-  --tasks tasks.jsonl \
-  --outdir runs/demo \
-  --agent builtin:echo \
-  --trials 3 \
-  --graders FinalContains ForbiddenTools
-
-# Generate report
-timestep report --outdir runs/demo
+# Start A2A and MCP servers
+make test-example-python
 ```
 
-### TypeScript
-
+**TypeScript:**
 ```bash
-# Build first
-cd typescript
-pnpm build
-
-# Run eval suite
-node dist/eval/cli.js run \
-  --tasks tasks.jsonl \
-  --outdir runs/demo \
-  --agent builtin:echo \
-  --trials 3 \
-  --graders FinalContains ForbiddenTools
-
-# Generate report
-node dist/eval/cli.js report --outdir runs/demo
+# Start A2A and MCP servers (pending v2 SDK)
+make test-example-typescript
 ```
+
+### Example: Agent Handoff
+
+The examples demonstrate a personal assistant agent that can hand off weather queries to a specialized weather agent:
+
+1. **Personal Assistant Agent** (A2A server) receives a user message
+2. Agent determines it needs weather information
+3. Agent calls the MCP `handoff` tool with the weather agent's URI
+4. MCP server uses sampling to call the weather agent via A2A
+5. Weather agent responds with weather data
+6. Personal assistant receives the response and presents it to the user
+
+See `examples/python/` for the complete implementation.
 
 ## Architecture
 
-Timestep is organized into two main modules:
+### A2A Server
 
-- **`core/`**: Core agent-environment loop - orchestrates the agent harness, can be used independently
-- **`eval/`**: Evaluation harness - builds on core to run evaluation suites
+The A2A server implements a **Task-generating Agent** that:
+- Always responds with Task objects (never just Messages)
+- Uses `input-required` task state when tool calls are needed
+- Includes tool calls in a `DataPart` within the task status message
+- Manages task lifecycle (created → input-required → completed)
 
-The core module provides:
-- Agent harness interface (`AgentFn`) - enables a model to act as an agent
-- Episode runner (`run_episode`) - orchestrates the agent harness in the agent-environment loop
-- Tool execution and indexing
-- Episode info tracking (including tokens)
+### MCP Server
 
-The eval module provides:
-- Suite runner (`run_suite`)
-- Graders (code-based, LLM-as-judge, outcome verification)
-- Reporting (`report`)
+The MCP server provides:
+- **Tools**: Including the `handoff` tool for agent-to-agent delegation
+- **Sampling**: Server-initiated LLM interactions that trigger A2A requests
+- Tool execution for standard operations (e.g., `get_weather`)
 
-## Cross-Language Compatibility
+### Client
 
-Tasks created in Python work in TypeScript and vice versa. The JSONL format and result structures are identical.
+The client orchestrates the interaction:
+- Connects to A2A server to send messages
+- Monitors task state transitions
+- When `input-required` state is detected, extracts tool calls from `DataPart`
+- Calls MCP tools and sends results back to A2A server
+- Handles handoffs via MCP sampling callback
+
+## Key Concepts
+
+### Task-Generating Agents
+
+Following the [A2A Protocol's Task-generating Agents philosophy](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), our agents always respond with Task objects. This provides:
+
+- **State management**: Tasks can be in various states (created, input-required, completed, etc.)
+- **Progress tracking**: Task status updates provide visibility into agent progress
+- **Multi-turn interactions**: Tasks support context IDs for grouping related interactions
+
+### A2A input-required with DataPart
+
+When an agent needs to call tools, it:
+1. Sets the task state to `input-required`
+2. Includes a `DataPart` in the task status message
+3. The `DataPart` contains the tool calls in a structured format
+4. The client extracts tool calls from the `DataPart` and executes them via MCP
+
+### MCP Sampling for Handoffs
+
+MCP's sampling feature allows servers to initiate LLM interactions. We use this for handoffs:
+
+1. Agent calls MCP `handoff` tool with target agent URI
+2. MCP server calls the client's sampling callback
+3. Sampling callback makes an A2A request to the target agent
+4. Target agent processes and responds
+5. Response is returned to the MCP server
+6. MCP server returns the result to the original agent
 
 ## Examples
 
-See `python/examples/` and `typescript/examples/` for complete examples:
-- Core agent-environment loop usage
-- Evaluation harness usage
-- Custom agent harnesses
-- Custom graders
+See `examples/python/` for complete working examples:
+- `a2a_server.py` - A2A server implementing Task-generating Agent
+- `mcp_server.py` - MCP server with handoff tool and sampling
+- `test_client.py` - Client orchestrating A2A and MCP interactions
 
 ## Documentation
 
-- Full docs: https://timestep-ai.github.io/timestep/
-- Python notes: `python/README.md`
-- TypeScript notes: `typescript/README.md`
+- **A2A Protocol Specification**: https://a2a-protocol.org/latest/specification/
+- **A2A Task-generating Agents**: https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task
+- **MCP Protocol Specification**: https://modelcontextprotocol.io/specification/latest
+- **Full docs**: https://timestep-ai.github.io/timestep/
 
 ## License
 
