@@ -8,6 +8,7 @@ This document provides guidance for AI coding agents working on the Timestep pro
 
 - **Python 3.11+** for Python development
 - **Node.js 20+** for TypeScript development
+- **Bun** for TypeScript examples (uses inline dependencies)
 
 ### Setup
 
@@ -17,116 +18,164 @@ This document provides guidance for AI coding agents working on the Timestep pro
    cd timestep
    ```
 
-2. **Python setup**:
+2. **Python setup** (for examples):
    ```bash
-   cd python
-   pip install -e .
-   pip install -e ".[dev]"  # For development dependencies
+   cd examples/python
+   # Dependencies are inline in Python files using PEP 723
    ```
 
-3. **TypeScript setup**:
+3. **TypeScript setup** (for examples):
    ```bash
-   cd typescript
-   pnpm install
+   cd examples/typescript
+   # Dependencies are auto-installed by Bun from import statements
    ```
 
-4. **Environment variables** (optional):
+4. **Environment variables**:
    ```bash
-   export OPENAI_API_KEY="your-key-here"  # For agents that use OpenAI or LLM-as-judge graders
+   export OPENAI_API_KEY="your-key-here"  # Required for A2A agents using OpenAI
    ```
 
 ## Project Structure
 
-The codebase is organized into core and eval modules:
+The codebase is organized around A2A and MCP protocols:
 
 ```
 timestep/
-├── python/timestep/
-│   ├── core/              # Core agent-environment loop
-│   │   ├── agent.py       # Agent harness interface
-│   │   ├── episode.py     # Episode runner (agent-environment loop)
-│   │   ├── tools.py        # Tool execution
-│   │   └── types.py        # Core types
-│   ├── eval/               # Evaluation harness
-│   │   ├── suite.py        # Suite runner
-│   │   ├── graders.py      # All graders (code-based, LLM-as-judge, outcome)
-│   │   └── cli.py          # CLI interface
-│   └── utils/              # Utilities (JSONL, hashing, etc.)
-└── typescript/timestep/
-    ├── core/               # Same structure as Python
-    ├── eval/
-    └── utils/
+├── lib/                    # Future library code (to be extracted)
+│   ├── python/             # Python library (reserved)
+│   └── typescript/         # TypeScript library (reserved)
+├── examples/               # Working examples
+│   ├── python/             # Python A2A/MCP examples
+│   │   ├── a2a_server.py   # A2A server (Task-generating Agent)
+│   │   ├── mcp_server.py   # MCP server with handoff tool
+│   │   ├── test_client.py  # Client orchestrating A2A/MCP
+│   │   └── compose.yml     # Docker Compose setup
+│   └── typescript/         # TypeScript examples (pending v2 SDK)
+│       ├── a2a_server.ts
+│       ├── mcp_server.ts
+│       ├── test_client.ts
+│       └── compose.yml
+└── app/                    # Web UI
+    ├── index.html
+    ├── index.css
+    └── index.js
 ```
 
-**Important**: Both Python and TypeScript follow the same structure for cross-language parity.
+**Important**: The library code will be extracted from the working examples in `examples/` once the API surface and patterns are well-established.
 
 ## Core Concepts
 
-### Agent Harness
+### A2A Protocol
 
-An **agent harness** (or scaffold) is a system that enables a model to act as an agent. In Timestep, this is the `AgentFn` interface:
+The [Agent-to-Agent (A2A) Protocol](https://a2a-protocol.org/latest/specification/) standardizes how independent AI agents communicate and collaborate as peers. Key concepts:
 
-```python
-AgentFn = Callable[[List[Message], JSON], Message]
-```
+- **Agent Card**: Discovery mechanism for agent capabilities and endpoints
+- **Task**: Stateful interaction object that tracks progress
+- **Task States**: `created`, `input-required`, `completed`, `canceled`, etc.
+- **Context ID**: Groups related interactions across multiple tasks
 
-The agent harness:
-- Takes messages (transcript) and context
-- Returns an assistant message (may include `tool_calls`)
-- Processes inputs, orchestrates tool calls, and returns results
-- Can use any model provider (OpenAI, Anthropic, local models, etc.)
+### Task-Generating Agents
 
-### Agent-Environment Loop
+Following the [A2A Task-generating Agents philosophy](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), our agents always respond with Task objects (never just Messages). This provides:
 
-The core execution pattern implemented by `run_episode()` that orchestrates the agent harness:
+- Clear state management
+- Progress visibility
+- Support for multi-turn interactions
+- Structured tool call communication
 
-1. The loop calls the agent harness with messages and context
-2. Agent harness returns assistant message
-3. If assistant has `tool_calls`: environment executes them and appends tool messages
-4. Loop continues (returns to step 1) until final answer (no tool calls) or limits reached
+### A2A input-required with DataPart
 
-The agent-environment loop orchestrates the agent harness, executing tools and managing the conversation flow. Together, the loop and harness form the complete agent system.
+When an agent needs to call tools:
 
-### Evaluation Harness
+1. Agent sets task state to `input-required`
+2. Agent includes a `DataPart` in the task status message
+3. The `DataPart.data` contains tool calls in structured format:
+   ```json
+   {
+     "tool_calls": [
+       {
+         "function": {
+           "name": "handoff",
+           "arguments": "{\"agent_uri\": \"...\", \"message\": \"...\"}"
+         }
+       }
+     ]
+   }
+   ```
+4. Client extracts tool calls from `DataPart` and executes via MCP
 
-The evaluation harness builds on the core to:
-- Run evaluation suites on multiple tasks
-- Grade agent performance using graders
-- Generate reports
+### MCP Protocol
 
-### Transcript vs Outcome
+The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/specification/latest) provides:
 
-- **Transcript**: Complete record of an episode (all messages)
-- **Outcome**: Final state in environment (separate from transcript)
+- **Tools**: Functions for agents to execute
+- **Sampling**: Server-initiated LLM interactions (used for handoffs)
+- **Resources**: Context and data for agents
+- **Prompts**: Templated messages and workflows
+
+### MCP Sampling for Handoffs
+
+MCP's sampling feature enables server-initiated agentic behaviors. We use it for handoffs:
+
+1. Agent calls MCP `handoff` tool with target agent URI
+2. MCP server calls client's sampling callback via `ctx.session.create_message()`
+3. Sampling callback makes A2A request to target agent
+4. Target agent processes and responds
+5. Response returned to MCP server
+6. MCP server returns result to original agent
+
+This allows agents to delegate work to specialized peers without the original agent needing direct A2A client capabilities.
+
+## Architecture
+
+### A2A Server
+
+The A2A server implements a Task-generating Agent:
+
+- Uses A2A SDK to handle protocol operations
+- Always responds with Task objects
+- Manages task lifecycle and state transitions
+- Includes tool calls in `DataPart` when `input-required`
+- Supports streaming for real-time updates
+
+### MCP Server
+
+The MCP server provides:
+
+- Tool registration (e.g., `handoff`, `get_weather`)
+- Sampling callback registration (for handoffs)
+- HTTP transport for client connections
+- Tool execution and result formatting
+
+### Client
+
+The client orchestrates A2A and MCP:
+
+- Connects to A2A server to send messages
+- Monitors task state transitions
+- Extracts tool calls from `DataPart` when `input-required`
+- Calls MCP tools and sends results back
+- Implements MCP sampling callback for handoffs
 
 ## Testing
 
-### Running Tests
+### Running Examples
 
-**Python**:
+**Python:**
 ```bash
-cd python
-pytest tests/ -v
+make test-example-python
 ```
 
-**TypeScript**:
+**TypeScript:**
 ```bash
-cd typescript
-pnpm test
+make test-example-typescript  # Currently shows pending v2 message
 ```
 
 ### Test Organization
 
-- Tests are in `tests/` directories
-- Test files follow `test_*.py` or `test_*.ts` naming
-- Cross-language tests verify task format compatibility
-
-### Writing Tests
-
-1. **Use async/await** for all async operations (if needed)
-2. **Clean up resources** (temporary files, etc.)
-3. **Test both success and error cases**
-4. **Verify cross-language compatibility** when testing task formats
+- Examples are in `examples/` directories
+- Each example includes A2A server, MCP server, and test client
+- Docker Compose files orchestrate the services
 
 ## Code Style and Conventions
 
@@ -135,6 +184,7 @@ pnpm test
 - Follow PEP 8 style guide
 - Use type hints for all function signatures
 - Docstrings should follow Google style
+- Use inline dependencies (PEP 723) in script files
 
 ### TypeScript
 
@@ -142,6 +192,7 @@ pnpm test
 - Prefer `async`/`await` over promises
 - Use JSDoc comments for documentation
 - Follow the existing code style (2-space indentation)
+- Use Bun's auto-install for dependencies (no package.json)
 
 ### Cross-Language Parity
 
@@ -149,146 +200,72 @@ pnpm test
 - Have the same API surface
 - Use the same function/class names
 - Follow the same parameter naming conventions
-- Produce compatible task and result formats
+- Produce compatible A2A Task and MCP message formats
 
 ## Pull Request Guidelines
 
 ### Before Submitting
 
-1. **Run all tests**: Ensure both Python and TypeScript tests pass
-2. **Check imports**: Verify all imports use correct module paths (core vs eval)
+1. **Run examples**: Ensure Python examples work end-to-end
+2. **Check protocol compliance**: Verify A2A and MCP protocol adherence
 3. **Update documentation**: Update relevant docs if adding features
-4. **Cross-language testing**: Test that tasks work in both languages
+4. **Test handoffs**: Verify handoff flow works correctly
 
 ### PR Checklist
 
-- [ ] All tests pass (Python and TypeScript)
+- [ ] Examples run successfully (Python)
 - [ ] Code follows project conventions
-- [ ] Imports use correct module paths (core.* or eval.*)
+- [ ] A2A and MCP protocol compliance verified
 - [ ] Documentation updated (if needed)
-- [ ] Cross-language compatibility verified (if task-related)
+- [ ] Handoff functionality tested
 - [ ] No breaking changes (or clearly documented)
 
 ### Commit Messages
 
 Use clear, descriptive commit messages:
-- `feat: Add new grader for X`
-- `fix: Resolve issue with tool execution`
-- `refactor: Reorganize core modules`
-- `docs: Update README with new examples`
+- `feat: Add new MCP tool for X`
+- `fix: Resolve issue with A2A handoff`
+- `refactor: Reorganize MCP server structure`
+- `docs: Update README with A2A/MCP details`
 
 ## Common Tasks
 
-### Adding a New Grader
+### Adding a New MCP Tool
 
-1. Create grader class in `eval/graders.py` (Python) or `eval/graders.ts` (TypeScript)
-2. Extend the `Grader` base class
-3. Implement `grade()` method
-4. Add to `BUILTIN_GRADERS` dictionary
-5. Update `parse_grader_spec()` if needed
-6. Add tests
-7. Update documentation
+1. Add tool function to `examples/python/mcp_server.py` (or TypeScript equivalent)
+2. Register tool with MCP server
+3. Update A2A server to include tool in agent's tool list
+4. Test tool execution via client
+5. Update documentation
 
-### Adding a New Tool
+### Adding a New Agent
 
-1. Create tool function in `core/tools.py` (Python) or `core/tools.ts` (TypeScript)
-2. Add to `DEFAULT_TOOLS` dictionary
-3. Add tests
-4. Update documentation
+1. Create agent executor in A2A server
+2. Define agent card with capabilities
+3. Register agent with A2A server
+4. Add agent-specific tools if needed
+5. Test agent via client
+6. Update documentation
 
-### Creating an Agent Harness
+### Implementing Handoffs
 
-Agent harnesses are functions that take `(messages, context)` and return an assistant message:
-
-```python
-def my_agent(messages: list[Message], context: JSON) -> Message:
-    # Use OpenAI library or other model provider
-    # Return OpenAI-style assistant message
-    # Optionally include usage info for token tracking
-    return {
-        "role": "assistant",
-        "content": "...",
-        "tool_calls": [...],
-        "usage": {  # Optional
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-            "total_tokens": 15
-        }
-    }
-```
-
-For command-based agents, use `agent_cmd_factory()`.
-
-## Architecture Overview
-
-### Core Module
-
-The core module provides the agent-environment loop:
-
-1. **Agent harness interface**: `AgentFn` - function that enables a model to act as an agent (takes messages and context, returns assistant message)
-2. **Episode runner**: `run_episode()` - orchestrates the agent harness, executes the agent-environment loop
-3. **Tool execution**: Deterministic functions with automatic indexing
-4. **Episode info**: Tracks steps, tool calls, duration, tokens, costs
-
-The agent-environment loop (`run_episode()`) orchestrates the agent harness (`AgentFn`), executing tools and managing the conversation flow.
-
-### Eval Module
-
-The eval module builds on core to provide evaluation:
-
-1. **Suite runner**: `run_suite()` - runs evaluation suites on multiple tasks
-2. **Graders**: Code-based, LLM-as-judge, and outcome verification graders
-3. **Reporting**: `report()` - generates summary reports
-
-### Task Format
-
-Tasks are JSON objects with:
-- `id`: Unique identifier
-- `messages`: List of OpenAI-style messages
-- `tools_allowed`: Optional tool allowlist
-- `expected`: Optional expected values for graders
-- `limits`: Optional episode limits
-
-### Message Protocol
-
-Messages follow OpenAI chat completion format:
-- `role`: "system" | "user" | "assistant" | "tool"
-- `content`: String content
-- `tool_calls`: Array of tool call objects (assistant messages)
-- `tool_call_id`: String ID (tool messages)
-- `usage`: Optional token usage info (assistant messages)
-
-## Debugging Tips
-
-### Task Format Issues
-
-1. Check JSONL file is valid
-2. Verify messages array structure
-3. Check tool names match available tools
-4. Verify expected values match grader requirements
-
-### Agent Harness Issues
-
-1. Check agent returns valid assistant message
-2. Verify tool_calls format if using tools
-3. Check agent handles context correctly
-4. Test with builtin:echo first
-
-### Cross-Language Issues
-
-1. Verify task JSON is valid in both languages
-2. Check result formats match
-3. Test with same seed for reproducibility
+1. Ensure MCP server has `handoff` tool
+2. Implement sampling callback in client
+3. Sampling callback should make A2A request to target agent
+4. Test handoff flow end-to-end
+5. Verify task state transitions
 
 ## Resources
 
+- **A2A Protocol Specification**: https://a2a-protocol.org/latest/specification/
+- **A2A Task-generating Agents**: https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task
+- **MCP Protocol Specification**: https://modelcontextprotocol.io/specification/latest
 - **Documentation**: https://timestep-ai.github.io/timestep/
-- **OpenAI API Reference**: https://platform.openai.com/docs/api-reference
 
 ## Notes for AI Agents
 
 - **Always maintain cross-language parity**: Changes in one language should be reflected in the other
-- **Test task compatibility**: When modifying task format or results, verify cross-language compatibility
-- **Follow the module structure**: Core is independent, eval builds on core
-- **Keep it simple**: The SDK is intentionally minimal - avoid over-engineering
+- **Follow A2A and MCP specifications**: Ensure protocol compliance
+- **Test handoffs**: Verify handoff functionality when making changes
+- **Keep it simple**: The library is intentionally minimal - avoid over-engineering
 - **Do NOT create documentation files unless explicitly requested**: Only create markdown documentation files (like README, architecture docs, etc.) when the user explicitly asks for them. Do not create evaluation documents, mapping documents, or other analysis documents unless specifically requested.

@@ -1,0 +1,30 @@
+services:
+  a2a_server:
+    image: oven/bun:latest
+    user: "1000:1000"
+    volumes:
+      - ../../:/workspace
+    working_dir: /tmp
+    command: bun --install=force run /workspace/examples/typescript/a2a_server.ts
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    develop:
+      watch:
+        - action: restart
+          path: ./examples/typescript/a2a_server.ts
+
+  mcp_server:
+    image: oven/bun:latest
+    user: "1000:1000"
+    volumes:
+      - ../../:/workspace
+    working_dir: /tmp
+    command: sh -c "cd /tmp && bun --install=force run /workspace/examples/typescript/mcp_server.ts"
+    ports:
+      - "8080:8080"
+    develop:
+      watch:
+        - action: restart
+          path: ./examples/typescript/mcp_server.ts

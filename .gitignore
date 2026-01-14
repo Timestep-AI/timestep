@@ -1,55 +1,22 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*.pyc
+*.pyo
 
-# TypeScript/Node
+# TypeScript/Node (Bun may still create these)
 node_modules/
-dist/
-*.tsbuildinfo
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
 # OS
 .DS_Store
-Thumbs.db
 
 # Environment
 .env
-.venv
-venv/
-ENV/
+.venv/
 
-# Test outputs
-.pytest_cache/
-.coverage
-htmlcov/
-*.log
-
-# Eval outputs
-runs/
+# Test outputs (from test_client)
 tasks/
-tasks.jsonl
 traces/

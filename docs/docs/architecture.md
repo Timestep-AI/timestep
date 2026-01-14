@@ -1,295 +1,234 @@
 # Architecture
 
-Timestep AI Agents SDK is built around a simple, universal **agent-environment loop** using OpenAI chat message protocol. The SDK is organized into two main modules: **core** (the agent-environment loop) and **eval** (the evaluation harness).
+Timestep is built around the **A2A (Agent-to-Agent)** and **MCP (Model Context Protocol)** protocols, providing a clean foundation for building multi-agent systems. This document explains the architecture and how these protocols work together.
 
-## Core vs Eval
+## Overview
 
-### Core Module (`timestep.core`)
+Timestep follows the **Task-generating Agents** philosophy from the [A2A Protocol](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), where agents always respond with Task objects. We use **MCP sampling** to enable seamless agent-to-agent handoffs.
 
-The core module provides the foundation - the agent-environment loop. It can be used independently without evaluation:
+## A2A Protocol Integration
 
-- **Agent harness interface**: `AgentFn` - function that takes messages and context, returns assistant message
-- **Episode runner**: `run_episode()` - executes the agent-environment loop
-- **Tool execution**: Deterministic tool execution with automatic indexing
-- **Episode info**: Tracks steps, tool calls, duration, tokens, costs
+### Task-Generating Agents
 
-### Eval Module (`timestep.eval`)
+Following the [A2A Task-generating Agents philosophy](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), our agents always respond with Task objects (never just Messages). This provides:
 
-The eval module builds on core to provide evaluation capabilities:
+- **State management**: Tasks can be in various states (created, input-required, completed, canceled, etc.)
+- **Progress tracking**: Task status updates provide visibility into agent progress
+- **Multi-turn interactions**: Tasks support context IDs for grouping related interactions
+- **Structured tool communication**: Tool calls are communicated via `input-required` state with `DataPart`
 
-- **Suite runner**: `run_suite()` - runs evaluation suites on multiple tasks
-- **Graders**: Code-based, LLM-as-judge, and outcome verification graders
-- **Reporting**: `report()` - generates summary reports
+### A2A Server Architecture
 
-## Core Concepts
-
-### Agent Harness (or Scaffold)
-
-An **agent harness** is a system that enables a model to act as an agent. In Timestep, this is the `AgentFn` interface:
+The A2A server implements a Task-generating Agent:
 
 ```python
-AgentFn = Callable[[List[Message], JSON], Message]
+# Agent always responds with Task objects
+class MultiAgentExecutor(AgentExecutor):
+    async def execute(self, request: RequestContext) -> Task:
+        # Process message and generate response
+        # Always return a Task object
+        return Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(
+                state=TaskState.input_required,  # or completed
+                message=Message(parts=[...])
+            ),
+            history=[...]
+        )
 ```
 
-- **Input**: List of messages (conversation history/transcript) + context (tools schema, task metadata, etc.)
-- **Output**: Single assistant message (may include `tool_calls`)
+Key characteristics:
+- Uses A2A SDK's `AgentExecutor` interface
+- Always returns Task objects
+- Manages task lifecycle and state transitions
+- Includes tool calls in `DataPart` when `input-required`
 
-The agent harness processes inputs, orchestrates tool calls, and returns results. It can use any model provider (OpenAI, Anthropic, local models, etc.) - Timestep doesn't care, as long as it follows the interface.
+### A2A input-required with DataPart
 
-### Agent-Environment Loop
+When an agent needs to call tools, it uses A2A's `input-required` state with a `DataPart`:
 
-The `run_episode()` function implements the canonical agent-environment loop, which orchestrates the agent harness:
+1. **Agent sets task state** to `input-required`
+2. **Agent includes DataPart** in task status message parts:
+   ```python
+   DataPart(
+       data={
+           "tool_calls": [
+               {
+                   "function": {
+                       "name": "handoff",
+                       "arguments": json.dumps({
+                           "agent_uri": "http://.../agents/...",
+                           "message": "What's the weather in Oakland?"
+                       })
+                   }
+               }
+           ]
+       }
+   )
+   ```
+3. **Client detects** `input-required` state
+4. **Client extracts** tool calls from `DataPart.data.tool_calls`
+5. **Client executes** tools via MCP
+6. **Client sends** results back to A2A server
 
-1. The loop calls the agent harness with messages and context
-2. Agent harness returns assistant message
-3. If assistant has `tool_calls`:
-   - Environment executes each tool call
-   - Appends tool result messages to transcript
-   - Loop continues (returns to step 1)
-4. If assistant has no `tool_calls`:
-   - Episode terminates (final answer)
+This pattern allows agents to communicate tool needs in a structured, protocol-compliant way.
 
-This loop continues until:
-- Agent harness returns final answer (no tool calls)
-- Maximum steps reached
-- Time limit exceeded
-- Error occurs
+## MCP Protocol Integration
 
-The agent-environment loop orchestrates the agent harness, executing tools and managing the conversation flow. Together, the loop and harness form the complete agent system.
+### MCP Server Architecture
 
-### Transcript
-
-The **transcript** is the complete record of an episode - all messages exchanged between agent and environment. This includes:
-- System/user messages (initial input)
-- Assistant messages (agent responses)
-- Tool messages (tool execution results)
-
-The transcript is preserved in full for analysis and grading.
-
-### Outcome
-
-The **outcome** is the final state in the environment, separate from the transcript. For example:
-- Transcript: Agent says "Your flight has been booked"
-- Outcome: Actual reservation exists in the database
-
-Timestep supports outcome verification through the `OutcomeVerifier` grader, which checks environment state rather than just the transcript.
-
-### Tool Execution
-
-Tools are deterministic functions:
+The MCP server provides tools and sampling capabilities:
 
 ```python
-ToolFn = Callable[[JSON], Any]
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("MCP Server")
+
+@mcp.tool()
+async def handoff(
+    agent_uri: str,
+    message: str,
+    ctx: Context = None,
+) -> Dict[str, Any]:
+    """Handoff tool using MCP sampling."""
+    # Use sampling to trigger A2A request
+    result = await ctx.session.create_message(
+        messages=[SamplingMessage(...)],
+        metadata={"agent_uri": agent_uri}
+    )
+    return {"response": result.content.text.strip()}
 ```
 
-- Tools receive arguments as JSON
-- Return values are JSON-serialized
-- Tool calls are automatically indexed and paired with results
-- Tool execution is synchronous and deterministic
+Key characteristics:
+- Tools registered with `@mcp.tool()` decorator
+- `handoff` tool uses sampling to trigger A2A requests
+- HTTP transport for client connections
+- Supports both tool execution and sampling
 
-### Episode Info
+### MCP Sampling for Handoffs
 
-The `EpisodeInfo` object tracks metadata about a completed episode:
+MCP's sampling feature enables server-initiated LLM interactions. We use it for handoffs:
 
+**Flow:**
+1. Agent calls MCP `handoff` tool with target agent URI
+2. MCP server calls client's sampling callback via `ctx.session.create_message()`
+3. Sampling callback (in client) makes A2A request to target agent
+4. Target agent processes and responds
+5. Response returned to MCP server
+6. MCP server returns result to original agent
+
+**Implementation:**
 ```python
-@dataclass
-class EpisodeInfo:
-    task_id: str
-    trial: int
-    seed: int
-    steps: int
-    tool_calls: int
-    duration_s: float
-    terminated_reason: str  # final_answer | max_steps | time_limit | error
-    error: Optional[str] = None
-    # Token tracking (if agent provides usage info)
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    cost_usd: float = 0.0
-```
-
-## Evaluation Harness
-
-The **evaluation harness** builds on the core agent-environment loop to provide evaluation capabilities.
-
-### Graders
-
-Graders evaluate agent performance. They consume:
-- `messages`: Full transcript
-- `tool_index`: List of tool calls paired with results
-- `task`: Task JSON (for expected values, allowlists, etc.)
-- `info`: EpisodeInfo
-
-And return:
-```python
-{
-    "name": str,
-    "passed": bool,
-    "score": float,  # 0.0 to 1.0
-    "details": {...}
-}
-```
-
-### Grader Types
-
-1. **Code-based graders**: Fast, objective, reproducible
-   - String matching (regex, contains)
-   - JSON validation
-   - Tool usage checks
-   - Transcript analysis
-
-2. **LLM-as-judge graders**: Nuanced, handles subjective tasks
-   - Uses OpenAI to grade based on rubric
-   - Can grade final message or full transcript
-   - Configurable model and temperature
-
-3. **Outcome verification**: Checks environment state
-   - Takes verifier function
-   - Checks actual state, not just transcript
-   - Useful for verifying side effects (database changes, file writes, etc.)
-
-## Task Format
-
-Tasks are JSON objects in JSONL files:
-
-```json
-{
-  "id": "task_01",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
-  ],
-  "tools_allowed": ["calc", "echo"],
-  "expected": {
-    "final_regex": "^\\d+$",
-    "final_contains": "result",
-    "llm_judge_rubric": "Is the response helpful and accurate?"
-  },
-  "limits": {
-    "max_steps": 10,
-    "time_limit_s": 30
-  }
-}
-```
-
-### Task Fields
-
-- `id`: Unique identifier (auto-generated if missing)
-- `messages`: List of OpenAI-style messages
-- `tools_allowed`: Optional tool allowlist
-- `expected`: Optional expected values for graders
-- `limits`: Optional episode limits
-
-## Message Protocol
-
-Messages follow OpenAI chat completion format:
-
-- **System/User/Assistant messages**:
-  ```json
-  {
-    "role": "system" | "user" | "assistant",
-    "content": "string"
-  }
-  ```
-
-- **Assistant with tool calls**:
-  ```json
-  {
-    "role": "assistant",
-    "content": "string",
-    "tool_calls": [
-      {
-        "id": "call_123",
-        "type": "function",
-        "function": {
-          "name": "calc",
-          "arguments": "{\"expr\":\"2+2\"}"
-        }
-      }
-    ],
-    "usage": {  // Optional: token usage info
-      "prompt_tokens": 10,
-      "completion_tokens": 5,
-      "total_tokens": 15
-    }
-  }
-  ```
-
-- **Tool result messages**:
-  ```json
-  {
-    "role": "tool",
-    "tool_call_id": "call_123",
-    "content": "{\"value\":4}"
-  }
-  ```
-
-## Built-in Graders
-
-### Code-Based
-
-1. **FinalRegex**: Checks final assistant content matches regex
-2. **FinalContains**: Checks substring in final assistant content
-3. **FinalJSON**: Parses final assistant content as JSON and checks required keys
-4. **TranscriptContains**: Checks substring anywhere in transcript
-5. **TranscriptRegex**: Regex match anywhere in transcript
-6. **ForbiddenTools**: Fails if agent called tools not in allowlist
-7. **MaxToolCalls**: Fails if > N tool calls
-8. **MinToolCalls**: Fails if < N tool calls
-9. **ToolCallSequence**: Checks a tool name was called at least once
-10. **ToolCallOrder**: Verifies tool calls happened in expected sequence
-11. **ToolResultJSON**: Checks tool result JSON has required keys
-
-### LLM-as-Judge
-
-- **LLMJudge**: Uses OpenAI to grade based on rubric
-
-### Outcome Verification
-
-- **OutcomeVerifier**: Checks environment state via verifier function
-
-### Creating Custom Graders
-
-```python
-from timestep import Grader
-
-class MyGrader(Grader):
-    name = "MyGrader"
+# In client
+async def mcp_sampling_callback(
+    context: RequestContext,
+    params: CreateMessageRequestParams,
+) -> CreateMessageResult:
+    # Extract agent_uri from metadata
+    agent_uri = params.metadata.get("agent_uri")
+    message_text = params.messages[0].content.text
     
-    def grade(self, messages, tool_index, task, info):
-        # Your grading logic
-        return {
-            "name": self.name,
-            "passed": True,
-            "score": 1.0,
-            "details": {}
-        }
+    # Make A2A request to target agent
+    result_text = await handle_agent_handoff(agent_uri, message_text)
+    
+    return CreateMessageResult(
+        role="assistant",
+        content=TextContent(type="text", text=result_text)
+    )
 ```
 
-## Output Structure
+This pattern allows agents to delegate work to specialized peers without requiring direct A2A client capabilities in the MCP server.
 
-Running an evaluation suite creates:
+## Client Architecture
 
+The client orchestrates A2A and MCP interactions:
+
+```python
+# Connect to A2A server
+a2a_client = await ClientFactory.connect(agent_url)
+
+# Connect to MCP server with sampling callback
+async with ClientSession(read, write, sampling_callback=mcp_sampling_callback) as session:
+    # Send message to A2A server
+    async for event in a2a_client.send_message(message_obj):
+        task = extract_task_from_event(event)
+        
+        # Monitor task state
+        if task.status.state.value == "input-required":
+            # Extract tool calls from DataPart
+            tool_calls = extract_tool_calls(task)
+            
+            # Execute tools via MCP
+            for tool_call in tool_calls:
+                result = await call_mcp_tool(tool_name, tool_args)
+                
+                # Send result back to A2A server
+                await a2a_client.send_message(tool_result_msg)
 ```
-runs/demo/
-├── run_meta.json          # Run metadata
-├── results.jsonl          # One line per trial
-└── trials/
-    └── task_id/
-        └── trial_XX/
-            ├── transcript.json    # Full message transcript
-            ├── tool_index.json    # Tool calls paired with results
-            ├── grades.json        # Grader results
-            └── info.json          # Episode info (steps, duration, tokens, etc.)
-```
+
+Key responsibilities:
+- Connects to both A2A and MCP servers
+- Monitors A2A task state transitions
+- Extracts tool calls from `DataPart` when `input-required`
+- Executes tools via MCP
+- Implements MCP sampling callback for handoffs
+- Sends tool results back to A2A server
+
+## Complete Interaction Flow
+
+Here's a complete example of a handoff interaction:
+
+1. **User sends message** to Personal Assistant Agent via A2A client
+2. **A2A server** creates Task and processes message
+3. **Agent determines** it needs weather information
+4. **Agent sets task state** to `input-required` with `DataPart` containing `handoff` tool call
+5. **Client detects** `input-required` state
+6. **Client extracts** `handoff` tool call from `DataPart`
+7. **Client calls** MCP `handoff` tool with weather agent URI
+8. **MCP server** calls client's sampling callback
+9. **Sampling callback** makes A2A request to weather agent
+10. **Weather agent** processes and responds with weather data
+11. **Response** returned to MCP server
+12. **MCP server** returns result to client
+13. **Client sends** result back to A2A server as user message
+14. **Personal assistant** receives weather data and presents to user
+15. **Task state** transitions to `completed`
+
+## Protocol Specifications
+
+- **[A2A Protocol Specification](https://a2a-protocol.org/latest/specification/)**: Complete A2A protocol reference
+- **[A2A Task-generating Agents](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task)**: Philosophy and patterns
+- **[MCP Protocol Specification](https://modelcontextprotocol.io/specification/latest)**: Complete MCP protocol reference
+
+## Key Design Decisions
+
+### Why Task-Generating Agents?
+
+- Provides clear state management
+- Enables progress tracking
+- Supports multi-turn interactions
+- Structured tool call communication
+
+### Why MCP Sampling for Handoffs?
+
+- Allows agents to delegate without direct A2A client capabilities
+- Leverages MCP's built-in sampling mechanism
+- Keeps handoff logic in the client (where A2A client exists)
+- Maintains separation of concerns
+
+### Why DataPart for Tool Calls?
+
+- Protocol-compliant way to communicate tool needs
+- Structured format for tool call information
+- Supports multiple tool calls in single message
+- Clear separation between content and tool calls
 
 ## Cross-Language Parity
 
 Python and TypeScript implementations:
-- Use same function/class names
-- Same parameter names and types
-- Same task format
-- Same result format
-- Compatible task JSONL files
-- Core and eval modules have identical APIs
+- Use same A2A and MCP protocol patterns
+- Follow same Task-generating Agent philosophy
+- Use same `input-required` with `DataPart` pattern
+- Implement same handoff flow via MCP sampling
+- Compatible A2A Task and MCP message formats
