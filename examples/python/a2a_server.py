@@ -93,9 +93,9 @@ AGENT_DESCRIPTIONS: Dict[str, str] = {
     WEATHER_ASSISTANT_ID: "Weather Assistant",
 }
 
-# DataPart payload kinds for tool routing
-TOOL_CALLS_KIND = "tool_calls"
-TOOL_RESULTS_KIND = "tool_results"
+# DataPart payload keys for tool routing
+TOOL_CALLS_KEY = "tool_calls"
+TOOL_RESULTS_KEY = "tool_results"
 
 
 def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
@@ -152,7 +152,7 @@ def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict
 
     Mapping:
       - TextPart -> OpenAI user message
-      - DataPart(kind=tool_results) -> OpenAI tool messages
+      - DataPart(tool_results=...) -> OpenAI tool messages
     """
     text_content = ""
     tool_results: List[Dict[str, Any]] = []
@@ -164,10 +164,9 @@ def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict
                 text_content += part_data.text
             elif hasattr(part_data, "kind") and part_data.kind == "data" and hasattr(part_data, "data"):
                 if isinstance(part_data.data, dict):
-                    if part_data.data.get("kind") == TOOL_RESULTS_KIND:
-                        results = part_data.data.get("results")
-                        if isinstance(results, list):
-                            tool_results.extend(results)
+                    results = part_data.data.get(TOOL_RESULTS_KEY)
+                    if isinstance(results, list):
+                        tool_results.extend(results)
 
     return text_content, tool_results
 
@@ -334,8 +333,7 @@ class MultiAgentExecutor(AgentExecutor):
             # Add tool calls as a DataPart in the message parts (per A2A spec)
             if tool_calls:
                 tool_calls_data = {
-                    "kind": TOOL_CALLS_KIND,
-                    "calls": [
+                    TOOL_CALLS_KEY: [
                         {
                             "call_id": tc.id,
                             "name": tc.function.name,
