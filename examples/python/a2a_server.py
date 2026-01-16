@@ -93,9 +93,9 @@ AGENT_DESCRIPTIONS: Dict[str, str] = {
     WEATHER_ASSISTANT_ID: "Weather Assistant",
 }
 
-# DataPart payload keys for tool routing
-TOOL_CALLS_KEY = "tool_calls"
-TOOL_RESULTS_KEY = "tool_results"
+# DataPart payload kinds for tool routing
+TOOL_CALLS_KIND = "tool_calls"
+TOOL_RESULTS_KIND = "tool_results"
 
 
 def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
@@ -152,7 +152,7 @@ def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict
 
     Mapping:
       - TextPart -> OpenAI user message
-      - DataPart{tool_results} -> OpenAI tool messages
+      - DataPart(kind=tool_results) -> OpenAI tool messages
     """
     text_content = ""
     tool_results: List[Dict[str, Any]] = []
@@ -164,9 +164,10 @@ def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict
                 text_content += part_data.text
             elif hasattr(part_data, "kind") and part_data.kind == "data" and hasattr(part_data, "data"):
                 if isinstance(part_data.data, dict):
-                    results = part_data.data.get(TOOL_RESULTS_KEY)
-                    if isinstance(results, list):
-                        tool_results.extend(results)
+                    if part_data.data.get("kind") == TOOL_RESULTS_KIND:
+                        results = part_data.data.get("results")
+                        if isinstance(results, list):
+                            tool_results.extend(results)
 
     return text_content, tool_results
 
@@ -246,14 +247,14 @@ class MultiAgentExecutor(AgentExecutor):
             if tool_results:
                 # Map DataPart tool_results to OpenAI tool messages.
                 for tool_result in tool_results:
-                    tool_call_id = tool_result.get("tool_call_id")
+                    tool_call_id = tool_result.get("call_id")
                     if not tool_call_id:
-                        raise ValueError("tool_result missing tool_call_id")
-                    raw_result = tool_result.get("result")
+                        raise ValueError("tool_result missing call_id")
+                    raw_result = tool_result.get("output")
+                    if raw_result is None:
+                        raise ValueError("tool_result missing output")
                     if isinstance(raw_result, (dict, list)):
                         content = json.dumps(raw_result)
-                    elif raw_result is None:
-                        content = ""
                     else:
                         content = str(raw_result)
                     messages.append(
@@ -333,17 +334,15 @@ class MultiAgentExecutor(AgentExecutor):
             # Add tool calls as a DataPart in the message parts (per A2A spec)
             if tool_calls:
                 tool_calls_data = {
-                    TOOL_CALLS_KEY: [
+                    "kind": TOOL_CALLS_KIND,
+                    "calls": [
                         {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
+                            "call_id": tc.id,
+                            "name": tc.function.name,
+                            "arguments": json.loads(tc.function.arguments),
                         }
                         for tc in tool_calls
-                    ]
+                    ],
                 }
                 # Add DataPart with tool calls to message parts
                 a2a_message.parts.append(Part(DataPart(data=tool_calls_data)))

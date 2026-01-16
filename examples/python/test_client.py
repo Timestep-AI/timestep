@@ -35,9 +35,9 @@ MCP_URL = os.getenv("MCP_URL", "http://localhost:8080/mcp")
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
 WEATHER_ASSISTANT_ID = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
 
-# DataPart payload keys for tool routing
-TOOL_CALLS_KEY = "tool_calls"
-TOOL_RESULTS_KEY = "tool_results"
+# DataPart payload kinds for tool routing
+TOOL_CALLS_KIND = "tool_calls"
+TOOL_RESULTS_KIND = "tool_results"
 
 
 def write_task(task: Any, agent_id: str) -> None:
@@ -105,50 +105,47 @@ def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
                 part_data = part.root
                 if hasattr(part_data, 'kind') and part_data.kind == 'data':
                     if hasattr(part_data, 'data') and isinstance(part_data.data, dict):
-                        tool_calls = part_data.data.get(TOOL_CALLS_KEY)
-                        if tool_calls:
-                            return tool_calls
+                        if part_data.data.get("kind") == TOOL_CALLS_KIND:
+                            tool_calls = part_data.data.get("calls")
+                            if tool_calls:
+                                return tool_calls
 
     return None
 
 
-def parse_tool_call(tool_call: Dict[str, Any]) -> tuple[Optional[str], Dict[str, Any]]:
-    """Parse tool call dict to extract tool name and arguments."""
-    tool_name = tool_call.get("function", {}).get("name")
-    tool_args_str = tool_call.get("function", {}).get("arguments")
-    
-    try:
-        tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str or {}
-    except (json.JSONDecodeError, ValueError):
-        tool_args = {}
-    
-    return tool_name, tool_args
+def parse_tool_call(tool_call: Dict[str, Any]) -> tuple[str, Dict[str, Any], str]:
+    """Parse tool call dict to extract tool name, args, and call_id."""
+    call_id = tool_call.get("call_id")
+    tool_name = tool_call.get("name")
+    tool_args = tool_call.get("arguments")
+    if not call_id or not tool_name or tool_args is None:
+        raise ValueError("Tool call missing call_id, name, or arguments")
+    if not isinstance(tool_args, dict):
+        raise ValueError("Tool call arguments must be an object")
+    return tool_name, tool_args, call_id
 
 
 async def execute_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Execute tool calls concurrently and return structured results."""
-    parsed_calls: List[tuple[Dict[str, Any], Optional[str]]] = []
+    parsed_calls: List[tuple[Dict[str, Any], str, str]] = []
     tasks = []
     for tool_call in tool_calls:
-        tool_name, tool_args = parse_tool_call(tool_call)
-        parsed_calls.append((tool_call, tool_name))
+        tool_name, tool_args, call_id = parse_tool_call(tool_call)
+        parsed_calls.append((tool_call, tool_name, call_id))
         tasks.append(call_mcp_tool(tool_name or "", tool_args))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     tool_results: List[Dict[str, Any]] = []
-    for (tool_call, tool_name), result in zip(parsed_calls, results):
-        tool_call_id = tool_call.get("id")
-        if not tool_call_id:
-            raise ValueError("Tool call missing id")
+    for (_tool_call, tool_name, call_id), result in zip(parsed_calls, results):
         if isinstance(result, Exception):
             result_payload = {"error": str(result)}
         else:
             result_payload = result
         tool_results.append(
             {
-                "tool_call_id": tool_call_id,
+                "call_id": call_id,
                 "name": tool_name,
-                "result": result_payload,
+                "output": result_payload,
             }
         )
     return tool_results
@@ -159,14 +156,23 @@ def build_tool_result_message(
     task_id: Optional[str],
     context_id: Optional[str],
 ) -> Any:
-    """Build an unspecified role message carrying tool results via DataPart."""
-    tool_result_msg = create_text_message_object(role=Role.unspecified, content="")
+    """Build a user message carrying tool results via DataPart."""
+    tool_result_msg = create_text_message_object(role=Role.user, content="")
     if task_id:
         tool_result_msg.task_id = task_id
     if context_id:
         tool_result_msg.context_id = context_id
     # DataPart tool_results maps to OpenAI tool messages in the A2A server.
-    tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
+    tool_result_msg.parts.append(
+        Part(
+            DataPart(
+                data={
+                    "kind": TOOL_RESULTS_KIND,
+                    "results": tool_results,
+                }
+            )
+        )
+    )
     return tool_result_msg
 
 
