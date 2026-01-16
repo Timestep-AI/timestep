@@ -10,9 +10,7 @@ MCP Server using FastMCP from mcp python-sdk.
 Handles tool execution and handoff sampling.
 """
 
-import datetime
-import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import Context
@@ -65,56 +63,6 @@ async def get_weather(location: str) -> Dict[str, Any]:
         "temperature": "72°F",
         "condition": "Sunny",
         "humidity": "65%"
-    }
-
-
-@mcp.tool()
-async def plan_tasks(
-    goal: str,
-    tasks: List[Dict[str, Any]],
-    output_format: str = "json",
-    title: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Create a structured execution plan with parallelizable tasks."""
-    plan_id = str(uuid.uuid4())
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    normalized_tasks: List[Dict[str, Any]] = []
-    for index, task in enumerate(tasks or []):
-        task_id = task.get("id") or f"task_{index + 1}"
-        task_title = task.get("title") or task.get("name") or f"Task {index + 1}"
-        task_instructions = task.get("instructions") or task.get("description") or ""
-        depends_on = task.get("depends_on") or []
-        if not isinstance(depends_on, list):
-            depends_on = [str(depends_on)]
-        execution = task.get("execution") if isinstance(task.get("execution"), dict) else {}
-        if "mode" not in execution:
-            execution["mode"] = "json"
-
-        normalized_tasks.append(
-            {
-                "id": task_id,
-                "title": task_title,
-                "instructions": task_instructions,
-                "depends_on": depends_on,
-                "parallel_group": task.get("parallel_group"),
-                "execution": execution,
-                "metadata": task.get("metadata") if isinstance(task.get("metadata"), dict) else {},
-            }
-        )
-
-    return {
-        "plan": {
-            "plan_id": plan_id,
-            "title": title or goal,
-            "goal": goal,
-            "output_format": output_format,
-            "created_at": created_at,
-            "version": "1.0",
-            "tasks": normalized_tasks,
-            "metadata": metadata or {},
-        }
     }
 
 

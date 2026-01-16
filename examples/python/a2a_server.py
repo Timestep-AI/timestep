@@ -81,73 +81,9 @@ GET_WEATHER_TOOL = {
     }
 }
 
-PLAN_TASKS_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "plan_tasks",
-        "description": "Create a structured execution plan with dependencies and parallel groups.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "goal": {
-                    "type": "string",
-                    "description": "Overall objective for the plan",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Short title for the plan",
-                },
-                "output_format": {
-                    "type": "string",
-                    "description": "Preferred execution output format",
-                    "enum": ["json", "sandbox", "both"],
-                },
-                "tasks": {
-                    "type": "array",
-                    "description": "Tasks with execution specs and dependencies",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "title": {"type": "string"},
-                            "instructions": {"type": "string"},
-                            "depends_on": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                            "parallel_group": {"type": "string"},
-                            "execution": {
-                                "type": "object",
-                                "properties": {
-                                    "mode": {
-                                        "type": "string",
-                                        "enum": ["sandbox", "json"],
-                                    },
-                                    "image": {"type": "string"},
-                                    "command": {"type": "string"},
-                                    "env": {
-                                        "type": "object",
-                                        "additionalProperties": {"type": "string"},
-                                    },
-                                    "timeout_seconds": {"type": "integer"},
-                                    "payload": {"type": "object"},
-                                },
-                            },
-                            "metadata": {"type": "object"},
-                        },
-                        "required": ["title", "instructions", "execution"],
-                    },
-                },
-                "metadata": {"type": "object"},
-            },
-            "required": ["goal", "tasks"],
-        },
-    },
-}
-
 # Agent registry mapping agent IDs to tool configurations
 AGENT_TOOLS: Dict[str, List[Dict[str, Any]]] = {
-    PERSONAL_ASSISTANT_ID: [HANDOFF_TOOL, PLAN_TASKS_TOOL],
+    PERSONAL_ASSISTANT_ID: [HANDOFF_TOOL],
     WEATHER_ASSISTANT_ID: [GET_WEATHER_TOOL],
 }
 
