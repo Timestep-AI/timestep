@@ -138,6 +138,8 @@ async def execute_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str,
     tool_results: List[Dict[str, Any]] = []
     for (tool_call, tool_name), result in zip(parsed_calls, results):
         tool_call_id = tool_call.get("id")
+        if not tool_call_id:
+            raise ValueError("Tool call missing id")
         if isinstance(result, Exception):
             result_payload = {"error": str(result)}
         else:

@@ -317,6 +317,7 @@ class MultiAgentExecutor(AgentExecutor):
             if self.tools:
                 request_params["tools"] = self.tools
                 request_params["tool_choice"] = "auto"
+                request_params["parallel_tool_calls"] = True
             
             response = openai_client.chat.completions.create(**request_params)
             
