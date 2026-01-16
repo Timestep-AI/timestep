@@ -146,34 +146,6 @@ function parseToolCall(tool_call: Record<string, any>): [string | null, Record<s
   return [tool_name, tool_args];
 }
 
-async function executeToolCalls(tool_calls: Record<string, any>[]): Promise<Array<Record<string, any>>> {
-  /**Execute tool calls concurrently and return structured results.*/
-  return Promise.all(
-    tool_calls.map(async (tool_call) => {
-      const [tool_name, tool_args] = parseToolCall(tool_call);
-      const tool_call_id = tool_call?.id;
-      try {
-        const result = await callMcpTool(tool_name || '', tool_args);
-        return { tool_call_id: tool_call_id, name: tool_name, result: result };
-      } catch (e: any) {
-        return { tool_call_id: tool_call_id, name: tool_name, result: { error: String(e) } };
-      }
-    })
-  );
-}
-
-function buildToolResultMessage(tool_results: Array<Record<string, any>>, task_id?: string, context_id?: string): Message {
-  /**Build an A2A message containing tool results as DataPart.*/
-  return {
-    kind: 'message',
-    role: 'user',
-    messageId: uuidv4(),
-    parts: [{ kind: 'data', data: { tool_results: tool_results } }],
-    taskId: task_id,
-    contextId: context_id,
-  };
-}
-
 // MCP client for calling tools
 let mcpClient: Client | null = null;
 let mcpTransport: StreamableHTTPClientTransport | null = null;
@@ -286,19 +258,31 @@ async function processMessageStream(
     if (task.kind === 'status-update' && task.status?.state === 'input-required') {
       const tool_calls = extractToolCalls(task);
       if (tool_calls) {
-        const tool_results = await executeToolCalls(tool_calls);
-        const tool_result_msg = buildToolResultMessage(tool_results, current_task_id, current_context_id);
+        for (const tool_call of tool_calls) {
+          const [tool_name, tool_args] = parseToolCall(tool_call);
+          const result = await callMcpTool(tool_name || '', tool_args);
 
-        // Recursively process tool result stream
-        const result_message = await processMessageStream(
-          a2a_client,
-          tool_result_msg,
-          agent_id,
-          current_task_id,
-          current_context_id
-        );
-        if (result_message) {
-          final_message = result_message;
+          const tool_result_msg: Message = {
+            kind: 'message',
+            role: 'user',
+            messageId: uuidv4(),
+            parts: [{ kind: 'text', text: JSON.stringify(result) }],
+            taskId: current_task_id,
+            contextId: current_context_id,
+          };
+
+          // Recursively process tool result stream
+          const result_message = await processMessageStream(
+            a2a_client,
+            tool_result_msg,
+            agent_id,
+            current_task_id,
+            current_context_id
+          );
+          if (result_message) {
+            final_message = result_message;
+            break;
+          }
         }
       }
     }
@@ -386,20 +370,28 @@ async function runClientLoop(initial_message: string, agent_id: string = PERSONA
         if (task.kind === 'status-update' && task.status?.state === 'input-required') {
           const tool_calls = extractToolCalls(task);
           if (tool_calls) {
-            const tool_results = await executeToolCalls(tool_calls);
-            for (const tool_result of tool_results) {
-              const tool_name = tool_result.name;
+            for (const tool_call of tool_calls) {
+              const [tool_name, tool_args] = parseToolCall(tool_call);
+
               console.log(`\n[Calling tool: ${tool_name}]`);
+              const result = await callMcpTool(tool_name || '', tool_args);
               if (tool_name !== 'handoff') {
-                console.log(`[Tool result: ${JSON.stringify(tool_result.result)}]`);
+                console.log(`[Tool result: ${JSON.stringify(result)}]`);
               }
+
+              const tool_result_msg: Message = {
+                kind: 'message',
+                role: 'user',
+                messageId: uuidv4(),
+                parts: [{ kind: 'text', text: JSON.stringify(result) }],
+                taskId: task.id || task.taskId,
+                contextId: task.contextId,
+              };
+
+              // Recursively process tool result
+              await processWithOutput(a2a_client, tool_result_msg, agent_id);
+              break;
             }
-
-            const tool_result_msg = buildToolResultMessage(tool_results, task.id || task.taskId, task.contextId);
-
-            // Recursively process tool result
-            await processWithOutput(a2a_client, tool_result_msg, agent_id);
-            break;
           }
         }
       }

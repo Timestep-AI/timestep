@@ -29,6 +29,7 @@
  * 6. Remove this status comment and implement full functionality
  */
 
+import { randomUUID } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server';
 import { Request, Response } from 'express';
 import * as z from 'zod';

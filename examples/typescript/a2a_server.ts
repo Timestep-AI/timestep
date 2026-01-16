@@ -192,16 +192,10 @@ class MultiAgentExecutor implements AgentExecutor {
     // Extract text from incoming message for OpenAI processing
     if (userMessage) {
       let text_content = '';
-      const tool_results: any[] = [];
       if (userMessage.parts) {
         for (const part of userMessage.parts) {
           if (part.kind === 'text') {
             text_content += part.text;
-          } else if (part.kind === 'data' && part.data && typeof part.data === 'object') {
-            const data = part.data as any;
-            if (Array.isArray(data.tool_results)) {
-              tool_results.push(...data.tool_results);
-            }
           }
         }
       }
@@ -209,78 +203,36 @@ class MultiAgentExecutor implements AgentExecutor {
       if (text_content) {
         messages.push({ role: 'user', content: text_content });
       }
-
-      if (tool_results.length > 0) {
-        for (const tool_result of tool_results) {
-          const tool_call_id = tool_result.tool_call_id || tool_result.id;
-          const raw_result =
-            tool_result.result ?? tool_result.content ?? tool_result;
-          const content =
-            raw_result && typeof raw_result === 'object' ? JSON.stringify(raw_result) : String(raw_result ?? '');
-          messages.push({
-            role: 'tool',
-            tool_call_id: tool_call_id,
-            content: content,
-          });
-        }
-      }
     }
 
     // Convert messages to OpenAI format
     const openai_messages: any[] = [];
-    let pending_tool_calls: any[] = [];
-    let pending_tool_index = 0;
 
-    for (const msg of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
       const role = msg.role || 'user';
       const content = msg.content || '';
 
-      if (role === 'assistant') {
-        const openai_msg: any = { role: role, content: content };
-        if (msg.tool_calls) {
-          openai_msg.tool_calls = msg.tool_calls;
-          pending_tool_calls = msg.tool_calls || [];
-          pending_tool_index = 0;
-        } else {
-          pending_tool_calls = [];
-          pending_tool_index = 0;
-        }
-        openai_messages.push(openai_msg);
-        continue;
-      }
-
-      if (role === 'tool') {
-        let tool_call_id = msg.tool_call_id;
-        if (!tool_call_id && pending_tool_index < pending_tool_calls.length) {
-          tool_call_id = pending_tool_calls[pending_tool_index]?.id;
-          pending_tool_index += 1;
-          if (pending_tool_index >= pending_tool_calls.length) {
-            pending_tool_calls = [];
+      if (i > 0 && messages[i - 1].role === 'assistant') {
+        const prev_tool_calls = messages[i - 1].tool_calls;
+        if (prev_tool_calls && prev_tool_calls.length > 0) {
+          const tool_call_id = prev_tool_calls[0].id;
+          if (tool_call_id) {
+            openai_messages.push({
+              role: 'tool',
+              tool_call_id: tool_call_id,
+              content: content,
+            });
+            continue;
           }
         }
-        openai_messages.push({
-          role: 'tool',
-          tool_call_id: tool_call_id,
-          content: content,
-        });
-        continue;
       }
 
-      if (pending_tool_calls.length > 0 && pending_tool_index < pending_tool_calls.length) {
-        const tool_call_id = msg.tool_call_id || pending_tool_calls[pending_tool_index]?.id;
-        pending_tool_index += 1;
-        if (pending_tool_index >= pending_tool_calls.length) {
-          pending_tool_calls = [];
-        }
-        openai_messages.push({
-          role: 'tool',
-          tool_call_id: tool_call_id,
-          content: content,
-        });
-        continue;
+      const openai_msg: any = { role: role, content: content };
+      if (role === 'assistant' && msg.tool_calls) {
+        openai_msg.tool_calls = msg.tool_calls;
       }
-
-      openai_messages.push({ role: role, content: content });
+      openai_messages.push(openai_msg);
     }
 
     if (openai_messages.length === 0) {
