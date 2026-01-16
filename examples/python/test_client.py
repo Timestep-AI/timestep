@@ -97,7 +97,7 @@ def extract_final_message(task: Any) -> str:
 
 
 def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
-    """Extract tool calls from task status message or history."""
+    """Extract tool calls from task status message DataPart."""
     # Check task.status.message parts first
     if task.status.message and task.status.message.parts:
         for part in task.status.message.parts:
@@ -108,21 +108,7 @@ def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
                         tool_calls = part_data.data.get(TOOL_CALLS_KEY)
                         if tool_calls:
                             return tool_calls
-    
-    # Fallback: check last agent message in history
-    if task.history:
-        for msg in reversed(task.history):
-            if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
-                if msg.parts:
-                    for part in msg.parts:
-                        if hasattr(part, 'root'):
-                            part_data = part.root
-                            if hasattr(part_data, 'kind') and part_data.kind == 'data':
-                                if hasattr(part_data, 'data') and isinstance(part_data.data, dict):
-                                    tool_calls = part_data.data.get(TOOL_CALLS_KEY)
-                                    if tool_calls:
-                                        return tool_calls
-    
+
     return None
 
 

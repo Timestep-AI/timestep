@@ -168,10 +168,6 @@ def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict
                     if isinstance(results, list):
                         tool_results.extend(results)
 
-    if not text_content and hasattr(message, "content"):
-        if isinstance(message.content, str):
-            text_content = message.content
-
     return text_content, tool_results
 
 
@@ -250,10 +246,10 @@ class MultiAgentExecutor(AgentExecutor):
             if tool_results:
                 # Map DataPart tool_results to OpenAI tool messages.
                 for tool_result in tool_results:
-                    tool_call_id = tool_result.get("tool_call_id") or tool_result.get("id")
-                    raw_result = tool_result.get("result", tool_result.get("content"))
-                    if raw_result is None and isinstance(tool_result, dict):
-                        raw_result = tool_result.get("result", "")
+                    tool_call_id = tool_result.get("tool_call_id")
+                    if not tool_call_id:
+                        raise ValueError("tool_result missing tool_call_id")
+                    raw_result = tool_result.get("result")
                     if isinstance(raw_result, (dict, list)):
                         content = json.dumps(raw_result)
                     elif raw_result is None:
@@ -270,8 +266,6 @@ class MultiAgentExecutor(AgentExecutor):
         
         # Convert messages to OpenAI format
         openai_messages = []
-        pending_tool_calls: List[Dict[str, Any]] = []
-        pending_tool_index = 0
         
         for msg in messages:
             role = msg.get("role", "user")
@@ -281,21 +275,13 @@ class MultiAgentExecutor(AgentExecutor):
                 openai_msg = {"role": role, "content": content}
                 if "tool_calls" in msg:
                     openai_msg["tool_calls"] = msg["tool_calls"]
-                    pending_tool_calls = msg.get("tool_calls", [])
-                    pending_tool_index = 0
-                else:
-                    pending_tool_calls = []
-                    pending_tool_index = 0
                 openai_messages.append(openai_msg)
                 continue
             
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id")
-                if not tool_call_id and pending_tool_index < len(pending_tool_calls):
-                    tool_call_id = pending_tool_calls[pending_tool_index].get("id")
-                    pending_tool_index += 1
-                    if pending_tool_index >= len(pending_tool_calls):
-                        pending_tool_calls = []
+                if not tool_call_id:
+                    raise ValueError("Tool message missing tool_call_id")
                 openai_messages.append(
                     {
                         "role": "tool",
