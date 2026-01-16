@@ -79,9 +79,73 @@ const GET_WEATHER_TOOL = {
   },
 };
 
+const PLAN_TASKS_TOOL = {
+  type: 'function',
+  function: {
+    name: 'plan_tasks',
+    description: 'Create a structured execution plan with dependencies and parallel groups.',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: {
+          type: 'string',
+          description: 'Overall objective for the plan',
+        },
+        title: {
+          type: 'string',
+          description: 'Short title for the plan',
+        },
+        output_format: {
+          type: 'string',
+          description: 'Preferred execution output format',
+          enum: ['json', 'sandbox', 'both'],
+        },
+        tasks: {
+          type: 'array',
+          description: 'Tasks with execution specs and dependencies',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              title: { type: 'string' },
+              instructions: { type: 'string' },
+              depends_on: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+              parallel_group: { type: 'string' },
+              execution: {
+                type: 'object',
+                properties: {
+                  mode: {
+                    type: 'string',
+                    enum: ['sandbox', 'json'],
+                  },
+                  image: { type: 'string' },
+                  command: { type: 'string' },
+                  env: {
+                    type: 'object',
+                    additionalProperties: { type: 'string' },
+                  },
+                  timeout_seconds: { type: 'integer' },
+                  payload: { type: 'object' },
+                },
+              },
+              metadata: { type: 'object' },
+            },
+            required: ['title', 'instructions', 'execution'],
+          },
+        },
+        metadata: { type: 'object' },
+      },
+      required: ['goal', 'tasks'],
+    },
+  },
+};
+
 // Agent registry mapping agent IDs to tool configurations
 const AGENT_TOOLS: Record<string, any[]> = {
-  [PERSONAL_ASSISTANT_ID]: [HANDOFF_TOOL],
+  [PERSONAL_ASSISTANT_ID]: [HANDOFF_TOOL, PLAN_TASKS_TOOL],
   [WEATHER_ASSISTANT_ID]: [GET_WEATHER_TOOL],
 };
 
@@ -192,10 +256,16 @@ class MultiAgentExecutor implements AgentExecutor {
     // Extract text from incoming message for OpenAI processing
     if (userMessage) {
       let text_content = '';
+      const tool_results: any[] = [];
       if (userMessage.parts) {
         for (const part of userMessage.parts) {
           if (part.kind === 'text') {
             text_content += part.text;
+          } else if (part.kind === 'data' && part.data && typeof part.data === 'object') {
+            const data = part.data as any;
+            if (Array.isArray(data.tool_results)) {
+              tool_results.push(...data.tool_results);
+            }
           }
         }
       }
@@ -203,36 +273,78 @@ class MultiAgentExecutor implements AgentExecutor {
       if (text_content) {
         messages.push({ role: 'user', content: text_content });
       }
+
+      if (tool_results.length > 0) {
+        for (const tool_result of tool_results) {
+          const tool_call_id = tool_result.tool_call_id || tool_result.id;
+          const raw_result =
+            tool_result.result ?? tool_result.content ?? tool_result;
+          const content =
+            raw_result && typeof raw_result === 'object' ? JSON.stringify(raw_result) : String(raw_result ?? '');
+          messages.push({
+            role: 'tool',
+            tool_call_id: tool_call_id,
+            content: content,
+          });
+        }
+      }
     }
 
     // Convert messages to OpenAI format
     const openai_messages: any[] = [];
+    let pending_tool_calls: any[] = [];
+    let pending_tool_index = 0;
 
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
+    for (const msg of messages) {
       const role = msg.role || 'user';
       const content = msg.content || '';
 
-      if (i > 0 && messages[i - 1].role === 'assistant') {
-        const prev_tool_calls = messages[i - 1].tool_calls;
-        if (prev_tool_calls && prev_tool_calls.length > 0) {
-          const tool_call_id = prev_tool_calls[0].id;
-          if (tool_call_id) {
-            openai_messages.push({
-              role: 'tool',
-              tool_call_id: tool_call_id,
-              content: content,
-            });
-            continue;
-          }
+      if (role === 'assistant') {
+        const openai_msg: any = { role: role, content: content };
+        if (msg.tool_calls) {
+          openai_msg.tool_calls = msg.tool_calls;
+          pending_tool_calls = msg.tool_calls || [];
+          pending_tool_index = 0;
+        } else {
+          pending_tool_calls = [];
+          pending_tool_index = 0;
         }
+        openai_messages.push(openai_msg);
+        continue;
       }
 
-      const openai_msg: any = { role: role, content: content };
-      if (role === 'assistant' && msg.tool_calls) {
-        openai_msg.tool_calls = msg.tool_calls;
+      if (role === 'tool') {
+        let tool_call_id = msg.tool_call_id;
+        if (!tool_call_id && pending_tool_index < pending_tool_calls.length) {
+          tool_call_id = pending_tool_calls[pending_tool_index]?.id;
+          pending_tool_index += 1;
+          if (pending_tool_index >= pending_tool_calls.length) {
+            pending_tool_calls = [];
+          }
+        }
+        openai_messages.push({
+          role: 'tool',
+          tool_call_id: tool_call_id,
+          content: content,
+        });
+        continue;
       }
-      openai_messages.push(openai_msg);
+
+      if (pending_tool_calls.length > 0 && pending_tool_index < pending_tool_calls.length) {
+        const tool_call_id = msg.tool_call_id || pending_tool_calls[pending_tool_index]?.id;
+        pending_tool_index += 1;
+        if (pending_tool_index >= pending_tool_calls.length) {
+          pending_tool_calls = [];
+        }
+        openai_messages.push({
+          role: 'tool',
+          tool_call_id: tool_call_id,
+          content: content,
+        });
+        continue;
+      }
+
+      openai_messages.push({ role: role, content: content });
     }
 
     if (openai_messages.length === 0) {

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from a2a.client import ClientFactory, ClientConfig
 from a2a.client.helpers import create_text_message_object
-from a2a.types import TransportProtocol, Role
+from a2a.types import TransportProtocol, Role, Part, DataPart
 from mcp import ClientSession, types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent
@@ -135,6 +135,48 @@ def parse_tool_call(tool_call: Dict[str, Any]) -> tuple[Optional[str], Dict[str,
     return tool_name, tool_args
 
 
+async def execute_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Execute tool calls concurrently and return structured results."""
+    parsed_calls: List[tuple[Dict[str, Any], Optional[str]]] = []
+    tasks = []
+    for tool_call in tool_calls:
+        tool_name, tool_args = parse_tool_call(tool_call)
+        parsed_calls.append((tool_call, tool_name))
+        tasks.append(call_mcp_tool(tool_name or "", tool_args))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    tool_results: List[Dict[str, Any]] = []
+    for (tool_call, tool_name), result in zip(parsed_calls, results):
+        tool_call_id = tool_call.get("id")
+        if isinstance(result, Exception):
+            result_payload = {"error": str(result)}
+        else:
+            result_payload = result
+        tool_results.append(
+            {
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "result": result_payload,
+            }
+        )
+    return tool_results
+
+
+def build_tool_result_message(
+    tool_results: List[Dict[str, Any]],
+    task_id: Optional[str],
+    context_id: Optional[str],
+) -> Any:
+    """Build an A2A message containing tool results as DataPart."""
+    tool_result_msg = create_text_message_object(role="user", content="")
+    if task_id:
+        tool_result_msg.task_id = task_id
+    if context_id:
+        tool_result_msg.context_id = context_id
+    tool_result_msg.parts.append(Part(DataPart(data={"tool_results": tool_results})))
+    return tool_result_msg
+
+
 async def mcp_sampling_callback(
     context: RequestContext["ClientSession", Any],
     params: mcp_types.CreateMessageRequestParams,
@@ -214,26 +256,17 @@ async def process_message_stream(
         if task.status.state.value == "input-required":
             tool_calls = extract_tool_calls(task)
             if tool_calls:
-                for tool_call in tool_calls:
-                    tool_name, tool_args = parse_tool_call(tool_call)
-                    result = await call_mcp_tool(tool_name, tool_args)
-                    
-                    tool_result_msg = create_text_message_object(
-                        role="user",
-                        content=json.dumps(result),
-                    )
-                    if current_task_id:
-                        tool_result_msg.task_id = current_task_id
-                    if current_context_id:
-                        tool_result_msg.context_id = current_context_id
-                    
-                    # Recursively process tool result stream
-                    result_message = await process_message_stream(
-                        a2a_client, tool_result_msg, agent_id, current_task_id, current_context_id
-                    )
-                    if result_message:
-                        final_message = result_message
-                        break
+                tool_results = await execute_tool_calls(tool_calls)
+                tool_result_msg = build_tool_result_message(
+                    tool_results, current_task_id, current_context_id
+                )
+                
+                # Recursively process tool result stream
+                result_message = await process_message_stream(
+                    a2a_client, tool_result_msg, agent_id, current_task_id, current_context_id
+                )
+                if result_message:
+                    final_message = result_message
     
     return final_message.strip() or "Task completed."
 
@@ -331,26 +364,20 @@ async def run_client_loop(
                 if task.status.state.value == "input-required":
                     tool_calls = extract_tool_calls(task)
                     if tool_calls:
-                        for tool_call in tool_calls:
-                            tool_name, tool_args = parse_tool_call(tool_call)
-                            
+                        tool_results = await execute_tool_calls(tool_calls)
+                        for tool_result in tool_results:
+                            tool_name = tool_result.get("name")
                             print(f"\n[Calling tool: {tool_name}]")
-                            result = await call_mcp_tool(tool_name, tool_args)
                             if tool_name != "handoff":
-                                print(f"[Tool result: {result}]")
-                            
-                            tool_result_msg = create_text_message_object(
-                                role="user",
-                                content=json.dumps(result),
-                            )
-                            if task.id:
-                                tool_result_msg.task_id = task.id
-                            if task.context_id:
-                                tool_result_msg.context_id = task.context_id
-                            
-                            # Recursively process tool result
-                            await process_with_output(a2a_client, tool_result_msg, agent_id)
-                            break
+                                print(f"[Tool result: {tool_result.get('result')}]")
+                        
+                        tool_result_msg = build_tool_result_message(
+                            tool_results, task.id, task.context_id
+                        )
+                        
+                        # Recursively process tool result
+                        await process_with_output(a2a_client, tool_result_msg, agent_id)
+                        break
         
         await process_with_output(a2a_client, message, agent_id)
     except Exception as e:

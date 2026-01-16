@@ -81,9 +81,73 @@ GET_WEATHER_TOOL = {
     }
 }
 
+PLAN_TASKS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "plan_tasks",
+        "description": "Create a structured execution plan with dependencies and parallel groups.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Overall objective for the plan",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Short title for the plan",
+                },
+                "output_format": {
+                    "type": "string",
+                    "description": "Preferred execution output format",
+                    "enum": ["json", "sandbox", "both"],
+                },
+                "tasks": {
+                    "type": "array",
+                    "description": "Tasks with execution specs and dependencies",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "instructions": {"type": "string"},
+                            "depends_on": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "parallel_group": {"type": "string"},
+                            "execution": {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": ["sandbox", "json"],
+                                    },
+                                    "image": {"type": "string"},
+                                    "command": {"type": "string"},
+                                    "env": {
+                                        "type": "object",
+                                        "additionalProperties": {"type": "string"},
+                                    },
+                                    "timeout_seconds": {"type": "integer"},
+                                    "payload": {"type": "object"},
+                                },
+                            },
+                            "metadata": {"type": "object"},
+                        },
+                        "required": ["title", "instructions", "execution"],
+                    },
+                },
+                "metadata": {"type": "object"},
+            },
+            "required": ["goal", "tasks"],
+        },
+    },
+}
+
 # Agent registry mapping agent IDs to tool configurations
 AGENT_TOOLS: Dict[str, List[Dict[str, Any]]] = {
-    PERSONAL_ASSISTANT_ID: [HANDOFF_TOOL],
+    PERSONAL_ASSISTANT_ID: [HANDOFF_TOOL, PLAN_TASKS_TOOL],
     WEATHER_ASSISTANT_ID: [GET_WEATHER_TOOL],
 }
 
@@ -211,6 +275,7 @@ class MultiAgentExecutor(AgentExecutor):
         if context.message:
             msg = context.message
             text_content = ""
+            tool_results: List[Dict[str, Any]] = []
             
             # Extract from parts (preferred)
             if msg.parts:
@@ -220,9 +285,19 @@ class MultiAgentExecutor(AgentExecutor):
                         part_data = part.root
                         if hasattr(part_data, 'kind') and part_data.kind == 'text' and hasattr(part_data, 'text'):
                             text_content += part_data.text
+                        elif hasattr(part_data, 'kind') and part_data.kind == 'data' and hasattr(part_data, 'data'):
+                            if isinstance(part_data.data, dict):
+                                tool_results_data = part_data.data.get("tool_results")
+                                if isinstance(tool_results_data, list):
+                                    tool_results.extend(tool_results_data)
                     # Handle direct TextPart access
                     elif hasattr(part, 'kind') and part.kind == 'text' and hasattr(part, 'text'):
                         text_content += part.text
+                    elif hasattr(part, 'kind') and part.kind == 'data' and hasattr(part, 'data'):
+                        if isinstance(part.data, dict):
+                            tool_results_data = part.data.get("tool_results")
+                            if isinstance(tool_results_data, list):
+                                tool_results.extend(tool_results_data)
             
             # Fallback to content attribute
             if not text_content and hasattr(msg, 'content'):
@@ -231,32 +306,79 @@ class MultiAgentExecutor(AgentExecutor):
             
             if text_content:
                 messages.append({"role": "user", "content": text_content})
-        
-        # Convert messages to OpenAI format
-        openai_messages = []
-        
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            # Check if this is a tool result (comes after assistant message with tool_calls)
-            if i > 0 and messages[i-1].get("role") == "assistant":
-                prev_tool_calls = messages[i-1].get("tool_calls", [])
-                if prev_tool_calls:
-                    # Format as tool message for OpenAI
-                    tool_call_id = prev_tool_calls[0].get("id")
-                    if tool_call_id:
-                        openai_messages.append({
+
+            if tool_results:
+                for tool_result in tool_results:
+                    tool_call_id = tool_result.get("tool_call_id") or tool_result.get("id")
+                    raw_result = tool_result.get("result", tool_result.get("content"))
+                    if raw_result is None and isinstance(tool_result, dict):
+                        raw_result = tool_result.get("result", "")
+                    if isinstance(raw_result, (dict, list)):
+                        content = json.dumps(raw_result)
+                    elif raw_result is None:
+                        content = ""
+                    else:
+                        content = str(raw_result)
+                    messages.append(
+                        {
                             "role": "tool",
                             "tool_call_id": tool_call_id,
                             "content": content,
-                        })
-                        continue
+                        }
+                    )
+        
+        # Convert messages to OpenAI format
+        openai_messages = []
+        pending_tool_calls: List[Dict[str, Any]] = []
+        pending_tool_index = 0
+        
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
             
-            openai_msg = {"role": role, "content": content}
-            if role == "assistant" and "tool_calls" in msg:
-                openai_msg["tool_calls"] = msg["tool_calls"]
-            openai_messages.append(openai_msg)
+            if role == "assistant":
+                openai_msg = {"role": role, "content": content}
+                if "tool_calls" in msg:
+                    openai_msg["tool_calls"] = msg["tool_calls"]
+                    pending_tool_calls = msg.get("tool_calls", [])
+                    pending_tool_index = 0
+                else:
+                    pending_tool_calls = []
+                    pending_tool_index = 0
+                openai_messages.append(openai_msg)
+                continue
+            
+            if role == "tool":
+                tool_call_id = msg.get("tool_call_id")
+                if not tool_call_id and pending_tool_index < len(pending_tool_calls):
+                    tool_call_id = pending_tool_calls[pending_tool_index].get("id")
+                    pending_tool_index += 1
+                    if pending_tool_index >= len(pending_tool_calls):
+                        pending_tool_calls = []
+                openai_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": content,
+                    }
+                )
+                continue
+            
+            if pending_tool_calls and pending_tool_index < len(pending_tool_calls):
+                tool_call_id = msg.get("tool_call_id") or pending_tool_calls[pending_tool_index].get("id")
+                pending_tool_index += 1
+                if pending_tool_index >= len(pending_tool_calls):
+                    pending_tool_calls = []
+                openai_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": content,
+                    }
+                )
+                continue
+            
+            openai_messages.append({"role": role, "content": content})
         
         # Ensure we have at least one message before calling OpenAI
         if not openai_messages:

@@ -132,6 +132,62 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         },
       ],
     } as CallToolResult;
+  } else if (request.params.name === 'plan_tasks') {
+    const args = request.params.arguments as {
+      goal?: string;
+      title?: string;
+      output_format?: string;
+      tasks?: Array<Record<string, any>>;
+      metadata?: Record<string, any>;
+    };
+
+    if (!args.goal) {
+      throw new McpError(ErrorCode.InvalidParams, 'goal is required for plan_tasks');
+    }
+
+    const normalizedTasks = (Array.isArray(args.tasks) ? args.tasks : []).map((task, index) => {
+      const taskObj = task && typeof task === 'object' ? task : {};
+      const dependsOn = Array.isArray(taskObj.depends_on)
+        ? taskObj.depends_on
+        : taskObj.depends_on
+        ? [String(taskObj.depends_on)]
+        : [];
+      const execution =
+        taskObj.execution && typeof taskObj.execution === 'object' ? { ...taskObj.execution } : {};
+      if (!('mode' in execution)) {
+        execution.mode = 'json';
+      }
+
+      return {
+        id: taskObj.id || `task_${index + 1}`,
+        title: taskObj.title || taskObj.name || `Task ${index + 1}`,
+        instructions: taskObj.instructions || taskObj.description || '',
+        depends_on: dependsOn,
+        parallel_group: taskObj.parallel_group,
+        execution: execution,
+        metadata: typeof taskObj.metadata === 'object' ? taskObj.metadata : {},
+      };
+    });
+
+    const plan = {
+      plan_id: randomUUID(),
+      title: args.title || args.goal,
+      goal: args.goal,
+      output_format: args.output_format || 'json',
+      created_at: new Date().toISOString(),
+      version: '1.0',
+      tasks: normalizedTasks,
+      metadata: args.metadata || {},
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ plan: plan }),
+        },
+      ],
+    } as CallToolResult;
   } else {
     throw new McpError(ErrorCode.MethodNotFound, `Tool ${request.params.name} not found`);
   }
