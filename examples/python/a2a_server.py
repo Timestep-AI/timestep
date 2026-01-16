@@ -264,37 +264,8 @@ class MultiAgentExecutor(AgentExecutor):
                         }
                     )
         
-        # Convert messages to OpenAI format
-        openai_messages = []
-        
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "assistant":
-                openai_msg = {"role": role, "content": content}
-                if "tool_calls" in msg:
-                    openai_msg["tool_calls"] = msg["tool_calls"]
-                openai_messages.append(openai_msg)
-                continue
-            
-            if role == "tool":
-                tool_call_id = msg.get("tool_call_id")
-                if not tool_call_id:
-                    raise ValueError("Tool message missing tool_call_id")
-                openai_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": content,
-                    }
-                )
-                continue
-            
-            openai_messages.append({"role": role, "content": content})
-        
         # Ensure we have at least one message before calling OpenAI
-        if not openai_messages:
+        if not messages:
             raise ValueError(f"No messages to send to OpenAI. Task: {task_id}, Agent: {self.agent_id}, Messages count: {len(messages)}, Context message: {context.message}")
         
         # Build system message explaining agent identity and available tools
@@ -303,7 +274,7 @@ class MultiAgentExecutor(AgentExecutor):
         # Add system message at the beginning
         openai_messages_with_system = [
             {"role": "system", "content": system_message_content}
-        ] + openai_messages
+        ] + messages
         
         # Call OpenAI with agent-specific tools
         try:
