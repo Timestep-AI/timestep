@@ -35,6 +35,10 @@ MCP_URL = os.getenv("MCP_URL", "http://localhost:8080/mcp")
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
 WEATHER_ASSISTANT_ID = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
 
+# DataPart payload keys for tool routing
+TOOL_CALLS_KEY = "tool_calls"
+TOOL_RESULTS_KEY = "tool_results"
+
 
 def write_task(task: Any, agent_id: str) -> None:
     """Write task to tasks/ folder in proper A2A Task format."""
@@ -101,7 +105,7 @@ def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
                 part_data = part.root
                 if hasattr(part_data, 'kind') and part_data.kind == 'data':
                     if hasattr(part_data, 'data') and isinstance(part_data.data, dict):
-                        tool_calls = part_data.data.get("tool_calls")
+                        tool_calls = part_data.data.get(TOOL_CALLS_KEY)
                         if tool_calls:
                             return tool_calls
     
@@ -115,7 +119,7 @@ def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
                             part_data = part.root
                             if hasattr(part_data, 'kind') and part_data.kind == 'data':
                                 if hasattr(part_data, 'data') and isinstance(part_data.data, dict):
-                                    tool_calls = part_data.data.get("tool_calls")
+                                    tool_calls = part_data.data.get(TOOL_CALLS_KEY)
                                     if tool_calls:
                                         return tool_calls
     
@@ -167,13 +171,14 @@ def build_tool_result_message(
     task_id: Optional[str],
     context_id: Optional[str],
 ) -> Any:
-    """Build an A2A message containing tool results as DataPart."""
+    """Build a user message carrying tool results via DataPart."""
     tool_result_msg = create_text_message_object(role="user", content="")
     if task_id:
         tool_result_msg.task_id = task_id
     if context_id:
         tool_result_msg.context_id = context_id
-    tool_result_msg.parts.append(Part(DataPart(data={"tool_results": tool_results})))
+    # DataPart tool_results maps to OpenAI tool messages in the A2A server.
+    tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
     return tool_result_msg
 
 

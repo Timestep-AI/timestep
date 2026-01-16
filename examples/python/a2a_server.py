@@ -93,6 +93,10 @@ AGENT_DESCRIPTIONS: Dict[str, str] = {
     WEATHER_ASSISTANT_ID: "Weather Assistant",
 }
 
+# DataPart payload keys for tool routing
+TOOL_CALLS_KEY = "tool_calls"
+TOOL_RESULTS_KEY = "tool_results"
+
 
 def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
     """Build system message explaining who the agent is and what tools are available."""
@@ -140,6 +144,35 @@ def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
         system_parts.append("\nYou do not have access to any tools.")
     
     return "\n".join(system_parts)
+
+
+def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict[str, Any]]]:
+    """
+    Extract text and tool results from an A2A user message.
+
+    Mapping:
+      - TextPart -> OpenAI user message
+      - DataPart{tool_results} -> OpenAI tool messages
+    """
+    text_content = ""
+    tool_results: List[Dict[str, Any]] = []
+
+    if message.parts:
+        for part in message.parts:
+            part_data = part.root if hasattr(part, "root") else part
+            if hasattr(part_data, "kind") and part_data.kind == "text" and hasattr(part_data, "text"):
+                text_content += part_data.text
+            elif hasattr(part_data, "kind") and part_data.kind == "data" and hasattr(part_data, "data"):
+                if isinstance(part_data.data, dict):
+                    results = part_data.data.get(TOOL_RESULTS_KEY)
+                    if isinstance(results, list):
+                        tool_results.extend(results)
+
+    if not text_content and hasattr(message, "content"):
+        if isinstance(message.content, str):
+            text_content = message.content
+
+    return text_content, tool_results
 
 
 # Simple in-memory task storage (messages per task, keyed by agent_id:task_id)
@@ -209,41 +242,13 @@ class MultiAgentExecutor(AgentExecutor):
         
         # Extract text from incoming message for OpenAI processing
         if context.message:
-            msg = context.message
-            text_content = ""
-            tool_results: List[Dict[str, Any]] = []
-            
-            # Extract from parts (preferred)
-            if msg.parts:
-                for part in msg.parts:
-                    # Handle Part wrapper with root attribute
-                    if hasattr(part, 'root'):
-                        part_data = part.root
-                        if hasattr(part_data, 'kind') and part_data.kind == 'text' and hasattr(part_data, 'text'):
-                            text_content += part_data.text
-                        elif hasattr(part_data, 'kind') and part_data.kind == 'data' and hasattr(part_data, 'data'):
-                            if isinstance(part_data.data, dict):
-                                tool_results_data = part_data.data.get("tool_results")
-                                if isinstance(tool_results_data, list):
-                                    tool_results.extend(tool_results_data)
-                    # Handle direct TextPart access
-                    elif hasattr(part, 'kind') and part.kind == 'text' and hasattr(part, 'text'):
-                        text_content += part.text
-                    elif hasattr(part, 'kind') and part.kind == 'data' and hasattr(part, 'data'):
-                        if isinstance(part.data, dict):
-                            tool_results_data = part.data.get("tool_results")
-                            if isinstance(tool_results_data, list):
-                                tool_results.extend(tool_results_data)
-            
-            # Fallback to content attribute
-            if not text_content and hasattr(msg, 'content'):
-                if isinstance(msg.content, str):
-                    text_content = msg.content
+            text_content, tool_results = extract_user_text_and_tool_results(context.message)
             
             if text_content:
                 messages.append({"role": "user", "content": text_content})
 
             if tool_results:
+                # Map DataPart tool_results to OpenAI tool messages.
                 for tool_result in tool_results:
                     tool_call_id = tool_result.get("tool_call_id") or tool_result.get("id")
                     raw_result = tool_result.get("result", tool_result.get("content"))
@@ -291,20 +296,6 @@ class MultiAgentExecutor(AgentExecutor):
                     pending_tool_index += 1
                     if pending_tool_index >= len(pending_tool_calls):
                         pending_tool_calls = []
-                openai_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": content,
-                    }
-                )
-                continue
-            
-            if pending_tool_calls and pending_tool_index < len(pending_tool_calls):
-                tool_call_id = msg.get("tool_call_id") or pending_tool_calls[pending_tool_index].get("id")
-                pending_tool_index += 1
-                if pending_tool_index >= len(pending_tool_calls):
-                    pending_tool_calls = []
                 openai_messages.append(
                     {
                         "role": "tool",
@@ -384,7 +375,7 @@ class MultiAgentExecutor(AgentExecutor):
             # Add tool calls as a DataPart in the message parts (per A2A spec)
             if tool_calls:
                 tool_calls_data = {
-                    "tool_calls": [
+                    TOOL_CALLS_KEY: [
                         {
                             "id": tc.id,
                             "type": "function",
