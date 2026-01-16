@@ -159,8 +159,8 @@ def build_tool_result_message(
     task_id: Optional[str],
     context_id: Optional[str],
 ) -> Any:
-    """Build a user message carrying tool results via DataPart."""
-    tool_result_msg = create_text_message_object(role="user", content="")
+    """Build an unspecified role message carrying tool results via DataPart."""
+    tool_result_msg = create_text_message_object(role=Role.unspecified, content="")
     if task_id:
         tool_result_msg.task_id = task_id
     if context_id:
