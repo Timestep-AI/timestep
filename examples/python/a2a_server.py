@@ -93,6 +93,10 @@ AGENT_DESCRIPTIONS: Dict[str, str] = {
     WEATHER_ASSISTANT_ID: "Weather Assistant",
 }
 
+# DataPart payload keys for tool routing
+TOOL_CALLS_KEY = "tool_calls"
+TOOL_RESULTS_KEY = "tool_results"
+
 
 def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
     """Build system message explaining who the agent is and what tools are available."""
@@ -140,6 +144,31 @@ def build_system_message(agent_id: str, tools: List[Dict[str, Any]]) -> str:
         system_parts.append("\nYou do not have access to any tools.")
     
     return "\n".join(system_parts)
+
+
+def extract_user_text_and_tool_results(message: Message) -> tuple[str, List[Dict[str, Any]]]:
+    """
+    Extract text and tool results from an A2A user message.
+
+    Mapping:
+      - TextPart -> OpenAI user message
+      - DataPart(tool_results=...) -> OpenAI tool messages
+    """
+    text_content = ""
+    tool_results: List[Dict[str, Any]] = []
+
+    if message.parts:
+        for part in message.parts:
+            part_data = part.root if hasattr(part, "root") else part
+            if hasattr(part_data, "kind") and part_data.kind == "text" and hasattr(part_data, "text"):
+                text_content += part_data.text
+            elif hasattr(part_data, "kind") and part_data.kind == "data" and hasattr(part_data, "data"):
+                if isinstance(part_data.data, dict):
+                    results = part_data.data.get(TOOL_RESULTS_KEY)
+                    if isinstance(results, list):
+                        tool_results.extend(results)
+
+    return text_content, tool_results
 
 
 # Simple in-memory task storage (messages per task, keyed by agent_id:task_id)
@@ -209,57 +238,34 @@ class MultiAgentExecutor(AgentExecutor):
         
         # Extract text from incoming message for OpenAI processing
         if context.message:
-            msg = context.message
-            text_content = ""
-            
-            # Extract from parts (preferred)
-            if msg.parts:
-                for part in msg.parts:
-                    # Handle Part wrapper with root attribute
-                    if hasattr(part, 'root'):
-                        part_data = part.root
-                        if hasattr(part_data, 'kind') and part_data.kind == 'text' and hasattr(part_data, 'text'):
-                            text_content += part_data.text
-                    # Handle direct TextPart access
-                    elif hasattr(part, 'kind') and part.kind == 'text' and hasattr(part, 'text'):
-                        text_content += part.text
-            
-            # Fallback to content attribute
-            if not text_content and hasattr(msg, 'content'):
-                if isinstance(msg.content, str):
-                    text_content = msg.content
+            text_content, tool_results = extract_user_text_and_tool_results(context.message)
             
             if text_content:
                 messages.append({"role": "user", "content": text_content})
-        
-        # Convert messages to OpenAI format
-        openai_messages = []
-        
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            # Check if this is a tool result (comes after assistant message with tool_calls)
-            if i > 0 and messages[i-1].get("role") == "assistant":
-                prev_tool_calls = messages[i-1].get("tool_calls", [])
-                if prev_tool_calls:
-                    # Format as tool message for OpenAI
-                    tool_call_id = prev_tool_calls[0].get("id")
-                    if tool_call_id:
-                        openai_messages.append({
+
+            if tool_results:
+                # Map DataPart tool_results to OpenAI tool messages.
+                for tool_result in tool_results:
+                    tool_call_id = tool_result.get("call_id")
+                    if not tool_call_id:
+                        raise ValueError("tool_result missing call_id")
+                    raw_result = tool_result.get("output")
+                    if raw_result is None:
+                        raise ValueError("tool_result missing output")
+                    if isinstance(raw_result, (dict, list)):
+                        content = json.dumps(raw_result)
+                    else:
+                        content = str(raw_result)
+                    messages.append(
+                        {
                             "role": "tool",
                             "tool_call_id": tool_call_id,
                             "content": content,
-                        })
-                        continue
-            
-            openai_msg = {"role": role, "content": content}
-            if role == "assistant" and "tool_calls" in msg:
-                openai_msg["tool_calls"] = msg["tool_calls"]
-            openai_messages.append(openai_msg)
+                        }
+                    )
         
         # Ensure we have at least one message before calling OpenAI
-        if not openai_messages:
+        if not messages:
             raise ValueError(f"No messages to send to OpenAI. Task: {task_id}, Agent: {self.agent_id}, Messages count: {len(messages)}, Context message: {context.message}")
         
         # Build system message explaining agent identity and available tools
@@ -268,7 +274,7 @@ class MultiAgentExecutor(AgentExecutor):
         # Add system message at the beginning
         openai_messages_with_system = [
             {"role": "system", "content": system_message_content}
-        ] + openai_messages
+        ] + messages
         
         # Call OpenAI with agent-specific tools
         try:
@@ -282,6 +288,7 @@ class MultiAgentExecutor(AgentExecutor):
             if self.tools:
                 request_params["tools"] = self.tools
                 request_params["tool_choice"] = "auto"
+                request_params["parallel_tool_calls"] = True
             
             response = openai_client.chat.completions.create(**request_params)
             
@@ -326,17 +333,14 @@ class MultiAgentExecutor(AgentExecutor):
             # Add tool calls as a DataPart in the message parts (per A2A spec)
             if tool_calls:
                 tool_calls_data = {
-                    "tool_calls": [
+                    TOOL_CALLS_KEY: [
                         {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
+                            "call_id": tc.id,
+                            "name": tc.function.name,
+                            "arguments": json.loads(tc.function.arguments),
                         }
                         for tc in tool_calls
-                    ]
+                    ],
                 }
                 # Add DataPart with tool calls to message parts
                 a2a_message.parts.append(Part(DataPart(data=tool_calls_data)))

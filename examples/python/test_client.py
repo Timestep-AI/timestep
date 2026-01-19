@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from a2a.client import ClientFactory, ClientConfig
 from a2a.client.helpers import create_text_message_object
-from a2a.types import TransportProtocol, Role
+from a2a.types import TransportProtocol, Role, Part, DataPart
 from mcp import ClientSession, types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent
@@ -34,6 +34,10 @@ MCP_URL = os.getenv("MCP_URL", "http://localhost:8080/mcp")
 # Agent IDs
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
 WEATHER_ASSISTANT_ID = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+
+# DataPart payload keys for tool routing
+TOOL_CALLS_KEY = "tool_calls"
+TOOL_RESULTS_KEY = "tool_results"
 
 
 def write_task(task: Any, agent_id: str) -> None:
@@ -93,7 +97,7 @@ def extract_final_message(task: Any) -> str:
 
 
 def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
-    """Extract tool calls from task status message or history."""
+    """Extract tool calls from task status message DataPart."""
     # Check task.status.message parts first
     if task.status.message and task.status.message.parts:
         for part in task.status.message.parts:
@@ -101,38 +105,65 @@ def extract_tool_calls(task: Any) -> Optional[List[Dict[str, Any]]]:
                 part_data = part.root
                 if hasattr(part_data, 'kind') and part_data.kind == 'data':
                     if hasattr(part_data, 'data') and isinstance(part_data.data, dict):
-                        tool_calls = part_data.data.get("tool_calls")
+                        tool_calls = part_data.data.get(TOOL_CALLS_KEY)
                         if tool_calls:
                             return tool_calls
-    
-    # Fallback: check last agent message in history
-    if task.history:
-        for msg in reversed(task.history):
-            if msg.role == Role.agent or (hasattr(msg, 'role') and str(msg.role) == "agent"):
-                if msg.parts:
-                    for part in msg.parts:
-                        if hasattr(part, 'root'):
-                            part_data = part.root
-                            if hasattr(part_data, 'kind') and part_data.kind == 'data':
-                                if hasattr(part_data, 'data') and isinstance(part_data.data, dict):
-                                    tool_calls = part_data.data.get("tool_calls")
-                                    if tool_calls:
-                                        return tool_calls
-    
+
     return None
 
 
-def parse_tool_call(tool_call: Dict[str, Any]) -> tuple[Optional[str], Dict[str, Any]]:
-    """Parse tool call dict to extract tool name and arguments."""
-    tool_name = tool_call.get("function", {}).get("name")
-    tool_args_str = tool_call.get("function", {}).get("arguments")
-    
-    try:
-        tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str or {}
-    except (json.JSONDecodeError, ValueError):
-        tool_args = {}
-    
-    return tool_name, tool_args
+def parse_tool_call(tool_call: Dict[str, Any]) -> tuple[str, Dict[str, Any], str]:
+    """Parse tool call dict to extract tool name, args, and call_id."""
+    call_id = tool_call.get("call_id")
+    tool_name = tool_call.get("name")
+    tool_args = tool_call.get("arguments")
+    if not call_id or not tool_name or tool_args is None:
+        raise ValueError("Tool call missing call_id, name, or arguments")
+    if not isinstance(tool_args, dict):
+        raise ValueError("Tool call arguments must be an object")
+    return tool_name, tool_args, call_id
+
+
+async def execute_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Execute tool calls concurrently and return structured results."""
+    parsed_calls: List[tuple[Dict[str, Any], str, str]] = []
+    tasks = []
+    for tool_call in tool_calls:
+        tool_name, tool_args, call_id = parse_tool_call(tool_call)
+        parsed_calls.append((tool_call, tool_name, call_id))
+        tasks.append(call_mcp_tool(tool_name or "", tool_args))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    tool_results: List[Dict[str, Any]] = []
+    for (_tool_call, tool_name, call_id), result in zip(parsed_calls, results):
+        if isinstance(result, Exception):
+            result_payload = {"error": str(result)}
+        else:
+            result_payload = result
+        tool_results.append(
+            {
+                "call_id": call_id,
+                "name": tool_name,
+                "output": result_payload,
+            }
+        )
+    return tool_results
+
+
+def build_tool_result_message(
+    tool_results: List[Dict[str, Any]],
+    task_id: Optional[str],
+    context_id: Optional[str],
+) -> Any:
+    """Build a user message carrying tool results via DataPart."""
+    tool_result_msg = create_text_message_object(role=Role.user, content="")
+    if task_id:
+        tool_result_msg.task_id = task_id
+    if context_id:
+        tool_result_msg.context_id = context_id
+    # DataPart tool_results maps to OpenAI tool messages in the A2A server.
+    tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
+    return tool_result_msg
 
 
 async def mcp_sampling_callback(
@@ -200,6 +231,7 @@ async def process_message_stream(
     """Process a message stream, handling tool calls recursively."""
     final_message = ""
     
+    # Python automatically closes async generators when the loop exits
     async for event in a2a_client.send_message(message_obj):
         task = extract_task_from_event(event)
         write_task(task, agent_id)
@@ -214,26 +246,17 @@ async def process_message_stream(
         if task.status.state.value == "input-required":
             tool_calls = extract_tool_calls(task)
             if tool_calls:
-                for tool_call in tool_calls:
-                    tool_name, tool_args = parse_tool_call(tool_call)
-                    result = await call_mcp_tool(tool_name, tool_args)
-                    
-                    tool_result_msg = create_text_message_object(
-                        role="user",
-                        content=json.dumps(result),
-                    )
-                    if current_task_id:
-                        tool_result_msg.task_id = current_task_id
-                    if current_context_id:
-                        tool_result_msg.context_id = current_context_id
-                    
-                    # Recursively process tool result stream
-                    result_message = await process_message_stream(
-                        a2a_client, tool_result_msg, agent_id, current_task_id, current_context_id
-                    )
-                    if result_message:
-                        final_message = result_message
-                        break
+                tool_results = await execute_tool_calls(tool_calls)
+                tool_result_msg = build_tool_result_message(
+                    tool_results, current_task_id, current_context_id
+                )
+                
+                # Recursively process tool result stream
+                result_message = await process_message_stream(
+                    a2a_client, tool_result_msg, agent_id, current_task_id, current_context_id
+                )
+                if result_message:
+                    final_message = result_message
     
     return final_message.strip() or "Task completed."
 
@@ -260,12 +283,29 @@ async def handle_agent_handoff(agent_uri: str, message: str) -> str:
         agent_id = extract_agent_id_from_uri(agent_uri)
         return await process_message_stream(a2a_client, message_obj, agent_id)
     finally:
-        if a2a_client:
+        # Cleanup - close a2a_client before httpx_client
+        # Ignore all exceptions during cleanup since we're in a finally block
+        try:
+            if a2a_client:
+                try:
+                    await a2a_client.close()
+                except (RuntimeError, GeneratorExit, Exception):
+                    # Ignore all cleanup errors - event loop may be shutting down
+                    pass
             try:
-                await a2a_client.close()
-            except Exception:
+                await httpx_client.aclose()
+                # Give httpx a moment to clean up background tasks
+                try:
+                    await asyncio.sleep(0.1)
+                except RuntimeError:
+                    # Event loop already closed, can't sleep - ignore
+                    pass
+            except (RuntimeError, GeneratorExit, Exception):
+                # Ignore all cleanup errors
                 pass
-        await httpx_client.aclose()
+        except (RuntimeError, GeneratorExit, Exception):
+            # Ignore all cleanup errors - event loop may be shutting down
+            pass
 
 
 async def run_client_loop(
@@ -305,6 +345,7 @@ async def run_client_loop(
         
         async def process_with_output(a2a_client: Any, message_obj: Any, agent_id: str) -> None:
             """Process message stream and print output."""
+            # Python automatically closes async generators when the loop exits
             async for event in a2a_client.send_message(message_obj):
                 task = extract_task_from_event(event)
                 print(f"\n[DEBUG: Received task, id={getattr(task, 'id', 'NO_ID')}, type={type(task)}]", file=sys.stderr)
@@ -331,26 +372,20 @@ async def run_client_loop(
                 if task.status.state.value == "input-required":
                     tool_calls = extract_tool_calls(task)
                     if tool_calls:
-                        for tool_call in tool_calls:
-                            tool_name, tool_args = parse_tool_call(tool_call)
-                            
+                        tool_results = await execute_tool_calls(tool_calls)
+                        for tool_result in tool_results:
+                            tool_name = tool_result.get("name")
                             print(f"\n[Calling tool: {tool_name}]")
-                            result = await call_mcp_tool(tool_name, tool_args)
                             if tool_name != "handoff":
-                                print(f"[Tool result: {result}]")
-                            
-                            tool_result_msg = create_text_message_object(
-                                role="user",
-                                content=json.dumps(result),
-                            )
-                            if task.id:
-                                tool_result_msg.task_id = task.id
-                            if task.context_id:
-                                tool_result_msg.context_id = task.context_id
-                            
-                            # Recursively process tool result
-                            await process_with_output(a2a_client, tool_result_msg, agent_id)
-                            break
+                                print(f"[Tool result: {tool_result.get('result')}]")
+                        
+                        tool_result_msg = build_tool_result_message(
+                            tool_results, task.id, task.context_id
+                        )
+                        
+                        # Recursively process tool result
+                        await process_with_output(a2a_client, tool_result_msg, agent_id)
+                        break
         
         await process_with_output(a2a_client, message, agent_id)
     except Exception as e:
@@ -359,12 +394,28 @@ async def run_client_loop(
     
     finally:
         # Cleanup - close a2a_client before httpx_client
-        if a2a_client:
+        # Ignore all exceptions during cleanup since we're in a finally block
+        try:
+            if a2a_client:
+                try:
+                    await a2a_client.close()
+                except (RuntimeError, GeneratorExit, Exception):
+                    # Ignore all cleanup errors - event loop may be shutting down
+                    pass
             try:
-                await a2a_client.close()
-            except Exception:
-                pass  # Ignore errors during cleanup
-        await httpx_client.aclose()
+                await httpx_client.aclose()
+                # Give httpx a moment to clean up background tasks
+                try:
+                    await asyncio.sleep(0.1)
+                except RuntimeError:
+                    # Event loop already closed, can't sleep - ignore
+                    pass
+            except (RuntimeError, GeneratorExit, Exception):
+                # Ignore all cleanup errors
+                pass
+        except (RuntimeError, GeneratorExit, Exception):
+            # Ignore all cleanup errors - event loop may be shutting down
+            pass
 
 
 async def main():
