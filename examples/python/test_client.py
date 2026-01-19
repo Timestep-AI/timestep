@@ -231,6 +231,7 @@ async def process_message_stream(
     """Process a message stream, handling tool calls recursively."""
     final_message = ""
     
+    # Python automatically closes async generators when the loop exits
     async for event in a2a_client.send_message(message_obj):
         task = extract_task_from_event(event)
         write_task(task, agent_id)
@@ -282,12 +283,29 @@ async def handle_agent_handoff(agent_uri: str, message: str) -> str:
         agent_id = extract_agent_id_from_uri(agent_uri)
         return await process_message_stream(a2a_client, message_obj, agent_id)
     finally:
-        if a2a_client:
+        # Cleanup - close a2a_client before httpx_client
+        # Ignore all exceptions during cleanup since we're in a finally block
+        try:
+            if a2a_client:
+                try:
+                    await a2a_client.close()
+                except (RuntimeError, GeneratorExit, Exception):
+                    # Ignore all cleanup errors - event loop may be shutting down
+                    pass
             try:
-                await a2a_client.close()
-            except Exception:
+                await httpx_client.aclose()
+                # Give httpx a moment to clean up background tasks
+                try:
+                    await asyncio.sleep(0.1)
+                except RuntimeError:
+                    # Event loop already closed, can't sleep - ignore
+                    pass
+            except (RuntimeError, GeneratorExit, Exception):
+                # Ignore all cleanup errors
                 pass
-        await httpx_client.aclose()
+        except (RuntimeError, GeneratorExit, Exception):
+            # Ignore all cleanup errors - event loop may be shutting down
+            pass
 
 
 async def run_client_loop(
@@ -327,6 +345,7 @@ async def run_client_loop(
         
         async def process_with_output(a2a_client: Any, message_obj: Any, agent_id: str) -> None:
             """Process message stream and print output."""
+            # Python automatically closes async generators when the loop exits
             async for event in a2a_client.send_message(message_obj):
                 task = extract_task_from_event(event)
                 print(f"\n[DEBUG: Received task, id={getattr(task, 'id', 'NO_ID')}, type={type(task)}]", file=sys.stderr)
@@ -375,12 +394,28 @@ async def run_client_loop(
     
     finally:
         # Cleanup - close a2a_client before httpx_client
-        if a2a_client:
+        # Ignore all exceptions during cleanup since we're in a finally block
+        try:
+            if a2a_client:
+                try:
+                    await a2a_client.close()
+                except (RuntimeError, GeneratorExit, Exception):
+                    # Ignore all cleanup errors - event loop may be shutting down
+                    pass
             try:
-                await a2a_client.close()
-            except Exception:
-                pass  # Ignore errors during cleanup
-        await httpx_client.aclose()
+                await httpx_client.aclose()
+                # Give httpx a moment to clean up background tasks
+                try:
+                    await asyncio.sleep(0.1)
+                except RuntimeError:
+                    # Event loop already closed, can't sleep - ignore
+                    pass
+            except (RuntimeError, GeneratorExit, Exception):
+                # Ignore all cleanup errors
+                pass
+        except (RuntimeError, GeneratorExit, Exception):
+            # Ignore all cleanup errors - event loop may be shutting down
+            pass
 
 
 async def main():
