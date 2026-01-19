@@ -26,7 +26,6 @@ import {
 } from '@a2a-js/sdk/server';
 import { agentCardHandler, jsonRpcHandler, UserBuilder } from '@a2a-js/sdk/server/express';
 import { Message, Task } from '@a2a-js/sdk';
-import { getMlflowClient } from './mlflow';
 
 // Initialize OpenAI client
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -92,8 +91,6 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   [WEATHER_ASSISTANT_ID]: 'Weather Assistant',
 };
 
-const MLFLOW_TRACING_ENABLED = ['1', 'true', 'yes'].includes((process.env.MLFLOW_TRACING_ENABLED || 'true').toLowerCase());
-
 function buildSystemMessage(agentId: string, tools: any[]): string {
   /**Build system message explaining who the agent is and what tools are available.*/
   const agentName = AGENT_DESCRIPTIONS[agentId] || 'Assistant';
@@ -148,77 +145,16 @@ const taskMessages: Record<string, any[]> = {};
 // Track all task IDs per agent for listing
 const agentTaskIds: Record<string, string[]> = {};
 
-function truncateText(value: string, maxLength: number = 500): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength)}...`;
-}
-
-async function writeTrace(
+function writeTrace(
   taskId: string,
   agentId: string,
-  model: string,
   inputMessages: any[],
   inputTools: any[],
-  outputMessage: any,
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
-): Promise<void> {
-  /**Write trace to MLflow if configured."""
-  if (!MLFLOW_TRACING_ENABLED) {
-    return;
-  }
-  try {
-    const client = await getMlflowClient();
-    if (!client) {
-      return;
-    }
-
-    const runName = `trace-${agentId.substring(0, 8)}-${taskId ? taskId.substring(0, 8) : 'unknown'}`;
-    const runId = await client.createRun(runName, {
-      'a2a.agent_id': agentId,
-      'a2a.task_id': taskId || '',
-    });
-
-    const userInput = inputMessages
-      .filter((msg) => msg.role === 'user')
-      .map((msg) => msg.content || '')
-      .join('\n');
-    const outputContent = outputMessage?.content || '';
-    const toolNames = inputTools
-      .map((tool) => tool?.function?.name)
-      .filter((name) => typeof name === 'string')
-      .join(',');
-
-    const metrics: Record<string, number> = {
-      input_messages: inputMessages.length,
-      tool_count: inputTools.length,
-      tool_calls: Array.isArray(outputMessage?.tool_calls) ? outputMessage.tool_calls.length : 0,
-      response_length: outputContent.length,
-    };
-
-    if (usage?.prompt_tokens !== undefined) {
-      metrics.prompt_tokens = usage.prompt_tokens;
-    }
-    if (usage?.completion_tokens !== undefined) {
-      metrics.completion_tokens = usage.completion_tokens;
-    }
-    if (usage?.total_tokens !== undefined) {
-      metrics.total_tokens = usage.total_tokens;
-    }
-
-    await client.logBatch(runId, {
-      params: {
-        model: model,
-        tool_names: toolNames,
-        input_preview: truncateText(userInput),
-        output_preview: truncateText(outputContent),
-      },
-      metrics,
-    });
-  } catch (error) {
-    console.error('MLflow trace logging failed:', error);
-  }
+  outputMessage: any
+): void {
+  /**Write trace to traces/ folder.*/
+  // Implementation would write to traces/ folder
+  // Similar to Python version
 }
 
 class MultiAgentExecutor implements AgentExecutor {
@@ -337,15 +273,7 @@ class MultiAgentExecutor implements AgentExecutor {
         })),
       };
 
-      await writeTrace(
-        taskId || '',
-        this.agent_id,
-        this.model,
-        openai_messages_with_system,
-        this.tools || [],
-        output_message_dict,
-        response.usage
-      );
+      writeTrace(taskId || '', this.agent_id, openai_messages_with_system, this.tools || [], output_message_dict);
 
       // Build A2A message
       const agentMessage: Message = {
