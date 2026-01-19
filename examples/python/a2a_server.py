@@ -1,6 +1,7 @@
 # /// script
 # dependencies = [
 #   "a2a-sdk[http-server]",
+#   "mlflow",
 #   "openai",
 #   "uvicorn",
 # ]
@@ -13,13 +14,12 @@ Handles task creation and continuation via A2A protocol.
 
 import os
 import uuid
-import json
-import datetime
-from pathlib import Path
 from typing import Dict, List, Any, Optional
 from fastapi import FastAPI, Request, HTTPException, APIRouter
 from fastapi.responses import JSONResponse
 from openai import OpenAI
+import mlflow
+import mlflow.openai
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
@@ -31,6 +31,28 @@ from a2a.client.helpers import create_text_message_object
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# MLflow tracing configuration
+MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "timestep-a2a")
+MLFLOW_TRACING_ENABLED = os.getenv("MLFLOW_TRACING_ENABLED", "true").lower() in {"1", "true", "yes"}
+_MLFLOW_TRACING_CONFIGURED = False
+
+
+def setup_mlflow_tracing() -> None:
+    """Configure MLflow tracing for OpenAI calls."""
+    global _MLFLOW_TRACING_CONFIGURED
+    if _MLFLOW_TRACING_CONFIGURED or not MLFLOW_TRACING_ENABLED:
+        return
+
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    mlflow.openai.autolog()
+    _MLFLOW_TRACING_CONFIGURED = True
+
+
+setup_mlflow_tracing()
 
 # Agent IDs
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
@@ -148,35 +170,6 @@ task_messages: Dict[str, List[Dict[str, Any]]] = {}
 # Track all task IDs per agent for listing
 agent_task_ids: Dict[str, List[str]] = {}
 
-def write_trace(task_id: str, agent_id: str, input_messages: List[Dict], input_tools: List[Dict], output_message: Dict) -> None:
-    """Write trace to traces/ folder."""
-    traces_dir = Path("/workspace/traces")
-    traces_dir.mkdir(exist_ok=True)
-    
-    timestamp = datetime.datetime.now().isoformat().replace(":", "-")
-    # Use short task_id for filename (first 8 chars)
-    task_id_short = task_id[:8] if task_id else "unknown"
-    agent_id_short = agent_id[:8] if agent_id else "unknown"
-    trace_file = traces_dir / f"{timestamp}_{task_id_short}_{agent_id_short}.json"
-    
-    trace = {
-        "task_id": task_id,
-        "agent_id": agent_id,
-        "timestamp": timestamp,
-        "input": {
-            "messages": input_messages,
-            "tools": input_tools,
-        },
-        "output": {
-            "content": output_message.get("content", ""),
-            "tool_calls": output_message.get("tool_calls", []),
-        }
-    }
-    
-    with open(trace_file, "w") as f:
-        json.dump(trace, f, indent=2)
-
-
 class MultiAgentExecutor(AgentExecutor):
     """Agent executor that uses OpenAI directly and configures tools based on agent_id."""
     
@@ -290,29 +283,6 @@ class MultiAgentExecutor(AgentExecutor):
             
             # Convert OpenAI response to A2A format
             assistant_content = assistant_message.content or ""
-            
-            # Capture trace: input messages + output message
-            output_message_dict = {
-                "content": assistant_content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in tool_calls
-                ] if tool_calls else [],
-            }
-            write_trace(
-                task_id=task_id or "",
-                agent_id=self.agent_id,
-                input_messages=openai_messages_with_system,
-                input_tools=self.tools or [],
-                output_message=output_message_dict,
-            )
             
             # Build A2A message using helper function
             # Role.agent is the correct role for assistant messages in A2A

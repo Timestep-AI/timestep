@@ -27,6 +27,7 @@ import {
 } from '@modelcontextprotocol/sdk/client';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { getMlflowClient } from './mlflow';
 
 // Server URLs
 const A2A_BASE_URL = process.env.A2A_URL || 'http://localhost:8000';
@@ -35,6 +36,8 @@ const MCP_URL = process.env.MCP_URL || 'http://localhost:8080/mcp';
 // Agent IDs
 const PERSONAL_ASSISTANT_ID = '00000000-0000-0000-0000-000000000000';
 const WEATHER_ASSISTANT_ID = 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF';
+
+const MLFLOW_EVAL_ENABLED = ['1', 'true', 'yes'].includes((process.env.MLFLOW_EVAL_ENABLED || 'true').toLowerCase());
 
 function writeTask(task: any, agent_id: string): void {
   /**Write task to tasks/ folder in proper A2A Task format.*/
@@ -144,6 +147,67 @@ function parseToolCall(tool_call: Record<string, any>): [string | null, Record<s
   }
 
   return [tool_name, tool_args];
+}
+
+function truncateText(value: string, maxLength: number = 500): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}...`;
+}
+
+function promptOverlapScore(prompt: string, response: string): number {
+  const tokenize = (text: string): string[] =>
+    text
+      .toLowerCase()
+      .split(/\W+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+
+  const promptTokens = new Set(tokenize(prompt));
+  if (promptTokens.size === 0) {
+    return 0;
+  }
+  const responseTokens = new Set(tokenize(response));
+  let overlap = 0;
+  for (const token of promptTokens) {
+    if (responseTokens.has(token)) {
+      overlap += 1;
+    }
+  }
+  return overlap / promptTokens.size;
+}
+
+async function runMlflowEval(prompt: string, response: string, agentId: string, taskId?: string): Promise<void> {
+  if (!MLFLOW_EVAL_ENABLED) {
+    return;
+  }
+  const client = await getMlflowClient();
+  if (!client) {
+    return;
+  }
+
+  try {
+    const runName = `eval-${agentId.substring(0, 8)}-${taskId ? taskId.substring(0, 8) : 'unknown'}`;
+    const runId = await client.createRun(runName, {
+      'a2a.agent_id': agentId,
+      'a2a.task_id': taskId || '',
+    });
+
+    await client.logBatch(runId, {
+      params: {
+        prompt_preview: truncateText(prompt),
+        response_preview: truncateText(response),
+      },
+      metrics: {
+        prompt_length: prompt.length,
+        response_length: response.length,
+        prompt_overlap: promptOverlapScore(prompt, response),
+      },
+    });
+  } catch (error) {
+    console.error('MLflow eval logging failed:', error);
+  }
 }
 
 // MCP client for calling tools
@@ -335,8 +399,9 @@ async function runClientLoop(initial_message: string, agent_id: string = PERSONA
     };
     console.error('\n[DEBUG: Starting to send message to A2A server]');
 
-    async function processWithOutput(a2a_client: any, message_obj: any, agent_id: string): Promise<void> {
+    async function processWithOutput(a2a_client: any, message_obj: any, agent_id: string): Promise<string> {
       /**Process message stream and print output.*/
+      let finalMessage = '';
       for await (const event of a2a_client.sendMessageStream(message_obj)) {
         const task = extractTaskFromEvent(event);
         console.error(`\n[DEBUG: Received task, id=${task.id || task.taskId || 'NO_ID'}, type=${task.kind || typeof task}]`);
@@ -364,6 +429,7 @@ async function runClientLoop(initial_message: string, agent_id: string = PERSONA
 
         if (task.kind === 'status-update' && task.status?.state === 'completed') {
           console.log('\n[Task completed]');
+          finalMessage = extractFinalMessage(task);
           break;
         }
 
@@ -389,15 +455,26 @@ async function runClientLoop(initial_message: string, agent_id: string = PERSONA
               };
 
               // Recursively process tool result
-              await processWithOutput(a2a_client, tool_result_msg, agent_id);
+              const resultMessage = await processWithOutput(a2a_client, tool_result_msg, agent_id);
+              if (resultMessage) {
+                finalMessage = resultMessage;
+              }
               break;
             }
           }
         }
+        if (finalMessage) {
+          break;
+        }
       }
+      return finalMessage.trim();
     }
 
-    await processWithOutput(a2a_client, message, agent_id);
+    const finalMessage = await processWithOutput(a2a_client, message, agent_id);
+    if (finalMessage) {
+      const lastTaskId = task_ids.length > 0 ? task_ids[task_ids.length - 1] : undefined;
+      await runMlflowEval(initial_message, finalMessage, agent_id, lastTaskId);
+    }
   } catch (e: any) {
     console.error(`\n[Error in client loop: ${e}]`);
     throw e;

@@ -1,6 +1,8 @@
 # /// script
 # dependencies = [
 #   "a2a-sdk",
+#   "mlflow",
+#   "pandas",
 #   "mcp",
 #   "httpx",
 # ]
@@ -19,6 +21,8 @@ import json
 import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import mlflow
+import pandas as pd
 from a2a.client import ClientFactory, ClientConfig
 from a2a.client.helpers import create_text_message_object
 from a2a.types import TransportProtocol, Role
@@ -34,6 +38,24 @@ MCP_URL = os.getenv("MCP_URL", "http://localhost:8080/mcp")
 # Agent IDs
 PERSONAL_ASSISTANT_ID = "00000000-0000-0000-0000-000000000000"
 WEATHER_ASSISTANT_ID = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+
+# MLflow configuration
+MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "timestep-evals")
+MLFLOW_EVAL_ENABLED = os.getenv("MLFLOW_EVAL_ENABLED", "true").lower() in {"1", "true", "yes"}
+_MLFLOW_CONFIGURED = False
+
+
+def setup_mlflow() -> None:
+    """Configure MLflow tracking for evals."""
+    global _MLFLOW_CONFIGURED
+    if _MLFLOW_CONFIGURED:
+        return
+
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    _MLFLOW_CONFIGURED = True
 
 
 def write_task(task: Any, agent_id: str) -> None:
@@ -133,6 +155,52 @@ def parse_tool_call(tool_call: Dict[str, Any]) -> tuple[Optional[str], Dict[str,
         tool_args = {}
     
     return tool_name, tool_args
+
+
+def run_mlflow_eval(prompt: str, response: str, agent_id: str, task_id: Optional[str]) -> None:
+    """Run MLflow evals and log results."""
+    if not MLFLOW_EVAL_ENABLED:
+        return
+
+    try:
+        setup_mlflow()
+        eval_df = pd.DataFrame(
+            [
+                {
+                    "inputs": prompt,
+                    "predictions": response,
+                    "targets": "",
+                }
+            ]
+        )
+        run_name = f"eval-{agent_id[:8]}-{task_id[:8] if task_id else 'unknown'}"
+
+        with mlflow.start_run(run_name=run_name):
+            mlflow.set_tags(
+                {
+                    "a2a.agent_id": agent_id,
+                    "a2a.task_id": task_id or "",
+                }
+            )
+            mlflow.log_text(prompt, "prompt.txt")
+            mlflow.log_text(response, "response.txt")
+            mlflow.log_metric("response_length", float(len(response)))
+
+            try:
+                from mlflow.metrics.genai import relevance
+
+                mlflow.evaluate(
+                    data=eval_df,
+                    model_type="question-answering",
+                    targets="targets",
+                    predictions="predictions",
+                    extra_metrics=[relevance()],
+                )
+            except Exception as eval_error:
+                mlflow.log_param("eval_error", str(eval_error))
+                print(f"[MLflow eval skipped: {eval_error}]", file=sys.stderr)
+    except Exception as e:
+        print(f"[MLflow eval setup failed: {e}]", file=sys.stderr)
 
 
 async def mcp_sampling_callback(
@@ -303,8 +371,9 @@ async def run_client_loop(
         message = create_text_message_object(role="user", content=initial_message)
         print(f"\n[DEBUG: Starting to send message to A2A server]", file=sys.stderr)
         
-        async def process_with_output(a2a_client: Any, message_obj: Any, agent_id: str) -> None:
-            """Process message stream and print output."""
+        async def process_with_output(a2a_client: Any, message_obj: Any, agent_id: str) -> str:
+            """Process message stream, print output, and return final response."""
+            final_message = ""
             async for event in a2a_client.send_message(message_obj):
                 task = extract_task_from_event(event)
                 print(f"\n[DEBUG: Received task, id={getattr(task, 'id', 'NO_ID')}, type={type(task)}]", file=sys.stderr)
@@ -326,6 +395,7 @@ async def run_client_loop(
                 
                 if task.status.state.value == "completed":
                     print("\n[Task completed]")
+                    final_message = extract_final_message(task)
                     break
                 
                 if task.status.state.value == "input-required":
@@ -349,10 +419,17 @@ async def run_client_loop(
                                 tool_result_msg.context_id = task.context_id
                             
                             # Recursively process tool result
-                            await process_with_output(a2a_client, tool_result_msg, agent_id)
+                            result_message = await process_with_output(a2a_client, tool_result_msg, agent_id)
+                            if result_message:
+                                final_message = result_message
                             break
-        
-        await process_with_output(a2a_client, message, agent_id)
+
+            return final_message.strip()
+
+        final_message = await process_with_output(a2a_client, message, agent_id)
+        if final_message:
+            task_id = task_ids[-1] if task_ids else None
+            run_mlflow_eval(initial_message, final_message, agent_id, task_id)
     except Exception as e:
         print(f"\n[Error in client loop: {e}]")
         raise

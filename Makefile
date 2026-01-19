@@ -13,6 +13,10 @@ help:
 	@echo "Environment variables:"
 	@echo "  TEST_MESSAGE                 - Custom message to send to the test client (default: 'What's the weather in Oakland?')"
 	@echo "  OPENAI_API_KEY               - OpenAI API key (required)"
+	@echo "  MLFLOW_TRACKING_URI          - MLflow tracking server URI"
+	@echo "  MLFLOW_EXPERIMENT_NAME       - MLflow experiment name"
+	@echo "  MLFLOW_TRACING_ENABLED       - Enable MLflow tracing (default: true)"
+	@echo "  MLFLOW_EVAL_ENABLED          - Enable MLflow evals (default: true)"
 	@echo ""
 	@echo "Note: TypeScript example is pending MCP SDK v2 release (expected Q1 2026)"
 
