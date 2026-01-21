@@ -1,4 +1,22 @@
-.ruff_cache
-.venv
-__pycache__
-*.egg-info
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# TypeScript/Node (Bun may still create these)
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Environment
+.env
+.venv/
+
+# Test outputs (from test_client)
+tasks/
+traces/
