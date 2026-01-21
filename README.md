@@ -1,166 +1,247 @@
-# Timestep AI Agents SDK
+# Timestep
 
-A clean, low-level library for building **agentic systems** using the modern industry standards: **A2A (Agent-to-Agent)** and **MCP (Model Context Protocol)** protocols. Timestep provides a solid foundation for creating multi-agent systems with clear examples across multiple languages.
+A unified RL-style evaluation framework for AI agents that unifies different eval families under one skeleton.
 
-## Core Philosophy
+## Overview
 
-Timestep follows the **Task-generating Agents** philosophy from the [A2A Protocol](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), where agents always respond with Task objects that can transition through various states (including `input-required` for tool calls). We use **MCP sampling** to enable seamless agent-to-agent handoffs, allowing agents to delegate work to specialized peers.
+Timestep provides a minimal, extensible framework for evaluating AI agents:
 
-## Protocols
-
-Timestep is built on two complementary industry standards:
-
-- **[A2A Protocol](https://a2a-protocol.org/latest/specification/)**: Agent-to-Agent communication standard for peer-to-peer agent collaboration
-- **[MCP Protocol](https://modelcontextprotocol.io/specification/latest)**: Model Context Protocol for tools, resources, and server-initiated LLM interactions (sampling)
-
-### How They Work Together
-
-- **A2A** handles agent discovery, task management, and agent-to-agent communication
-- **MCP** provides tool execution and sampling capabilities
-- **Handoffs** are implemented using MCP's sampling feature: when an agent needs to hand off to another agent, the MCP server uses sampling to trigger an A2A request to the target agent
-- **Tool calls** are communicated via A2A's `input-required` task state with a `DataPart` containing the tool call information
-
-## First MVP: Handoffs
-
-Our first MVP focuses on **handoffs** - enabling agents to seamlessly delegate tasks to other specialized agents. This demonstrates the power of combining A2A and MCP:
-
-1. Agent receives a task via A2A
-2. Agent determines it should hand off to another agent
-3. Agent calls the MCP `handoff` tool
-4. MCP server uses sampling to trigger an A2A request to the target agent
-5. Target agent processes the request and returns results
-6. Original agent receives the response and continues
-
-## Project Structure
-
-```
-timestep/
-├── lib/                    # Future library code (to be extracted from examples)
-│   ├── python/             # Python library (reserved)
-│   └── typescript/         # TypeScript library (reserved)
-├── examples/               # Working examples showing A2A/MCP patterns
-│   ├── python/             # Python examples (A2A server, MCP server, test client)
-│   └── typescript/         # TypeScript examples (pending MCP SDK v2)
-└── app/                    # Web UI for testing/chatting with agents
-    ├── index.html
-    ├── index.css
-    └── index.js
-```
-
-## Implementation Status
-
-### Python
-✅ **Fully functional** - Python implementation is complete and working with handoffs.
-
-### TypeScript
-⚠️ **Pending v2 SDK release** - TypeScript implementation is incomplete.
-
-The TypeScript examples in `examples/typescript/` are pending the release of `@modelcontextprotocol/sdk` v2 (expected Q1 2026). The current v1.x SDK doesn't export the HTTP transport classes we need (`McpServer`, `StreamableHTTPServerTransport`, `createMcpExpressApp`).
-
-We explored multiple approaches to use v2 from GitHub (git dependencies, `bun create`, etc.), but none work with our requirement for inline dependencies without additional files. When v2 is published to npm, we'll update the TypeScript implementation to use the new APIs.
-
-See `examples/typescript/*.ts` files for detailed status comments and TODOs.
-
-## Quick Start
-
-### Running the Examples
-
-The easiest way to get started is to run the working examples:
-
-**Python:**
-```bash
-# Start A2A and MCP servers
-make test-example-python
-```
-
-**TypeScript:**
-```bash
-# Start A2A and MCP servers (pending v2 SDK)
-make test-example-typescript
-```
-
-### Example: Agent Handoff
-
-The examples demonstrate a personal assistant agent that can hand off weather queries to a specialized weather agent:
-
-1. **Personal Assistant Agent** (A2A server) receives a user message
-2. Agent determines it needs weather information
-3. Agent calls the MCP `handoff` tool with the weather agent's URI
-4. MCP server uses sampling to call the weather agent via A2A
-5. Weather agent responds with weather data
-6. Personal assistant receives the response and presents it to the user
-
-See `examples/python/` for the complete implementation.
+- **Environment**: Emits observations (with tools), accepts actions, returns next observation + rewards/info (with metrics)
+- **Agent**: Maps observation + memory → action (extracts tools from observations)
+- **Runner**: Executes episodes, records a trajectory log, extracts metrics from environment
 
 ## Architecture
 
-### A2A Server
+```
+┌─────────────┐
+│   Runner    │
+│  (Loop)     │
+└──────┬──────┘
+       │
+       ├───▶ env.reset() → obs = {"messages": [...], "tools": [...]}
+       │
+       ├───▶ agent.act(obs) → action (uses tools from obs)
+       │
+       ├───▶ env.step(action) → obs = {"messages": [...], "tools": [...]}, reward, done, info
+       │                                                                    (info contains metrics)
+       │
+       └───▶ Extract metrics from final step's info dict
 
-The A2A server implements a **Task-generating Agent** that:
-- Always responds with Task objects (never just Messages)
-- Uses `input-required` task state when tool calls are needed
-- Includes tool calls in a `DataPart` within the task status message
-- Manages task lifecycle (created → input-required → completed)
+┌─────────────┐         ┌─────────────┐
+│ Environment │────────▶│   Agent     │
+│             │         │             │
+│ - reset()   │         │ - reset()   │
+│   → obs with│         │ - act(obs)  │
+│   tools     │         │   extracts  │
+│ - step()    │         │   tools from│
+│   → obs with│         │   obs       │
+│   tools     │         │             │
+│ - step()    │         │             │
+│   returns   │         │             │
+│   info with │         │             │
+│   metrics   │         │             │
+└─────────────┘         └─────────────┘
+```
 
-### MCP Server
+## Installation
 
-The MCP server provides:
-- **Tools**: Including the `handoff` tool for agent-to-agent delegation
-- **Sampling**: Server-initiated LLM interactions that trigger A2A requests
-- Tool execution for standard operations (e.g., `get_weather`)
+```bash
+pip install -e .
+```
 
-### Client
+For GAIA example support:
 
-The client orchestrates the interaction:
-- Connects to A2A server to send messages
-- Monitors task state transitions
-- When `input-required` state is detected, extracts tool calls from `DataPart`
-- Calls MCP tools and sends results back to A2A server
-- Handles handoffs via MCP sampling callback
+```bash
+pip install -e ".[gaia]"
+```
 
-## Key Concepts
+Or with `uv`:
 
-### Task-Generating Agents
+```bash
+uv pip install -e ".[gaia]"
+```
 
-Following the [A2A Protocol's Task-generating Agents philosophy](https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task), our agents always respond with Task objects. This provides:
+## Quick Start
 
-- **State management**: Tasks can be in various states (created, input-required, completed, etc.)
-- **Progress tracking**: Task status updates provide visibility into agent progress
-- **Multi-turn interactions**: Tasks support context IDs for grouping related interactions
+### Basic Usage
 
-### A2A input-required with DataPart
+```python
+from timestep import Runner
 
-When an agent needs to call tools, it:
-1. Sets the task state to `input-required`
-2. Includes a `DataPart` in the task status message
-3. The `DataPart` contains the tool calls in a structured format
-4. The client extracts tool calls from the `DataPart` and executes them via MCP
+# Create your environment (must implement timestep.Environment)
+env = YourEnvironment()
 
-### MCP Sampling for Handoffs
+# Create your agent (must implement timestep.Agent)
+agent = YourAgent()
 
-MCP's sampling feature allows servers to initiate LLM interactions. We use this for handoffs:
+# Create runner (metrics are automatically extracted from environment)
+runner = Runner(env=env, agent=agent)
 
-1. Agent calls MCP `handoff` tool with target agent URI
-2. MCP server calls the client's sampling callback
-3. Sampling callback makes an A2A request to the target agent
-4. Target agent processes and responds
-5. Response is returned to the MCP server
-6. MCP server returns the result to the original agent
+# Run an episode
+result = runner.run_episode(seed=42, max_steps=50)
+print(f"Episode {result.episode_id}: {result.metrics}")
 
-## Examples
+# Run multiple episodes
+results = runner.run_many(seeds=range(10), max_steps=50)
+```
 
-See `examples/python/` for complete working examples:
-- `a2a_server.py` - A2A server implementing Task-generating Agent
-- `mcp_server.py` - MCP server with handoff tool and sampling
-- `test_client.py` - Client orchestrating A2A and MCP interactions
+### GAIA Example
 
-## Documentation
+See `examples/gaia/loop.py` for a complete example using the GAIA benchmark.
 
-- **A2A Protocol Specification**: https://a2a-protocol.org/latest/specification/
-- **A2A Task-generating Agents**: https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task
-- **MCP Protocol Specification**: https://modelcontextprotocol.io/specification/latest
-- **Full docs**: https://timestep-ai.github.io/timestep/
+**Setup:**
+
+1. Install GAIA dependencies:
+   ```bash
+   pip install -e ".[gaia]"
+   # Or with uv:
+   uv pip install -e ".[gaia]"
+   ```
+
+2. Accept terms on [GAIA Hugging Face dataset page](https://huggingface.co/datasets/gaia-benchmark/GAIA)
+
+3. Set your Hugging Face token:
+   ```bash
+   export HF_TOKEN=your_token_here
+   ```
+
+4. Run the example:
+   ```bash
+   python examples/gaia/loop.py
+   ```
+   
+   Or run as a module:
+   ```bash
+   python -m examples.gaia.loop
+   ```
+   
+   Or with `uv`:
+   ```bash
+   uv run python examples/gaia/loop.py
+   ```
+
+## Core Concepts
+
+### Environment Protocol
+
+Implement the `Environment` protocol:
+
+```python
+from timestep import Environment
+from typing import Any, Optional
+
+class MyEnvironment:
+    def reset(self, *, seed: Optional[int] = None) -> Any:
+        # Return initial observation (may include "tools" field)
+        # For OpenAI environments: {"messages": [...], "tools": [...]}
+        return {"messages": [...], "tools": [...]}
+    
+    def step(self, action: Any) -> tuple[Any, float, bool, dict[str, Any]]:
+        # Execute action, return (obs, reward, done, info)
+        # info dict may contain metrics (e.g., "steps_taken", "tool_calls_count")
+        # For OpenAI environments: obs = {"messages": [...], "tools": [...]}
+        return next_obs, reward, done, info
+```
+
+### Agent Protocol
+
+Implement the `Agent` protocol:
+
+```python
+from timestep import Agent
+
+class MyAgent:
+    def reset(self) -> None:
+        # Reset agent state (e.g., clear memory)
+        pass
+    
+    def act(self, observation: Any) -> Any:
+        # Extract tools from observation if needed
+        # tools = observation.get("tools", [])
+        # Return action given observation
+        return action
+```
+
+### Metrics
+
+Metrics are computed by the environment and included in the `info` dict returned from `step()`.
+The Runner automatically extracts metrics from the final step's info dict.
+
+Common metrics provided by `OpenAIEnvironment`:
+- `steps_taken`: Number of steps in the episode
+- `tool_calls_count`: Number of tool calls made
+
+Environment subclasses can add custom metrics to the info dict:
+
+```python
+def step(self, action: Any) -> tuple[Any, float, bool, dict[str, Any]]:
+    # ... execute step ...
+    info = {}
+    
+    # Add custom metrics when done
+    if done:
+        info["my_metric"] = compute_my_metric(...)
+    
+    return obs, reward, done, info
+```
+
+## Extension Points
+
+### Custom Environments
+
+Any environment implementing the `Environment` protocol can be used. Examples:
+- Benchmarks (GAIA, WebArena, etc.)
+- Simulated environments
+- Real-world API wrappers
+
+For OpenAI-based environments, extend `OpenAIEnvironment` which provides:
+- Web search tool by default (can be overridden)
+- Tool schema management via `_get_tool_schemas()`
+- Generic metrics tracking (steps_taken, tool_calls_count)
+
+### Custom Agents
+
+Implement the `Agent` protocol with your own agent:
+- LLM-based agents
+- Tool-using agents
+- Multi-modal agents
+
+For OpenAI-based agents, extend `OpenAIAgent` which automatically extracts tools from observations.
+See `examples/gaia/agent.py` for an example `GAIAAgent` implementation.
+
+### Custom Metrics
+
+Add custom metrics by including them in the environment's `info` dict:
+
+```python
+def step(self, action: Any) -> tuple[Any, float, bool, dict[str, Any]]:
+    # ... execute step ...
+    info = {}
+    
+    # Add metrics to info dict
+    if done:
+        info["robustness"] = compute_robustness(...)
+        info["safety_score"] = check_safety(...)
+        info["efficiency"] = compute_efficiency(...)
+    
+    return obs, reward, done, info
+```
+
+Common metric types:
+- **Robustness**: Perturbation resistance
+- **Safety**: Action/tool call violation detection
+- **Efficiency**: Steps, tool calls, latency, cost
+- **Generalization**: Cross-distribution performance
+
+## Design Philosophy
+
+- **Three core entities**: Agent, Environment, Loop (metrics are part of environment)
+- **Trajectory logging**: Complete episode logs for post-hoc analysis
+- **Protocol-based**: Flexible duck typing, no inheritance required
+- **Extensible**: Easy to add new environments, agents, and metrics
+- **Tool management**: Environment controls tool availability via observations
+- **Metric computation**: Environment computes and provides metrics in info dict
 
 ## License
 
-MIT License - see `LICENSE`.
+MIT License - see LICENSE file for details.

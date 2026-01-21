@@ -1,9 +1,0 @@
-
-[dev]
-ruff>=0.1.0
-
-[gaia]
-datasets>=2.0.0
-huggingface-hub>=0.16.0
-openai>=1.0.0
-ddgs>=1.0.0
