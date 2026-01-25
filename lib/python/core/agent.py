@@ -31,14 +31,12 @@ class Agent:
         model: str = "gpt-4o-mini",
         context_id_to_environment_uri: Optional[Dict[str, str]] = None,
         human_in_loop: bool = False,
-        trace_to_file: str = "traces.jsonl",
     ):
         self.agent_id = agent_id
         self.name = name
         self.model = model
         self.context_id_to_environment_uri = context_id_to_environment_uri or {}
         self.human_in_loop = human_in_loop
-        self.trace_to_file = trace_to_file
         
         # Create default Environment instance
         self.default_environment = Environment(
@@ -54,7 +52,6 @@ class Agent:
             model=model,
             context_id_to_environment_uri=self.context_id_to_environment_uri,
             human_in_loop=human_in_loop,
-            trace_to_file=trace_to_file,
         )
         
         # Create A2A server with Loop as AgentExecutor

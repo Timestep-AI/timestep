@@ -119,21 +119,25 @@ async def main() -> None:
             'message': {
                 'role': 'user',
                 'parts': [
-                    {'kind': 'text', 'text': 'how much is 10 USD in INR?'}
+                    {'kind': 'text', 'text': "What's the weather in Oakland?"}
                 ],
                 'messageId': uuid4().hex,
             },
         }
+
+        logger.info('=== start:send_message ===')
         request = SendMessageRequest(
             id=str(uuid4()), params=MessageSendParams(**send_message_payload)
         )
 
         response = await client.send_message(request)
         print(response.model_dump(mode='json', exclude_none=True))
+        logger.info('=== end:send_message ===\n')
         # --8<-- [end:send_message]
 
         # --8<-- [start:send_message_streaming]
 
+        logger.info('=== start:send_message_streaming ===')
         streaming_request = SendStreamingMessageRequest(
             id=str(uuid4()), params=MessageSendParams(**send_message_payload)
         )
@@ -142,6 +146,7 @@ async def main() -> None:
 
         async for chunk in stream_response:
             print(chunk.model_dump(mode='json', exclude_none=True))
+        logger.info('=== end:send_message_streaming ===')
         # --8<-- [end:send_message_streaming]
 
 

@@ -6,8 +6,6 @@
 #   "openai",
 #   "fastapi",
 #   "uvicorn",
-#   "opentelemetry-api>=1.20.0",
-#   "opentelemetry-sdk>=1.20.0",
 # ]
 # ///
 
@@ -61,12 +59,6 @@ def main():
     # Get port from environment variable or use default
     port = int(os.getenv("WEATHER_AGENT_PORT", "9999"))
     
-    # Get trace file from environment variable or use default
-    trace_file = os.getenv(
-        "WEATHER_AGENT_TRACE_FILE",
-        "traces/weather_assistant.jsonl"
-    )
-    
     # Create agent
     agent = Agent(
         agent_id="weather-assistant",
@@ -76,13 +68,11 @@ def main():
             "weather-context": environment_uri
         },
         human_in_loop=False,
-        trace_to_file=trace_file,
     )
     
     # Run agent (blocking)
     print(f"Starting Weather Assistant Agent on port {port}...")
     print(f"Environment URI: {environment_uri}")
-    print(f"Trace file: {trace_file}")
     agent.run(port=port)
 
 
