@@ -2,8 +2,27 @@
 
 This directory is reserved for the future TypeScript library implementation.
 
-We intend to abstract a clean, low-level library from the examples in `examples/typescript/` that provides a foundation for building AI Agents using the A2A (Agent-to-Agent) and MCP (Model Context Protocol) standards.
+We intend to create a TypeScript version of the Timestep library that mirrors the Python implementation, providing:
 
-The library will be extracted from the working examples once the API surface and patterns are well-established.
+- **Agent**: A2A Server that contains Loop (AgentExecutor) internally
+- **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
+- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
+- **Human-in-the-loop**: Via A2A input-required, MCP Elicitation, and MCP Sampling
+- **Trace-based evals**: Verify handoff flows and tool calls using OpenTelemetry traces
+- **All async/streaming-first**: Everything is async, streaming is the default
 
-**Note:** The TypeScript examples are currently pending MCP SDK v2 release (expected Q1 2026). Once v2 is available, we'll complete the examples and then extract the library.
+The TypeScript implementation will follow the same architecture and patterns as the Python version, ensuring cross-language parity.
+
+## Status
+
+The TypeScript library is planned but not yet implemented. The Python library should be used as the reference implementation.
+
+## Future Implementation
+
+When implementing the TypeScript version:
+
+1. Use the same three core entities: Agent, Environment, Loop
+2. Follow the same protocol communication patterns (A2A/MCP)
+3. Maintain the same API surface where possible
+4. Use TypeScript's type system for better type safety
+5. Support the same observability and eval features
