@@ -4,7 +4,7 @@ import os
 from typing import Dict, Optional
 from fastapi import FastAPI
 import uvicorn
-from a2a.server.apps.rest.fastapi_app import A2ARESTFastAPIApplication
+from a2a.server.apps.jsonrpc.fastapi_app import A2AFastAPIApplication
 from a2a.server.request_handlers.default_request_handler import DefaultRequestHandler
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.types import AgentCard, AgentCapabilities, AgentSkill, TransportProtocol
@@ -56,19 +56,19 @@ class Agent:
         # Create agent card
         self.agent_card = self._create_agent_card()
         
-        # Create A2A app
-        self.app = A2ARESTFastAPIApplication(
+        # Create A2A JSON-RPC app (primary)
+        # A2AFastAPIApplication handles JSON-RPC requests at / (POST)
+        # This is what A2AClient uses (JSON-RPC transport)
+        self.app = A2AFastAPIApplication(
             agent_card=self.agent_card,
             http_handler=self.handler,
         )
         
-        # Build A2A app - this returns a FastAPI app
+        # Build A2A app - this returns a FastAPI app with:
+        # - Agent card endpoint at /.well-known/agent-card.json
+        # - JSON-RPC endpoint at / (POST)
+        # Use it directly with uvicorn
         self.fastapi_app = self.app.build()
-        
-        # Add agent card endpoint to the A2A app
-        @self.fastapi_app.get("/.well-known/agent-card.json")
-        async def get_agent_card():
-            return self.agent_card.model_dump(mode="json")
     
     def _create_agent_card(self) -> AgentCard:
         """Create an agent card for this agent."""
