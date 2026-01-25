@@ -213,6 +213,7 @@ class Agent:
         model: str,
         stream: bool = False,
         delta_content: Optional[str] = None,
+        previous_tool_calls: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Convert A2A task to OpenAI ChatCompletion format.
         
@@ -332,7 +333,10 @@ class Agent:
             if message_content:
                 delta_dict["content"] = message_content
             if tool_calls:
-                delta_dict["tool_calls"] = self._convert_tool_calls_to_openai(tool_calls)
+                delta_dict["tool_calls"] = self._convert_tool_calls_to_openai(
+                    tool_calls, 
+                    previous_tool_calls=previous_tool_calls
+                )
             
             # For streaming, don't set finish_reason in chunks with content or tool_calls
             # Finish reason goes in the final empty chunk
@@ -373,31 +377,87 @@ class Agent:
                 }]
             }
     
-    def _convert_tool_calls_to_openai(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tool_calls_to_openai(
+        self, 
+        tool_calls: List[Dict[str, Any]], 
+        previous_tool_calls: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
         """Convert A2A/MCP tool calls to OpenAI format.
         
         Args:
             tool_calls: List of tool call dicts with call_id, name, arguments
+            previous_tool_calls: Optional previous state for delta computation in streaming
             
         Returns:
-            List of OpenAI tool call dicts
+            List of OpenAI tool call dicts (for streaming, these are delta chunks)
         """
         openai_tool_calls = []
+        
+        # Build a map of previous tool calls by call_id for delta computation
+        # Previous tool calls are in MCP format (call_id, name, arguments)
+        previous_by_id = {}
+        if previous_tool_calls:
+            for prev_tc in previous_tool_calls:
+                call_id = prev_tc.get("call_id", "")
+                if call_id:
+                    previous_by_id[call_id] = prev_tc
+        
         for idx, tc in enumerate(tool_calls):
             call_id = tc.get("call_id", "")
             name = tc.get("name", "")
             arguments = tc.get("arguments", {})
             
-            if call_id and name:
-                openai_tool_calls.append({
+            # Get previous state for this tool call by ID (in MCP format)
+            prev_tc = previous_by_id.get(call_id) if call_id else None
+            
+            # For streaming, emit delta chunks with only changed/new fields
+            # For non-streaming, emit complete tool call
+            if call_id:  # At minimum, we need an ID
+                tool_call_delta = {
+                    "index": idx,
                     "id": call_id,
                     "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
-                    },
-                    "index": idx,
-                })
+                }
+                
+                # Add function fields incrementally
+                function_delta = {}
+                
+                # If name is present and (not in previous or different), include it
+                if name:
+                    prev_name = None
+                    if prev_tc:
+                        prev_name = prev_tc.get("name", "")  # MCP format uses "name" directly
+                    if prev_name != name:
+                        function_delta["name"] = name
+                
+                # If arguments are present, compute delta
+                if arguments:
+                    # Convert arguments to string if needed
+                    args_str = json.dumps(arguments) if isinstance(arguments, dict) else str(arguments)
+                    
+                    # Get previous arguments (MCP format uses "arguments" directly)
+                    prev_args_str = ""
+                    if prev_tc:
+                        prev_args = prev_tc.get("arguments", {})
+                        if prev_args:
+                            prev_args_str = json.dumps(prev_args) if isinstance(prev_args, dict) else str(prev_args)
+                    
+                    # For streaming, compute the delta (new part of arguments)
+                    # Since A2A sends accumulated arguments, we compute the delta
+                    if len(args_str) > len(prev_args_str) and args_str.startswith(prev_args_str):
+                        # New arguments are the suffix
+                        new_args = args_str[len(prev_args_str):]
+                        function_delta["arguments"] = new_args
+                    elif args_str != prev_args_str:
+                        # Arguments changed in a non-append way, include full current
+                        function_delta["arguments"] = args_str
+                
+                if function_delta:
+                    tool_call_delta["function"] = function_delta
+                
+                # Only include tool call if it has at least an ID or function fields
+                if function_delta or call_id:
+                    openai_tool_calls.append(tool_call_delta)
         
         return openai_tool_calls
     
@@ -495,6 +555,7 @@ class Agent:
             
             # Send streaming message via A2A client
             accumulated_content = ""
+            previous_tool_calls: Optional[List[Dict[str, Any]]] = None
             events_received = False
             
             try:
@@ -542,13 +603,18 @@ class Agent:
                             "status": status_dict
                         }
                         
-                        # Convert to OpenAI streaming chunk
+                        # Convert to OpenAI streaming chunk with previous tool calls for delta computation
                         chunk = self._convert_a2a_task_to_openai(
                             task_dict,
                             model,
                             stream=True,
                             delta_content=delta_content,
+                            previous_tool_calls=previous_tool_calls,
                         )
+                        
+                        # Update previous tool calls for next delta computation
+                        if tool_calls:
+                            previous_tool_calls = tool_calls
                         
                         # Format as SSE
                         yield f"data: {json.dumps(chunk)}\n\n"

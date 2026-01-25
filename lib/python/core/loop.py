@@ -23,7 +23,6 @@ from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
     convert_mcp_tool_to_openai,
     convert_openai_tool_call_to_mcp,
-    build_tool_result_message,
 )
 
 # DataPart payload keys
@@ -38,7 +37,7 @@ class Loop(AgentExecutor):
     2. Uses MCP client to locate Environment by context_id
     3. Gets system prompt (FastMCP prompt) and tools from Environment
     4. Invokes OpenAI model (async/streaming)
-    5. Executes tools via MCP client if needed
+    5. Emits tool calls in A2A format (client handles execution)
     6. Returns A2A Task
     """
     
@@ -147,7 +146,7 @@ class Loop(AgentExecutor):
                 if delta.content:
                     assistant_content += delta.content
                     # Only emit incremental updates if we don't have tool calls yet
-                    # (tool calls will be handled in final status update)
+                    # (tool calls will be handled in incremental status updates)
                     if not has_tool_calls:
                         emitted_streaming_updates = True
                         incremental_message = create_text_message_object(
@@ -166,6 +165,7 @@ class Loop(AgentExecutor):
                         await event_queue.enqueue_event(status_update)
                 if delta.tool_calls:
                     has_tool_calls = True
+                    tool_call_updated = False
                     for tool_call_delta in delta.tool_calls:
                         # Initialize tool call if needed
                         idx = tool_call_delta.index or 0
@@ -181,57 +181,60 @@ class Loop(AgentExecutor):
                         
                         if tool_call_delta.id:
                             tool_calls[idx]["id"] = tool_call_delta.id
+                            tool_call_updated = True
                         
                         if tool_call_delta.function:
                             if tool_call_delta.function.name:
                                 tool_calls[idx]["function"]["name"] = tool_call_delta.function.name
+                                tool_call_updated = True
                             if tool_call_delta.function.arguments:
                                 tool_calls[idx]["function"]["arguments"] += tool_call_delta.function.arguments
+                                tool_call_updated = True
+                    
+                    # Emit incremental status update with current tool call state
+                    if tool_call_updated:
+                        # Convert current tool calls to MCP format (only non-empty ones)
+                        current_mcp_tool_calls = []
+                        for tc in tool_calls:
+                            if tc.get("id"):  # Only include tool calls that have an ID
+                                mcp_tc = convert_openai_tool_call_to_mcp(tc)
+                                current_mcp_tool_calls.append(mcp_tc)
+                        
+                        # Build A2A message with current tool call state
+                        incremental_message = create_text_message_object(
+                            role=Role.agent,
+                            content=assistant_content
+                        )
+                        if current_mcp_tool_calls:
+                            incremental_message.parts.append(Part(DataPart(data={TOOL_CALLS_KEY: current_mcp_tool_calls})))
+                        
+                        # Emit incremental status update with working state
+                        status_update = TaskStatusUpdateEvent(
+                            task_id=task_id or "",
+                            context_id=context_id or "",
+                            status=TaskStatus(
+                                state=TaskState.working,  # Use 'working' for incremental tool call updates
+                                message=incremental_message
+                            ),
+                            final=False,
+                        )
+                        await event_queue.enqueue_event(status_update)
+                        emitted_streaming_updates = True
         
         # Filter out empty tool calls
         tool_calls = [tc for tc in tool_calls if tc.get("id")]
         
-        # If tool calls, execute via MCP client
-        # Note: We need to create a new session for tool execution since the previous
-        # session was closed after getting the system prompt and tools.
-        # The DELETE calls are normal MCP protocol cleanup when sessions close.
+        # If tool calls, emit them in A2A format with input-required state
+        # Client will handle tool execution
         if tool_calls:
             # Human-in-the-loop: A2A input-required state
             # (Client can pause here for human input)
             
+            # Convert OpenAI tool calls to MCP format
             mcp_tool_calls = []
             for tc in tool_calls:
                 mcp_tc = convert_openai_tool_call_to_mcp(tc)
                 mcp_tool_calls.append(mcp_tc)
-            
-            # Execute tools via MCP client
-            # Human-in-the-loop: MCP Sampling can happen here (for handoffs)
-            # We create a new session here because we can't keep the previous one
-            # open during the OpenAI API call (which happens asynchronously).
-            # This creates a new session, which will send DELETE when it closes
-            async with streamable_http_client(environment_uri) as (read, write, _):
-                async with ClientSession(read, write) as mcp_session:
-                    await mcp_session.initialize()
-                    
-                    tool_results = []
-                    for tool_call in mcp_tool_calls:
-                        result = await mcp_session.call_tool(
-                            tool_call["name"],
-                            tool_call["arguments"]
-                        )
-                        
-                        # Extract result content
-                        result_text = ""
-                        if result.content:
-                            for content_block in result.content:
-                                if hasattr(content_block, "text"):
-                                    result_text += content_block.text
-                        
-                        tool_results.append({
-                            "call_id": tool_call["call_id"],
-                            "name": tool_call["name"],
-                            "output": result_text or None,
-                        })
             
             # Build A2A message with tool calls
             a2a_message = create_text_message_object(
