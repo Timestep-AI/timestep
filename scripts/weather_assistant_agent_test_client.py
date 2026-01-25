@@ -3,15 +3,19 @@
 # dependencies = [
 #   "a2a-sdk",
 #   "httpx",
+#   "openai",
 # ]
 # ///
 
+import asyncio
 import logging
+import os
 
 from typing import Any
 from uuid import uuid4
 
 import httpx
+from openai import OpenAI
 
 from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import (
@@ -148,6 +152,82 @@ async def main() -> None:
             print(chunk.model_dump(mode='json', exclude_none=True))
         logger.info('=== end:send_message_streaming ===')
         # --8<-- [end:send_message_streaming]
+
+        # --8<-- [start:openai_chat_completions]
+        logger.info('\n=== start:openai_chat_completions ===')
+        
+        # Same message payload that was sent to A2A agent
+        message_content = "What's the weather in Oakland?"
+        
+        openai_client = OpenAI(
+            api_key="dummy-api-key",
+            base_url="http://localhost:9999/v1",
+        )
+        
+        logger.info('=== start:openai_chat_completions (non-streaming) ===')
+        response = await asyncio.to_thread(
+            lambda: openai_client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "user", "content": message_content}
+                ],
+                stream=False,
+            )
+        )
+        
+        print(f"\nUser: {message_content}\n")
+        print("Assistant (non-streaming):")
+        if response.choices and response.choices[0].message:
+            message = response.choices[0].message
+            if message.content:
+                print(f"Content: {message.content}")
+            if message.tool_calls:
+                print(f"Tool calls:")
+                for tool_call in message.tool_calls:
+                    print(f"  - {tool_call.function.name}({tool_call.function.arguments})")
+            print(f"Finish reason: {response.choices[0].finish_reason}")
+        print(response.model_dump_json(indent=2, exclude_none=True))
+        logger.info('=== end:openai_chat_completions (non-streaming) ===\n')
+        # --8<-- [end:openai_chat_completions (non-streaming)]
+        
+        # --8<-- [start:openai_streaming]
+        logger.info('=== start:openai_chat_completions (streaming) ===')
+        
+        stream = await asyncio.to_thread(
+            lambda: openai_client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "user", "content": message_content}
+                ],
+                stream=True,
+            )
+        )
+        
+        print(f"\nUser: {message_content}\n")
+        print("Assistant (streaming): ", end="", flush=True)
+        
+        # Process stream in async context
+        async def process_stream():
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        print(delta.content, end="", flush=True)
+                    if delta.tool_calls:
+                        for tool_call_delta in delta.tool_calls:
+                            if tool_call_delta.function:
+                                if tool_call_delta.function.name:
+                                    print(f"\n\n[Tool call: {tool_call_delta.function.name}]", end="", flush=True)
+                                if tool_call_delta.function.arguments:
+                                    print(tool_call_delta.function.arguments, end="", flush=True)
+                if chunk.choices and chunk.choices[0].finish_reason:
+                    print(f"\nFinish reason: {chunk.choices[0].finish_reason}")
+        
+        await process_stream()
+        
+        print("\n")
+        logger.info('=== end:openai_chat_completions (streaming) ===')
+        # --8<-- [end:openai_streaming]
 
 
 if __name__ == '__main__':
