@@ -8,6 +8,7 @@
 # ///
 
 import asyncio
+import json
 import logging
 import os
 
@@ -201,6 +202,60 @@ async def main() -> None:
         
         logger.info('=== end:openai_chat_completions (streaming) ===')
         # --8<-- [end:openai_streaming]
+        
+        # --8<-- [start:openai_responses]
+        logger.info('\n=== start:openai_responses ===')
+        
+        # Same message payload that was sent to A2A agent
+        message_content = "What's the weather in Oakland?"
+        
+        logger.info('=== start:openai_responses (non-streaming) ===')
+        # Use httpx to call our custom /v1/responses endpoint
+        response = await httpx_client.post(
+            "http://localhost:9999/v1/responses",
+            json={
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "messages": [
+                    {"role": "user", "content": message_content}
+                ],
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        response_data = response.json()
+        print(json.dumps(response_data, indent=2))
+        logger.info('=== end:openai_responses (non-streaming) ===\n')
+        # --8<-- [end:openai_responses (non-streaming)]
+        
+        # --8<-- [start:openai_responses_streaming]
+        logger.info('=== start:openai_responses (streaming) ===')
+        
+        # Use httpx to call our custom /v1/responses endpoint with streaming
+        async with httpx_client.stream(
+            "POST",
+            "http://localhost:9999/v1/responses",
+            json={
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "messages": [
+                    {"role": "user", "content": message_content}
+                ],
+                "stream": True,
+            },
+        ) as stream_response:
+            stream_response.raise_for_status()
+            async for line in stream_response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]  # Remove "data: " prefix
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        print(json.dumps(chunk, indent=2))
+                    except json.JSONDecodeError:
+                        pass
+        
+        logger.info('=== end:openai_responses (streaming) ===')
+        # --8<-- [end:openai_responses_streaming]
 
 
 if __name__ == '__main__':
