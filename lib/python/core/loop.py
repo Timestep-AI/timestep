@@ -2,8 +2,7 @@
 
 import json
 import os
-from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from openai import OpenAI
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -18,8 +17,7 @@ from a2a.types import (
 )
 from a2a.client.helpers import create_text_message_object
 from mcp.client.streamable_http import streamable_http_client
-from mcp.client.stdio import stdio_client
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession
 
 from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
@@ -68,87 +66,44 @@ class Loop(AgentExecutor):
         task_id = context.task_id
         context_id = context.context_id
         
-        # Get Environment URI from context_id
+        # Get Environment URI from context_id - fail fast if not found
         environment_uri = self.context_id_to_environment_uri.get(context_id)
         
-        # Handle missing context_id:
-        # 1. Try default context_id (None or empty string)
-        if not environment_uri:
-            environment_uri = self.context_id_to_environment_uri.get(None) or \
-                              self.context_id_to_environment_uri.get("")
-        
-        # 2. If still not found and only one environment, use it
+        # Single-environment mode: if only one environment is configured,
+        # use it for any context_id (explicit configuration, not fallback)
         if not environment_uri and len(self.context_id_to_environment_uri) == 1:
             environment_uri = next(iter(self.context_id_to_environment_uri.values()))
         
-        # 3. If still not found, raise error
+        # Fail fast if still not found
         if not environment_uri:
             available_context_ids = list(self.context_id_to_environment_uri.keys())
             raise ValueError(
                 f"No environment found for context_id: {context_id}. "
                 f"Available context_ids: {available_context_ids}. "
-                f"To use a default environment, configure context_id_to_environment_uri with None or '' as a key."
+                f"If you only have one environment, it will be used for all context_ids."
             )
         
-        # Get system prompt from Environment
-        # Check if using stdio transport
-        if isinstance(environment_uri, str) and environment_uri.startswith("stdio://"):
-            # Use stdio client - connect to subprocess
-            env_name = environment_uri.replace("stdio://", "")
-            # Find the stdio environment script
-            # Try relative to current file first, then try absolute paths
-            current_file = Path(__file__)
-            # lib/python/core/loop.py -> lib/python/examples/personal_assistant/
-            env_script = current_file.parent.parent / "examples" / "personal_assistant" / f"{env_name}_env_stdio.py"
-            if not env_script.exists():
-                # Try from workspace root
-                env_script = current_file.parent.parent.parent.parent / "lib" / "python" / "examples" / "personal_assistant" / f"{env_name}_env_stdio.py"
-            stdio_params = StdioServerParameters(
-                command="uv",
-                args=["run", str(env_script.resolve())],
-            )
-            async with stdio_client(stdio_params) as (read, write):
-                async with ClientSession(read, write) as mcp_session:
-                    await mcp_session.initialize()
-                    
-                    # Get system prompt (FastMCP prompt)
-                    try:
-                        system_prompt_result = await mcp_session.get_prompt("system_prompt", {
-                            "agent_name": self.agent_id
-                        })
-                        system_prompt = system_prompt_result.messages[0].content.text
-                    except Exception as e:
-                        system_prompt = f"You are {self.agent_id}."
-                    
-                    # Get available tools
-                    tools_result = await mcp_session.list_tools()
-                    tools = [
-                        convert_mcp_tool_to_openai(tool)
-                        for tool in tools_result.tools
-                    ]
-        else:
-            # Use HTTP client
-            async with streamable_http_client(environment_uri) as (read, write, _):
-                    async with ClientSession(read, write) as mcp_session:
-                        await mcp_session.initialize()
-                        
-                        # Get system prompt (FastMCP prompt)
-                        # Human-in-the-loop: MCP Elicitation can happen here
-                        try:
-                            system_prompt_result = await mcp_session.get_prompt("system_prompt", {
-                                "agent_name": self.agent_id
-                            })
-                            system_prompt = system_prompt_result.messages[0].content.text
-                        except Exception as e:
-                            # Fallback if prompt not found
-                            system_prompt = f"You are {self.agent_id}."
-                        
-                        # Get available tools
-                        tools_result = await mcp_session.list_tools()
-                        tools = [
-                            convert_mcp_tool_to_openai(tool)
-                            for tool in tools_result.tools
-                        ]
+        # Get system prompt and tools from Environment via HTTP client
+        # Fail fast if prompt not found or other errors occur
+        async with streamable_http_client(environment_uri) as (read, write, _):
+            async with ClientSession(read, write) as mcp_session:
+                await mcp_session.initialize()
+                
+                # Get system prompt (FastMCP prompt) - fail fast if not found
+                # Human-in-the-loop: MCP Elicitation can happen here
+                system_prompt_result = await mcp_session.get_prompt("system_prompt", {
+                    "agent_name": self.agent_id
+                })
+                if not system_prompt_result.messages or not system_prompt_result.messages[0].content.text:
+                    raise ValueError(f"System prompt 'system_prompt' returned empty result from environment at {environment_uri}")
+                system_prompt = system_prompt_result.messages[0].content.text
+                
+                # Get available tools
+                tools_result = await mcp_session.list_tools()
+                tools = [
+                    convert_mcp_tool_to_openai(tool)
+                    for tool in tools_result.tools
+                ]
         
         # Extract user message and tool results
         user_text, tool_results = extract_user_text_and_tool_results(context.message)
@@ -237,6 +192,9 @@ class Loop(AgentExecutor):
         tool_calls = [tc for tc in tool_calls if tc.get("id")]
         
         # If tool calls, execute via MCP client
+        # Note: We need to create a new session for tool execution since the previous
+        # session was closed after getting the system prompt and tools.
+        # The DELETE calls are normal MCP protocol cleanup when sessions close.
         if tool_calls:
             # Human-in-the-loop: A2A input-required state
             # (Client can pause here for human input)
@@ -248,66 +206,32 @@ class Loop(AgentExecutor):
             
             # Execute tools via MCP client
             # Human-in-the-loop: MCP Sampling can happen here (for handoffs)
-            if isinstance(environment_uri, str) and environment_uri.startswith("stdio://"):
-                # Use stdio client - connect to subprocess
-                env_name = environment_uri.replace("stdio://", "")
-                # Find the stdio environment script
-                current_file = Path(__file__)
-                env_script = current_file.parent.parent / "examples" / "personal_assistant" / f"{env_name}_env_stdio.py"
-                if not env_script.exists():
-                    env_script = current_file.parent.parent.parent.parent / "lib" / "python" / "examples" / "personal_assistant" / f"{env_name}_env_stdio.py"
-                stdio_params = StdioServerParameters(
-                    command="uv",
-                    args=["run", str(env_script.resolve())],
-                )
-                async with stdio_client(stdio_params) as (read, write):
-                    async with ClientSession(read, write) as mcp_session:
-                        await mcp_session.initialize()
+            # We create a new session here because we can't keep the previous one
+            # open during the OpenAI API call (which happens asynchronously).
+            # This creates a new session, which will send DELETE when it closes
+            async with streamable_http_client(environment_uri) as (read, write, _):
+                async with ClientSession(read, write) as mcp_session:
+                    await mcp_session.initialize()
+                    
+                    tool_results = []
+                    for tool_call in mcp_tool_calls:
+                        result = await mcp_session.call_tool(
+                            tool_call["name"],
+                            tool_call["arguments"]
+                        )
                         
-                        tool_results = []
-                        for tool_call in mcp_tool_calls:
-                            result = await mcp_session.call_tool(
-                                tool_call["name"],
-                                tool_call["arguments"]
-                            )
-                            
-                            # Extract result content
-                            result_text = ""
-                            if result.content:
-                                for content_block in result.content:
-                                    if hasattr(content_block, "text"):
-                                        result_text += content_block.text
-                            
-                            tool_results.append({
-                                "call_id": tool_call["call_id"],
-                                "name": tool_call["name"],
-                                "output": result_text or None,
-                            })
-            else:
-                # Use HTTP client
-                async with streamable_http_client(environment_uri) as (read, write, _):
-                    async with ClientSession(read, write) as mcp_session:
-                        await mcp_session.initialize()
+                        # Extract result content
+                        result_text = ""
+                        if result.content:
+                            for content_block in result.content:
+                                if hasattr(content_block, "text"):
+                                    result_text += content_block.text
                         
-                        tool_results = []
-                        for tool_call in mcp_tool_calls:
-                            result = await mcp_session.call_tool(
-                                tool_call["name"],
-                                tool_call["arguments"]
-                            )
-                            
-                            # Extract result content
-                            result_text = ""
-                            if result.content:
-                                for content_block in result.content:
-                                    if hasattr(content_block, "text"):
-                                        result_text += content_block.text
-                            
-                            tool_results.append({
-                                "call_id": tool_call["call_id"],
-                                "name": tool_call["name"],
-                                "output": result_text or None,
-                            })
+                        tool_results.append({
+                            "call_id": tool_call["call_id"],
+                            "name": tool_call["name"],
+                            "output": result_text or None,
+                        })
             
             # Build A2A message with tool calls
             a2a_message = create_text_message_object(
