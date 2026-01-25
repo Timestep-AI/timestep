@@ -129,7 +129,7 @@ async def main() -> None:
             },
         }
 
-        logger.info('=== start:send_message ===')
+        logger.info('\n=== start:send_message ===')
         request = SendMessageRequest(
             id=str(uuid4()), params=MessageSendParams(**send_message_payload)
         )
@@ -175,17 +175,6 @@ async def main() -> None:
             )
         )
         
-        print(f"\nUser: {message_content}\n")
-        print("Assistant (non-streaming):")
-        if response.choices and response.choices[0].message:
-            message = response.choices[0].message
-            if message.content:
-                print(f"Content: {message.content}")
-            if message.tool_calls:
-                print(f"Tool calls:")
-                for tool_call in message.tool_calls:
-                    print(f"  - {tool_call.function.name}({tool_call.function.arguments})")
-            print(f"Finish reason: {response.choices[0].finish_reason}")
         print(response.model_dump_json(indent=2, exclude_none=True))
         logger.info('=== end:openai_chat_completions (non-streaming) ===\n')
         # --8<-- [end:openai_chat_completions (non-streaming)]
@@ -203,29 +192,13 @@ async def main() -> None:
             )
         )
         
-        print(f"\nUser: {message_content}\n")
-        print("Assistant (streaming): ", end="", flush=True)
-        
         # Process stream in async context
         async def process_stream():
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        print(delta.content, end="", flush=True)
-                    if delta.tool_calls:
-                        for tool_call_delta in delta.tool_calls:
-                            if tool_call_delta.function:
-                                if tool_call_delta.function.name:
-                                    print(f"\n\n[Tool call: {tool_call_delta.function.name}]", end="", flush=True)
-                                if tool_call_delta.function.arguments:
-                                    print(tool_call_delta.function.arguments, end="", flush=True)
-                if chunk.choices and chunk.choices[0].finish_reason:
-                    print(f"\nFinish reason: {chunk.choices[0].finish_reason}")
+                print(chunk.model_dump_json(indent=2, exclude_none=True))
         
         await process_stream()
         
-        print("\n")
         logger.info('=== end:openai_chat_completions (streaming) ===')
         # --8<-- [end:openai_streaming]
 
