@@ -2,8 +2,8 @@
 
 import json
 import os
-from typing import Dict, List, Any
-from openai import OpenAI
+from typing import Dict, List, Any, Optional
+from openai import AsyncOpenAI
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
@@ -53,8 +53,8 @@ class Loop(AgentExecutor):
         self.context_id_to_environment_uri = context_id_to_environment_uri
         self.human_in_loop = human_in_loop
         
-        # Initialize OpenAI client
-        self.openai_client = OpenAI()
+        # Initialize AsyncOpenAI client
+        self.openai_client = AsyncOpenAI()
     
     async def execute(
         self,
@@ -104,34 +104,53 @@ class Loop(AgentExecutor):
                     for tool in tools_result.tools
                 ]
         
-        # Extract user message and tool results
+        # Extract user message and tool results from incoming message
         user_text, tool_results = extract_user_text_and_tool_results(context.message)
         
-        # Build OpenAI messages
+        # Build messages list from incoming message
         messages = []
+        
+        # Add user message if present
         if user_text:
             messages.append({"role": "user", "content": user_text})
+        
+        # Add tool results if present
         if tool_results:
             for tool_result in tool_results:
+                tool_call_id = tool_result.get("call_id")
+                if not tool_call_id:
+                    raise ValueError("tool_result missing call_id")
+                raw_result = tool_result.get("output")
+                if raw_result is None:
+                    raise ValueError("tool_result missing output")
+                if isinstance(raw_result, (dict, list)):
+                    content = json.dumps(raw_result)
+                else:
+                    content = str(raw_result)
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tool_result["call_id"],
-                    "content": str(tool_result["output"]),
+                    "tool_call_id": tool_call_id,
+                    "content": content,
                 })
+        
+        # Ensure we have at least one message before calling OpenAI
+        if not messages:
+            raise ValueError(f"No messages to send to OpenAI. Task: {task_id}, Context: {context_id}")
         
         # Variables for streaming
         assistant_content = ""
         tool_calls: List[Any] = []
         has_tool_calls = False
         emitted_streaming_updates = False
+        previous_tool_calls_state: Optional[str] = None  # Track previous tool calls state to avoid duplicate emissions
         
-        # Call OpenAI with streaming
+        # Call OpenAI with streaming (include system prompt)
         openai_messages = [
             {"role": "system", "content": system_prompt}
         ] + messages
         
         # Always use streaming - emit incremental status updates as chunks arrive
-        stream = self.openai_client.chat.completions.create(
+        stream = await self.openai_client.chat.completions.create(
             model=self.model,
             messages=openai_messages,
             tools=tools if tools else None,
@@ -139,8 +158,8 @@ class Loop(AgentExecutor):
             stream=True,
         )
         
-        # Stream response chunks and emit incremental updates
-        for chunk in stream:
+        # Stream response chunks and emit incremental updates (async iterator)
+        async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta:
                 delta = chunk.choices[0].delta
                 if delta.content:
@@ -165,7 +184,6 @@ class Loop(AgentExecutor):
                         await event_queue.enqueue_event(status_update)
                 if delta.tool_calls:
                     has_tool_calls = True
-                    tool_call_updated = False
                     for tool_call_delta in delta.tool_calls:
                         # Initialize tool call if needed
                         idx = tool_call_delta.index or 0
@@ -181,24 +199,27 @@ class Loop(AgentExecutor):
                         
                         if tool_call_delta.id:
                             tool_calls[idx]["id"] = tool_call_delta.id
-                            tool_call_updated = True
                         
                         if tool_call_delta.function:
                             if tool_call_delta.function.name:
                                 tool_calls[idx]["function"]["name"] = tool_call_delta.function.name
-                                tool_call_updated = True
                             if tool_call_delta.function.arguments:
                                 tool_calls[idx]["function"]["arguments"] += tool_call_delta.function.arguments
-                                tool_call_updated = True
                     
-                    # Emit incremental status update with current tool call state
-                    if tool_call_updated:
-                        # Convert current tool calls to MCP format (only non-empty ones)
-                        current_mcp_tool_calls = []
-                        for tc in tool_calls:
-                            if tc.get("id"):  # Only include tool calls that have an ID
-                                mcp_tc = convert_openai_tool_call_to_mcp(tc)
-                                current_mcp_tool_calls.append(mcp_tc)
+                    # Emit incremental tool call updates only when state actually changes
+                    # Convert current tool calls to MCP format (only non-empty ones)
+                    current_mcp_tool_calls = []
+                    for tc in tool_calls:
+                        if tc.get("id"):  # Only include tool calls that have an ID
+                            mcp_tc = convert_openai_tool_call_to_mcp(tc)
+                            current_mcp_tool_calls.append(mcp_tc)
+                    
+                    # Serialize current state to compare with previous
+                    current_state = json.dumps(current_mcp_tool_calls, sort_keys=True) if current_mcp_tool_calls else ""
+                    
+                    # Only emit if state changed
+                    if current_state != previous_tool_calls_state:
+                        previous_tool_calls_state = current_state
                         
                         # Build A2A message with current tool call state
                         incremental_message = create_text_message_object(

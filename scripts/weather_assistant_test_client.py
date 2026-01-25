@@ -3,7 +3,6 @@
 # dependencies = [
 #   "a2a-sdk",
 #   "httpx",
-#   "openai",
 # ]
 # ///
 
@@ -16,7 +15,6 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from openai import OpenAI
 
 from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import (
@@ -153,109 +151,6 @@ async def main() -> None:
             print(chunk.model_dump(mode='json', exclude_none=True))
         logger.info('=== end:send_message_streaming ===')
         # --8<-- [end:send_message_streaming]
-
-        # --8<-- [start:openai_chat_completions]
-        logger.info('\n=== start:openai_chat_completions ===')
-        
-        # Same message payload that was sent to A2A agent
-        message_content = "What's the weather in Oakland?"
-        
-        openai_client = OpenAI(
-            api_key="dummy-api-key",
-            base_url="http://localhost:9999/v1",
-        )
-        
-        logger.info('=== start:openai_chat_completions (non-streaming) ===')
-        response = await asyncio.to_thread(
-            lambda: openai_client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "user", "content": message_content}
-                ],
-                stream=False,
-            )
-        )
-        
-        print(response.model_dump_json(indent=2, exclude_none=True))
-        logger.info('=== end:openai_chat_completions (non-streaming) ===\n')
-        # --8<-- [end:openai_chat_completions (non-streaming)]
-        
-        # --8<-- [start:openai_streaming]
-        logger.info('=== start:openai_chat_completions (streaming) ===')
-        
-        stream = await asyncio.to_thread(
-            lambda: openai_client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "user", "content": message_content}
-                ],
-                stream=True,
-            )
-        )
-        
-        # Process stream in async context
-        async def process_stream():
-            for chunk in stream:
-                print(chunk.model_dump_json(indent=2, exclude_none=True))
-        
-        await process_stream()
-        
-        logger.info('=== end:openai_chat_completions (streaming) ===')
-        # --8<-- [end:openai_streaming]
-        
-        # --8<-- [start:openai_responses]
-        logger.info('\n=== start:openai_responses ===')
-        
-        # Same message payload that was sent to A2A agent
-        message_content = "What's the weather in Oakland?"
-        
-        logger.info('=== start:openai_responses (non-streaming) ===')
-        # Use httpx to call our custom /v1/responses endpoint
-        response = await httpx_client.post(
-            "http://localhost:9999/v1/responses",
-            json={
-                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                "messages": [
-                    {"role": "user", "content": message_content}
-                ],
-                "stream": False,
-            },
-        )
-        response.raise_for_status()
-        response_data = response.json()
-        print(json.dumps(response_data, indent=2))
-        logger.info('=== end:openai_responses (non-streaming) ===\n')
-        # --8<-- [end:openai_responses (non-streaming)]
-        
-        # --8<-- [start:openai_responses_streaming]
-        logger.info('=== start:openai_responses (streaming) ===')
-        
-        # Use httpx to call our custom /v1/responses endpoint with streaming
-        async with httpx_client.stream(
-            "POST",
-            "http://localhost:9999/v1/responses",
-            json={
-                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                "messages": [
-                    {"role": "user", "content": message_content}
-                ],
-                "stream": True,
-            },
-        ) as stream_response:
-            stream_response.raise_for_status()
-            async for line in stream_response.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:]  # Remove "data: " prefix
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                        print(json.dumps(chunk, indent=2))
-                    except json.JSONDecodeError:
-                        pass
-        
-        logger.info('=== end:openai_responses (streaming) ===')
-        # --8<-- [end:openai_responses_streaming]
 
 
 if __name__ == '__main__':
