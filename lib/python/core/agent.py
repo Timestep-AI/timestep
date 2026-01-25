@@ -62,26 +62,22 @@ class Agent:
             http_handler=self.handler,
         )
         
-        # Create FastAPI app
-        self.fastapi_app = FastAPI()
-        self.a2a_app = self.app.build()
+        # Build A2A app - this returns a FastAPI app
+        self.fastapi_app = self.app.build()
         
-        # Mount A2A app
-        self.fastapi_app.mount(f"/agents/{agent_id}", self.a2a_app)
-        
-        # Add agent card endpoint
-        @self.fastapi_app.get(f"/agents/{agent_id}/.well-known/agent-card.json")
+        # Add agent card endpoint to the A2A app
+        @self.fastapi_app.get("/.well-known/agent-card.json")
         async def get_agent_card():
             return self.agent_card.model_dump(mode="json")
     
     def _create_agent_card(self) -> AgentCard:
         """Create an agent card for this agent."""
-        base_url = os.getenv("A2A_BASE_URL", "http://localhost:8000")
+        base_url = os.getenv("A2A_BASE_URL", "http://localhost:9999")
         return AgentCard(
             name=self.name,
             version="1.0.0",
             description=f"{self.name} agent",
-            url=f"{base_url}/agents/{self.agent_id}",
+            url=f"{base_url}",
             preferred_transport=TransportProtocol.http_json,
             default_input_modes=["text/plain"],
             default_output_modes=["text/plain"],
@@ -94,7 +90,7 @@ class Agent:
             )],
         )
     
-    async def start(self, port: int = 8000, host: str = "0.0.0.0") -> str:
+    async def start(self, port: int = 9999, host: str = "0.0.0.0") -> str:
         """Start A2A server and return agent URI.
         
         Args:
@@ -102,7 +98,7 @@ class Agent:
             host: Host to bind to
             
         Returns:
-            Agent URI (e.g., "http://localhost:8000/agents/{agent_id}")
+            Agent URI (e.g., "http://localhost:9999")
         """
         # Set base URL environment variable if not set
         if not os.getenv("A2A_BASE_URL"):
@@ -122,9 +118,9 @@ class Agent:
         asyncio.create_task(server.serve())
         
         # Return agent URI
-        return f"http://{host}:{port}/agents/{self.agent_id}"
+        return f"http://{host}:{port}"
     
-    def run(self, port: int = 8000, host: str = "0.0.0.0"):
+    def run(self, port: int = 9999, host: str = "0.0.0.0"):
         """Run the A2A server (blocking)."""
         # Set base URL environment variable if not set
         if not os.getenv("A2A_BASE_URL"):
