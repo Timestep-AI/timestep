@@ -18,6 +18,9 @@ via MCP to get system prompts and tools.
 import os
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
+import uvicorn
+from fastapi import FastAPI
 
 # Fix package import: lib/python/ contains the timestep package
 # but Python needs to import it as 'timestep', not 'python'
@@ -44,20 +47,46 @@ core_module = importlib.util.module_from_spec(spec)
 sys.modules['timestep.core'] = core_module
 spec.loader.exec_module(core_module)
 
-# Now we can import Agent
-from timestep.core import Agent
+# Now we can import Agent and Environment
+from timestep.core import Agent, Environment
+from typing import Dict, Any
 
 
 def main():
     """Run the Weather Assistant Agent."""
-    # Get environment URI from environment variable or use default
-    environment_uri = os.getenv(
-        "WEATHER_ENVIRONMENT_URI",
-        "http://localhost:8080/mcp"
-    )
-    
     # Get port from environment variable or use default
     port = int(os.getenv("WEATHER_AGENT_PORT", "9999"))
+    host = "0.0.0.0"
+    http_host = "localhost" if host == "0.0.0.0" else host
+    
+    # Create Environment instance
+    environment = Environment(
+        environment_id="weather-assistant-env",
+        context_id="weather-context",
+        agent_id="weather-assistant",
+        human_in_loop=False,
+    )
+    
+    # Add get_weather tool to the environment
+    @environment.tool()
+    async def get_weather(location: str) -> Dict[str, Any]:
+        """Get the current weather for a specific location."""
+        # Return hardcoded weather data
+        return {
+            "location": location,
+            "temperature": "72°F",
+            "condition": "Sunny",
+            "humidity": "65%"
+        }
+    
+    # Update system prompt for weather assistant
+    @environment.prompt()
+    def system_prompt(agent_name: str) -> str:
+        """System prompt for the weather assistant agent."""
+        return f"You are {agent_name}, a helpful weather assistant. You can get weather information for any location using the get_weather tool."
+    
+    # Get MCP app from environment
+    mcp_app = environment.streamable_http_app()
     
     # Create agent
     agent = Agent(
@@ -65,15 +94,56 @@ def main():
         name="Weather Assistant",
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         context_id_to_environment_uri={
-            "weather-context": environment_uri
+            "weather-context": f"http://{http_host}:{port}/mcp"
         },
         human_in_loop=False,
     )
     
-    # Run agent (blocking)
+    # Get FastAPI app from agent
+    fastapi_app = agent.fastapi_app
+    
+    # Manually manage MCP task group (required for streamable HTTP)
+    # This is what run_streamable_http_async() does internally
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: Create and initialize task group
+        import anyio
+        tg = anyio.create_task_group()
+        await tg.__aenter__()
+        app._mcp_task_group = tg
+        
+        # Set task group on session manager
+        session_manager = environment.session_manager
+        if hasattr(session_manager, '_task_group') and session_manager._task_group is None:
+            session_manager._task_group = tg
+        
+        yield
+        
+        # Shutdown: Clean up task group
+        if hasattr(app, '_mcp_task_group') and app._mcp_task_group:
+            try:
+                await app._mcp_task_group.__aexit__(None, None, None)
+            except Exception:
+                pass
+    
+    # Create a new FastAPI app with lifespan
+    combined_app = FastAPI(
+        title="Weather Assistant Agent",
+        lifespan=lifespan,
+    )
+    
+    # Include all routes from the agent's FastAPI app
+    for route in fastapi_app.routes:
+        combined_app.routes.append(route)
+    
+    # Include all routes from the MCP app
+    for route in mcp_app.routes:
+        combined_app.routes.append(route)
+    
+    # Run combined app (blocking)
     print(f"Starting Weather Assistant Agent on port {port}...")
-    print(f"Environment URI: {environment_uri}")
-    agent.run(port=port)
+    print(f"Environment mounted at: http://{http_host}:{port}/mcp")
+    uvicorn.run(combined_app, host=host, port=port)
 
 
 if __name__ == "__main__":
