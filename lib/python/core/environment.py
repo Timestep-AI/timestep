@@ -28,12 +28,10 @@ class Environment(FastMCP):
         self.human_in_loop = human_in_loop
         
         # Default system prompt (can be overridden with @environment.prompt() decorator)
-        # Only add if not already defined
-        if "system_prompt" not in self._prompts:
-            @self.prompt()
-            def system_prompt(agent_name: str) -> str:
-                """System prompt for the agent."""
-                return f"You are {agent_name}."
+        @self.prompt()
+        def system_prompt(agent_name: str) -> str:
+            """System prompt for the agent."""
+            return f"You are {agent_name}."
     
     async def start(self, port: int = 8080, host: str = "0.0.0.0") -> str:
         """Start MCP server and return MCP URI.

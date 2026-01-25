@@ -73,13 +73,42 @@ class Loop(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         """Execute agent task using OpenAI and MCP client for system prompt/tools."""
+        print('--------------------------------')
+        print(dir(context))
+        print('--------------------------------')
+
+        print('context.configuration:', context.configuration)
+        print('context.context_id:', context.context_id)
+        print('context.current_task:', context.current_task)
+        print('context.get_user_input:', context.get_user_input)
+        print('context.message:', context.message)
+        print('context.metadata:', context.metadata)
+        print('context.task_id:', context.task_id)
+
         task_id = context.task_id
         context_id = context.context_id
         
         # Get Environment URI from context_id
         environment_uri = self.context_id_to_environment_uri.get(context_id)
+        
+        # Handle missing context_id:
+        # 1. Try default context_id (None or empty string)
         if not environment_uri:
-            raise ValueError(f"No environment found for context_id: {context_id}")
+            environment_uri = self.context_id_to_environment_uri.get(None) or \
+                              self.context_id_to_environment_uri.get("")
+        
+        # 2. If still not found and only one environment, use it
+        if not environment_uri and len(self.context_id_to_environment_uri) == 1:
+            environment_uri = next(iter(self.context_id_to_environment_uri.values()))
+        
+        # 3. If still not found, raise error
+        if not environment_uri:
+            available_context_ids = list(self.context_id_to_environment_uri.keys())
+            raise ValueError(
+                f"No environment found for context_id: {context_id}. "
+                f"Available context_ids: {available_context_ids}. "
+                f"To use a default environment, configure context_id_to_environment_uri with None or '' as a key."
+            )
         
         # Trace: Get system prompt from Environment
         with self.tracer.start_as_current_span("get_system_prompt") as span:

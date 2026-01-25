@@ -1,6 +1,7 @@
 """Agent class - A2A Server that contains Loop internally."""
 
 import os
+from contextlib import asynccontextmanager
 from typing import Dict, Optional
 from fastapi import FastAPI
 import uvicorn
@@ -10,6 +11,7 @@ from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.types import AgentCard, AgentCapabilities, AgentSkill, TransportProtocol
 
 from timestep.core.loop import Loop
+from timestep.core.environment import Environment
 
 
 class Agent:
@@ -37,6 +39,14 @@ class Agent:
         self.context_id_to_environment_uri = context_id_to_environment_uri or {}
         self.human_in_loop = human_in_loop
         self.trace_to_file = trace_to_file
+        
+        # Create default Environment instance
+        self.default_environment = Environment(
+            environment_id=f"{agent_id}-env",
+            context_id="default",  # Default context_id
+            agent_id=agent_id,
+            human_in_loop=human_in_loop,
+        )
         
         # Loop (AgentExecutor) is inside Agent
         self.loop = Loop(
@@ -67,8 +77,35 @@ class Agent:
         # Build A2A app - this returns a FastAPI app with:
         # - Agent card endpoint at /.well-known/agent-card.json
         # - JSON-RPC endpoint at / (POST)
-        # Use it directly with uvicorn
         self.fastapi_app = self.app.build()
+        
+        # Get MCP app - streamable_http_app() returns a Starlette app with route at /mcp
+        # Include routes directly so /mcp stays as /mcp (not /mcp/mcp)
+        mcp_app = self.default_environment.streamable_http_app()
+        for route in mcp_app.routes:
+            self.fastapi_app.routes.append(route)
+        
+        # Initialize MCP task group on startup (required for streamable HTTP)
+        # This is what run_streamable_http_async() does internally
+        @self.fastapi_app.on_event("startup")
+        async def startup_event():
+            import anyio
+            tg = anyio.create_task_group()
+            await tg.__aenter__()
+            self._mcp_task_group = tg
+            
+            # Set task group on session manager
+            session_manager = self.default_environment.session_manager
+            if hasattr(session_manager, '_task_group') and session_manager._task_group is None:
+                session_manager._task_group = tg
+        
+        @self.fastapi_app.on_event("shutdown")
+        async def shutdown_event():
+            if hasattr(self, '_mcp_task_group') and self._mcp_task_group:
+                try:
+                    await self._mcp_task_group.__aexit__(None, None, None)
+                except Exception:
+                    pass
     
     def _create_agent_card(self) -> AgentCard:
         """Create an agent card for this agent."""
@@ -100,9 +137,21 @@ class Agent:
         Returns:
             Agent URI (e.g., "http://localhost:9999")
         """
+        # Convert bind address to HTTP hostname
+        http_host = "localhost" if host == "0.0.0.0" else host
+        
         # Set base URL environment variable if not set
         if not os.getenv("A2A_BASE_URL"):
-            os.environ["A2A_BASE_URL"] = f"http://{host}:{port}"
+            os.environ["A2A_BASE_URL"] = f"http://{http_host}:{port}"
+        
+        # Update default environment URI to use mounted path
+        # Use localhost instead of 0.0.0.0 for HTTP requests
+        default_env_uri = f"http://{http_host}:{port}/mcp"
+        # Set default context_id to use mounted environment if not already set
+        if None not in self.context_id_to_environment_uri and "" not in self.context_id_to_environment_uri:
+            self.context_id_to_environment_uri[None] = default_env_uri
+            # Update Loop's mapping
+            self.loop.context_id_to_environment_uri[None] = default_env_uri
         
         # Start server
         config = uvicorn.Config(
@@ -118,12 +167,24 @@ class Agent:
         asyncio.create_task(server.serve())
         
         # Return agent URI
-        return f"http://{host}:{port}"
+        return f"http://{http_host}:{port}"
     
     def run(self, port: int = 9999, host: str = "0.0.0.0"):
         """Run the A2A server (blocking)."""
+        # Convert bind address to HTTP hostname
+        http_host = "localhost" if host == "0.0.0.0" else host
+        
         # Set base URL environment variable if not set
         if not os.getenv("A2A_BASE_URL"):
-            os.environ["A2A_BASE_URL"] = f"http://{host}:{port}"
+            os.environ["A2A_BASE_URL"] = f"http://{http_host}:{port}"
+        
+        # Update default environment URI to use mounted path
+        # Use localhost instead of 0.0.0.0 for HTTP requests
+        default_env_uri = f"http://{http_host}:{port}/mcp"
+        # Set default context_id to use mounted environment if not already set
+        if None not in self.context_id_to_environment_uri and "" not in self.context_id_to_environment_uri:
+            self.context_id_to_environment_uri[None] = default_env_uri
+            # Update Loop's mapping
+            self.loop.context_id_to_environment_uri[None] = default_env_uri
         
         uvicorn.run(self.fastapi_app, host=host, port=port)
