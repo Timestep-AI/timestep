@@ -10,10 +10,10 @@
 # ]
 # ///
 
-"""Weather Assistant Agent - A2A Server.
+"""Personal Assistant Agent - A2A Server.
 
-This script runs a Weather Assistant Agent that connects to an Environment
-via MCP to get system prompts and tools.
+This script runs a Personal Assistant Agent that connects to an Environment
+via MCP to get system prompts and tools. It can hand off tasks to other agents.
 """
 
 import os
@@ -63,7 +63,7 @@ from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
 )
-from a2a.client import A2ACardResolver, A2AClient
+from a2a.client import A2ACardResolver, A2AClient, ClientFactory, ClientConfig
 from a2a.types import (
     AgentCard,
     MessageSendParams,
@@ -73,18 +73,22 @@ from a2a.types import (
     Part,
     DataPart,
     Role,
+    TransportProtocol,
 )
 from a2a.client.helpers import create_text_message_object
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from mcp.client.streamable_http import streamable_http_client
 from mcp import ClientSession
 from mcp.types import TextContent
+from mcp.server.fastmcp.server import Context
+from mcp.shared.context import RequestContext
+import mcp.types as mcp_types
 
 
 def main():
-    """Run the Weather Assistant Agent."""
+    """Run the Personal Assistant Agent."""
     # Get port from environment variable or use default
-    port = int(os.getenv("WEATHER_AGENT_PORT", "10000"))
+    port = int(os.getenv("PERSONAL_AGENT_PORT", "9999"))
     host = "0.0.0.0"
     http_host = "localhost" if host == "0.0.0.0" else host
     
@@ -95,40 +99,77 @@ def main():
     
     # Create Environment instance
     environment = Environment(
-        environment_id="weather-assistant-env",
-        context_id="weather-context",
-        agent_id="weather-assistant",
+        environment_id="personal-assistant-env",
+        context_id="personal-context",
+        agent_id="personal-assistant",
         human_in_loop=False,
     )
     
-    # Add get_weather tool to the environment
+    # Add handoff tool to the environment
     @environment.tool()
-    async def get_weather(location: str) -> Dict[str, Any]:
-        """Get the current weather for a specific location."""
-        # Return hardcoded weather data
-        return {
-            "location": location,
-            "temperature": "72°F",
-            "condition": "Sunny",
-            "humidity": "65%"
-        }
+    async def handoff(
+        agent_uri: str,
+        context_id: Optional[str] = None,
+        message: Optional[str] = None,
+        ctx: Context = None,
+    ) -> Dict[str, Any]:
+        """Handoff tool that uses MCP sampling to call another agent via the client.
+        
+        Args:
+            agent_uri: The full base URL of the target agent (e.g., "http://localhost:10000").
+                      This must be the complete URL where the agent's A2A endpoint is available.
+            context_id: Optional context ID for the handoff.
+            message: The message/question to send to the target agent.
+        
+        The client's sampling handler will invoke the A2A server for the target agent.
+        For the weather assistant, use agent_uri="http://localhost:10000"
+        """
+        if not message:
+            raise ValueError("Message is required for handoff")
+        
+        if not ctx:
+            raise ValueError("Context not available for sampling")
+        
+        sampling_message = mcp_types.SamplingMessage(
+            role="user",
+            content=mcp_types.TextContent(type="text", text=message)
+        )
+        
+        result = await ctx.session.create_message(
+            messages=[sampling_message],
+            max_tokens=1000,
+            metadata={"agent_uri": agent_uri}
+        )
+        
+        # result.content is a TextContent object
+        return {"response": result.content.text.strip()}
     
-    # Update system prompt for weather assistant
+    # Update system prompt for personal assistant
     @environment.prompt()
     def system_prompt(agent_name: str) -> str:
-        """System prompt for the weather assistant agent."""
-        return f"You are {agent_name}, a helpful weather assistant. You can get weather information for any location using the get_weather tool."
+        """System prompt for the personal assistant agent."""
+        return f"""You are {agent_name}, a helpful personal assistant. 
+You can help with various tasks. For weather-related questions, use the handoff tool 
+to delegate to the weather assistant agent.
+
+IMPORTANT: When using the handoff tool, you MUST use the exact agent_uri: http://localhost:10000
+Do NOT use placeholder values like weather_agent or weather_service. 
+The agent_uri must be the full URL: http://localhost:10000
+
+Example handoff tool call:
+- agent_uri: http://localhost:10000
+- message: What is the current weather in Oakland?"""
     
     # Get MCP app from environment
     mcp_app = environment.streamable_http_app()
     
     # Create agent
     agent = Agent(
-        agent_id="weather-assistant",
-        name="Weather Assistant",
+        agent_id="personal-assistant",
+        name="Personal Assistant",
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         context_id_to_environment_uri={
-            "weather-context": f"http://{http_host}:{port}/mcp"
+            "personal-context": f"http://{http_host}:{port}/mcp"
         },
         human_in_loop=False,
     )
@@ -162,7 +203,7 @@ def main():
     
     # Create a new FastAPI app with lifespan
     combined_app = FastAPI(
-        title="Weather Assistant Agent",
+        title="Personal Assistant Agent",
         lifespan=lifespan,
     )
     
@@ -225,17 +266,351 @@ def main():
         
         return None
     
+    def extract_task_from_event(event: Any) -> Any:
+        """Extract Task object from A2A event."""
+        if isinstance(event, tuple):
+            task, _ = event
+            return task
+        elif hasattr(event, 'id') and hasattr(event, 'status'):
+            return event
+        else:
+            raise ValueError(f"Received non-Task event from Task-generating agent: {type(event)}")
+    
+    def extract_final_message(task: Any) -> str:
+        """Extract final message text from a completed task."""
+        message_text = ""
+        
+        # Extract from task.status.message if available - handle both dict and object access
+        status = getattr(task, 'status', None) if hasattr(task, 'status') else (task.get('status') if isinstance(task, dict) else None)
+        if status:
+            # Get message from status - handle both dict and object access
+            if isinstance(status, dict):
+                status_message = status.get('message')
+            else:
+                status_message = getattr(status, 'message', None)
+            
+            if status_message:
+                # Get parts from message - handle both dict and object access
+                if isinstance(status_message, dict):
+                    parts = status_message.get('parts', [])
+                else:
+                    parts = getattr(status_message, 'parts', [])
+                
+                for part in parts:
+                    part_data = part.root if hasattr(part, 'root') else part
+                    if isinstance(part_data, dict):
+                        if part_data.get('kind') == 'text' and part_data.get('text'):
+                            message_text += part_data.get('text', '')
+                    elif hasattr(part_data, 'kind') and part_data.kind == 'text':
+                        if hasattr(part_data, 'text'):
+                            message_text += part_data.text
+        
+        # Also check task history for agent messages - handle both dict and object access
+        if isinstance(task, dict):
+            task_history = task.get('history', [])
+        else:
+            task_history = getattr(task, 'history', []) if hasattr(task, 'history') else []
+        
+        if task_history:
+            for msg in task_history:
+                # Handle both dict and object access for message
+                if isinstance(msg, dict):
+                    msg_role = msg.get('role')
+                    msg_parts = msg.get('parts', [])
+                    msg_content = msg.get('content', '')
+                else:
+                    msg_role = getattr(msg, 'role', None)
+                    msg_parts = getattr(msg, 'parts', []) if hasattr(msg, 'parts') else []
+                    msg_content = getattr(msg, 'content', '') if hasattr(msg, 'content') else ''
+                
+                if msg_role == Role.agent or str(msg_role) == "agent":
+                    # Extract text from parts
+                    for part in msg_parts:
+                        part_data = part.root if hasattr(part, 'root') else part
+                        if isinstance(part_data, dict):
+                            if part_data.get('kind') == 'text' and part_data.get('text'):
+                                message_text += part_data.get('text', '')
+                        elif hasattr(part_data, 'kind') and part_data.kind == 'text':
+                            if hasattr(part_data, 'text'):
+                                message_text += part_data.text
+                    # Also check for direct content if no parts
+                    if not msg_parts and msg_content:
+                        message_text += str(msg_content)
+        
+        return message_text.strip()
+    
+    def extract_tool_output(result: Dict[str, Any]) -> str:
+        """Extract text output from tool result dict.
+        
+        Handles:
+        - {"result": "text"} -> "text"
+        - {"error": "error message"} -> "error message"
+        - Other dicts -> JSON stringified
+        - Strings -> as-is
+        """
+        if isinstance(result, dict):
+            if "result" in result:
+                return str(result["result"])
+            elif "error" in result:
+                return str(result["error"])
+            else:
+                return json.dumps(result)
+        return str(result)
+    
+    def build_tool_result_message(
+        tool_results: List[Dict[str, Any]],
+        task_id: Optional[str],
+        context_id: Optional[str],
+    ) -> Any:
+        """Build a user message carrying tool results via DataPart."""
+        tool_result_msg = create_text_message_object(role=Role.user, content="")
+        if task_id:
+            tool_result_msg.task_id = task_id
+        if context_id:
+            tool_result_msg.context_id = context_id
+        # DataPart tool_results maps to OpenAI tool messages in the A2A server.
+        tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
+        return tool_result_msg
+    
+    async def process_message_stream(
+        a2a_client: Any,
+        message_obj: Any,
+        agent_id: str,
+        task_id: Optional[str] = None,
+        context_id: Optional[str] = None,
+        agent_uri: Optional[str] = None,
+    ) -> str:
+        """Process a message stream, handling tool calls recursively."""
+        final_message = ""
+        
+        # Python automatically closes async generators when the loop exits
+        async for event in a2a_client.send_message(message_obj):
+            task = extract_task_from_event(event)
+            
+            current_task_id = task.id if hasattr(task, 'id') else task_id
+            current_context_id = task.context_id if hasattr(task, 'context_id') else context_id
+            
+            if hasattr(task, 'status') and task.status:
+                state_value = task.status.state.value if hasattr(task.status, 'state') and hasattr(task.status.state, 'value') else None
+                
+                if state_value == "completed":
+                    final_message = extract_final_message(task)
+                    break
+                
+                if state_value == "input-required":
+                    tool_calls = extract_tool_calls(task)
+                    if tool_calls:
+                        # Execute tools via MCP (for weather assistant's get_weather tool)
+                        # The weather assistant's tools are executed via its own MCP environment
+                        # The MCP endpoint is at {agent_uri}/mcp
+                        tool_results = []
+                        for tc in tool_calls:
+                            tool_name = tc.get("name", "")
+                            tool_args = tc.get("arguments", {})
+                            call_id = tc.get("call_id", "")
+                            
+                            # Construct MCP endpoint URI from agent_uri
+                            if agent_uri:
+                                weather_env_uri = f"{agent_uri}/mcp"
+                            elif agent_id == "weather-assistant":
+                                weather_env_uri = "http://localhost:10000/mcp"
+                            else:
+                                weather_env_uri = "http://localhost:10000/mcp"  # Fallback
+                            
+                            result = await execute_tool_via_mcp(tool_name, tool_args, weather_env_uri)
+                            # Extract text from result dict before passing to build_tool_result_message
+                            output_text = extract_tool_output(result)
+                            tool_results.append({
+                                "call_id": call_id,
+                                "name": tool_name,
+                                "output": output_text,
+                            })
+                        
+                        # Build tool result message and recursively process
+                        tool_result_msg = build_tool_result_message(tool_results, current_task_id, current_context_id)
+                        result_message = await process_message_stream(
+                            a2a_client, tool_result_msg, agent_id, current_task_id, current_context_id, agent_uri
+                        )
+                        if result_message:
+                            final_message = result_message
+        
+        return final_message.strip() or "Task completed."
+    
+    async def handle_agent_handoff(agent_uri: str, message: str) -> str:
+        """Handle agent handoff by calling the A2A agent at agent_uri."""
+        # Use A2AClient for JSON-RPC agents (works better than ClientFactory for now)
+        async with httpx.AsyncClient(timeout=60.0) as httpx_client:
+            resolver = A2ACardResolver(
+                httpx_client=httpx_client,
+                base_url=agent_uri,
+            )
+            agent_card = await resolver.get_agent_card()
+            a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
+            
+            try:
+                message_obj = create_text_message_object(role="user", content=message)
+                # Extract agent_id from URI (simplified - just use "weather-assistant" for now)
+                agent_id = "weather-assistant" if "10000" in agent_uri else "unknown"
+                
+                # Process message using A2AClient (non-streaming, polling mode)
+                final_message = ""
+                task_id = None
+                context_id = None
+                
+                # Send initial message
+                send_request = SendMessageRequest(
+                    id=str(uuid4()),
+                    params=MessageSendParams(message=message_obj)
+                )
+                response = await a2a_client.send_message(send_request)
+                
+                # Extract task from response
+                response_dict = response.model_dump() if hasattr(response, 'model_dump') else {}
+                task_data = response_dict.get('result') or getattr(response, 'result', None)
+                
+                if not task_data:
+                    return "Error: Failed to get task from response"
+                
+                # Convert to object-like access if it's a dict
+                if isinstance(task_data, dict):
+                    class TaskObj:
+                        def __init__(self, d):
+                            for k, v in d.items():
+                                if isinstance(v, dict):
+                                    setattr(self, k, TaskObj(v))
+                                else:
+                                    setattr(self, k, v)
+                    task = TaskObj(task_data)
+                else:
+                    task = task_data
+                
+                task_id = getattr(task, 'id', None)
+                context_id = getattr(task, 'context_id', None)
+                
+                # Process task until completion
+                while True:
+                    # Get status
+                    status = getattr(task, 'status', None)
+                    if not status:
+                        break
+                    
+                    state_value = None
+                    if isinstance(status, dict):
+                        state_value = status.get('state', {}).get('value') if isinstance(status.get('state'), dict) else status.get('state')
+                    else:
+                        state_obj = getattr(status, 'state', None)
+                        state_value = getattr(state_obj, 'value', None) if state_obj else None
+                    
+                    if state_value == "completed":
+                        final_message = extract_final_message(task)
+                        break
+                    
+                    if state_value == "input-required":
+                        tool_calls = extract_tool_calls(task)
+                        if tool_calls:
+                            # Execute tools via MCP
+                            tool_results = []
+                            for tc in tool_calls:
+                                tool_name = tc.get("name", "")
+                                tool_args = tc.get("arguments", {})
+                                call_id = tc.get("call_id", "")
+                                
+                                # Construct MCP endpoint URI from agent_uri
+                                weather_env_uri = f"{agent_uri}/mcp"
+                                
+                                result = await execute_tool_via_mcp(tool_name, tool_args, weather_env_uri)
+                                # Extract text from result dict before passing to build_tool_result_message
+                                output_text = extract_tool_output(result)
+                                tool_results.append({
+                                    "call_id": call_id,
+                                    "name": tool_name,
+                                    "output": output_text,
+                                })
+                            
+                            # Build tool result message and send it
+                            tool_result_msg = build_tool_result_message(tool_results, task_id, context_id)
+                            send_request = SendMessageRequest(
+                                id=str(uuid4()),
+                                params=MessageSendParams(message=tool_result_msg)
+                            )
+                            response = await a2a_client.send_message(send_request)
+                            
+                            # Extract task from response
+                            response_dict = response.model_dump() if hasattr(response, 'model_dump') else {}
+                            task_data = response_dict.get('result') or getattr(response, 'result', None)
+                            
+                            if task_data:
+                                if isinstance(task_data, dict):
+                                    task = TaskObj(task_data)
+                                else:
+                                    task = task_data
+                                task_id = getattr(task, 'id', None) or task_id
+                                context_id = getattr(task, 'context_id', None) or context_id
+                                continue
+                        break
+                    else:
+                        break
+                
+                return final_message.strip() or "Task completed."
+            except Exception as e:
+                return f"Error during handoff: {str(e)}"
+    
+    async def mcp_sampling_callback(
+        context: RequestContext["ClientSession", Any],
+        params: mcp_types.CreateMessageRequestParams,
+    ) -> mcp_types.CreateMessageResult | mcp_types.CreateMessageResultWithTools | mcp_types.ErrorData:
+        """MCP sampling callback that handles sampling requests from the MCP server."""
+        try:
+            # Extract agent_uri from metadata (passed by handoff tool)
+            agent_uri = (params.metadata or {}).get("agent_uri")
+            if not agent_uri:
+                return mcp_types.ErrorData(
+                    code=mcp_types.INVALID_PARAMS,
+                    message="agent_uri is required for sampling",
+                )
+            
+            # Extract message text from params.messages (SamplingMessage objects with TextContent)
+            message_text = params.messages[0].content.text if params.messages else "Please help with this task."
+            
+            result_text = await handle_agent_handoff(agent_uri=agent_uri, message=message_text)
+            
+            return mcp_types.CreateMessageResult(
+                role="assistant",
+                content=mcp_types.TextContent(type="text", text=result_text),
+                model="a2a-agent"
+            )
+        except Exception as e:
+            return mcp_types.ErrorData(
+                code=mcp_types.INTERNAL_ERROR,
+                message=f"Sampling error: {str(e)}",
+            )
+    
     async def execute_tool_via_mcp(tool_name: str, arguments: Dict[str, Any], environment_uri: str) -> Dict[str, Any]:
         """Execute a single tool via MCP."""
         try:
             async with streamable_http_client(environment_uri) as (read, write, _):
-                async with ClientSession(read, write) as session:
+                async with ClientSession(read, write, sampling_callback=mcp_sampling_callback) as session:
                     await session.initialize()
                     result = await session.call_tool(tool_name, arguments)
                     
                     if result.content:
                         text_parts = [item.text for item in result.content if isinstance(item, TextContent)]
-                        return {"result": " ".join(text_parts)} if text_parts else {"result": None}
+                        if text_parts:
+                            result_text = " ".join(text_parts)
+                            
+                            # Special handling for handoff tool: extract response from nested structure
+                            if tool_name == "handoff":
+                                try:
+                                    # Try to parse as JSON to extract "response" field
+                                    parsed = json.loads(result_text)
+                                    if isinstance(parsed, dict) and "response" in parsed:
+                                        result_text = parsed["response"]
+                                except (json.JSONDecodeError, KeyError, TypeError):
+                                    # If parsing fails, use the text as-is
+                                    pass
+                            
+                            return {"result": result_text}
+                        return {"result": None}
                     return {"result": None}
         except Exception as e:
             return {"error": str(e)}
@@ -549,10 +924,12 @@ def main():
                             call_id = tc.get("call_id", "")
                             
                             result = await execute_tool_via_mcp(tool_name, tool_args, environment_uri)
+                            # Extract text from result dict before passing to build_tool_result_message
+                            output_text = extract_tool_output(result)
                             tool_results.append({
                                 "call_id": call_id,
                                 "name": tool_name,
-                                "output": result,
+                                "output": output_text,
                             })
                         
                         # Build tool result message and continue loop to get next response
@@ -853,10 +1230,12 @@ def main():
                                     call_id = tc.get("call_id", "")
                                     
                                     result = await execute_tool_via_mcp(tool_name, tool_args, environment_uri)
+                                    # Extract text from result dict before passing to build_tool_result_message
+                                    output_text = extract_tool_output(result)
                                     tool_results.append({
                                         "call_id": call_id,
                                         "name": tool_name,
-                                        "output": result,
+                                        "output": output_text,
                                     })
                                 
                                 # Build tool result message and continue outer loop
@@ -889,7 +1268,7 @@ def main():
                     break
     
     # Run combined app (blocking)
-    print(f"Starting Weather Assistant Agent on port {port}...")
+    print(f"Starting Personal Assistant Agent on port {port}...")
     print(f"Environment mounted at: http://{http_host}:{port}/mcp")
     uvicorn.run(combined_app, host=host, port=port)
 
