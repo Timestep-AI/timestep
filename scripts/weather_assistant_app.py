@@ -495,9 +495,11 @@ def main():
                                     final_content += part_data.text
                     
                     # Also check task history for agent messages (important after tool execution)
+                    # Only get the LAST agent message to avoid incremental updates
                     task_history = getattr(task, 'history', None) if hasattr(task, 'history') else (task.get('history') if isinstance(task, dict) else None)
                     if task_history:
-                        for msg in task_history:
+                        # Go through history in reverse to find the last agent message
+                        for msg in reversed(task_history):
                             # Handle both dict and object access
                             if isinstance(msg, dict):
                                 msg_role = msg.get('role')
@@ -507,14 +509,26 @@ def main():
                                 msg_parts = getattr(msg, 'parts', [])
                             
                             if msg_role == 'agent' or str(msg_role) == 'agent':
+                                # Only get text from the last agent message (first in reverse)
+                                agent_text = ""
                                 for part in msg_parts:
                                     part_data = part.root if hasattr(part, 'root') else part
                                     if isinstance(part_data, dict):
                                         if part_data.get('kind') == 'text' and part_data.get('text'):
-                                            final_content += part_data.get('text', '')
+                                            agent_text += part_data.get('text', '')
                                     elif hasattr(part_data, 'kind') and part_data.kind == 'text':
                                         if hasattr(part_data, 'text'):
-                                            final_content += part_data.text
+                                            agent_text += part_data.text
+                                
+                                # Use the agent text if we don't have content from status.message
+                                if agent_text and not final_content:
+                                    final_content = agent_text
+                                elif agent_text and agent_text != final_content:
+                                    # If agent text is different, use the longer one (final version)
+                                    final_content = agent_text if len(agent_text) > len(final_content) else final_content
+                                
+                                # Only use the first (last in reverse) agent message
+                                break
                     
                     break
                 
@@ -601,6 +615,7 @@ def main():
             
             task_id = None
             accumulated_content = ""
+            last_sent_content = ""  # Track what we've already sent
             
             # Process conversation loop
             while True:
@@ -661,31 +676,124 @@ def main():
                                 else:
                                     parts = getattr(status_message, 'parts', [])
                                 
+                                current_text = ""
                                 for part in parts:
                                     part_data = part.root if hasattr(part, 'root') else part
                                     if hasattr(part_data, 'kind') and part_data.kind == 'text':
                                         if hasattr(part_data, 'text'):
-                                            delta_content = part_data.text
-                                            accumulated_content += delta_content
-                                            chunk_data = {
-                                                'id': f'resp_{uuid4().hex}',
-                                                'object': 'response.delta',
-                                                'created_at': int(time.time()),
-                                                'model': agent.model,
-                                                'output': [{
-                                                    'type': 'message',
-                                                    'delta': {
-                                                        'content': [{
-                                                            'type': 'output_text',
-                                                            'text': delta_content
-                                                        }]
-                                                    }
-                                                }]
-                                            }
-                                            yield f"data: {json.dumps(chunk_data)}\n\n"
+                                            current_text += part_data.text
+                                
+                                # Only send the new content (delta)
+                                if current_text and current_text != last_sent_content:
+                                    # Find the new part
+                                    if current_text.startswith(last_sent_content):
+                                        delta_content = current_text[len(last_sent_content):]
+                                    else:
+                                        # If text doesn't start with what we sent, send the whole thing
+                                        delta_content = current_text
+                                    
+                                    if delta_content:
+                                        accumulated_content = current_text
+                                        last_sent_content = current_text
+                                        chunk_data = {
+                                            'id': f'resp_{uuid4().hex}',
+                                            'object': 'response.delta',
+                                            'created_at': int(time.time()),
+                                            'model': agent.model,
+                                            'output': [{
+                                                'type': 'message',
+                                                'delta': {
+                                                    'content': [{
+                                                        'type': 'output_text',
+                                                        'text': delta_content
+                                                    }]
+                                                }
+                                            }]
+                                        }
+                                        yield f"data: {json.dumps(chunk_data)}\n\n"
                         
                         # Check if completed
                         if state_value == "completed":
+                            # Extract final content from completed message
+                            if isinstance(event_status, dict):
+                                status_message = event_status.get('message')
+                            else:
+                                status_message = getattr(event_status, 'message', None)
+                            
+                            final_content = accumulated_content
+                            if status_message:
+                                # Extract text from completed message
+                                if isinstance(status_message, dict):
+                                    parts = status_message.get('parts', [])
+                                else:
+                                    parts = getattr(status_message, 'parts', [])
+                                
+                                for part in parts:
+                                    part_data = part.root if hasattr(part, 'root') else part
+                                    if hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                        if hasattr(part_data, 'text'):
+                                            final_content = part_data.text  # Use final content
+                            
+                            # Also check task history for final content (after tool execution)
+                            if isinstance(task, dict):
+                                task_history = task.get('history', [])
+                            else:
+                                task_history = getattr(task, 'history', [])
+                            
+                            if task_history:
+                                # Get the last agent message from history
+                                for msg in reversed(task_history):
+                                    if isinstance(msg, dict):
+                                        msg_role = msg.get('role')
+                                        msg_parts = msg.get('parts', [])
+                                    else:
+                                        msg_role = getattr(msg, 'role', None)
+                                        msg_parts = getattr(msg, 'parts', [])
+                                    
+                                    if msg_role == 'agent' or str(msg_role) == 'agent':
+                                        agent_text = ""
+                                        for part in msg_parts:
+                                            part_data = part.root if hasattr(part, 'root') else part
+                                            if isinstance(part_data, dict):
+                                                if part_data.get('kind') == 'text' and part_data.get('text'):
+                                                    agent_text += part_data.get('text', '')
+                                            elif hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                                if hasattr(part_data, 'text'):
+                                                    agent_text += part_data.text
+                                        
+                                        if agent_text:
+                                            # Use the longer text (final version)
+                                            if len(agent_text) > len(final_content):
+                                                final_content = agent_text
+                                        break  # Only use the last agent message
+                            
+                            # Send any remaining content that hasn't been sent yet
+                            if final_content and final_content != last_sent_content:
+                                if final_content.startswith(last_sent_content):
+                                    remaining_content = final_content[len(last_sent_content):]
+                                else:
+                                    remaining_content = final_content
+                                
+                                if remaining_content:
+                                    chunk_data = {
+                                        'id': f'resp_{uuid4().hex}',
+                                        'object': 'response.delta',
+                                        'created_at': int(time.time()),
+                                        'model': agent.model,
+                                        'output': [{
+                                            'type': 'message',
+                                            'delta': {
+                                                'content': [{
+                                                    'type': 'output_text',
+                                                    'text': remaining_content
+                                                }]
+                                            }
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                                    last_sent_content = final_content
+                            
+                            # Send completion marker
                             chunk_data = {
                                 'id': f'resp_{uuid4().hex}',
                                 'object': 'response.delta',

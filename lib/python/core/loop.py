@@ -184,6 +184,8 @@ class Loop(AgentExecutor):
         if task and task.history:
             # Track which tool_call_id sets we've seen (to filter incremental updates)
             seen_tool_call_sets = set()
+            # Track the last assistant message without tool_calls (to filter incremental text updates)
+            last_assistant_text = None
             
             # Go through history in reverse to keep the last (final) version of each assistant message
             for hist_message in reversed(task.history):
@@ -196,9 +198,22 @@ class Loop(AgentExecutor):
                         if tool_call_ids not in seen_tool_call_sets:
                             messages.insert(0, openai_msg)
                             seen_tool_call_sets.add(tool_call_ids)
+                    elif openai_msg.get("role") == "assistant":
+                        # For assistant messages without tool_calls, only keep the last one (filter incremental text updates)
+                        if last_assistant_text is None:
+                            last_assistant_text = openai_msg
                     else:
-                        # Keep all other messages
+                        # Keep all other messages (user, tool)
                         messages.insert(0, openai_msg)
+            
+            # Add the last assistant text message (if any) at the appropriate position
+            if last_assistant_text:
+                # Insert after the last user message or at the beginning
+                insert_pos = 0
+                for i, msg in enumerate(messages):
+                    if msg.get("role") == "user":
+                        insert_pos = i + 1
+                messages.insert(insert_pos, last_assistant_text)
         
         # Add the current incoming message
         if tool_results:
