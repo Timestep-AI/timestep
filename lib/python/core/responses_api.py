@@ -6,9 +6,9 @@ from typing import Dict, Any, List, Optional, Callable
 from uuid import uuid4
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
-import httpx
 
 from a2a.client import A2ACardResolver, A2AClient
+import httpx
 from a2a.types import (
     MessageSendParams,
     SendMessageRequest,
@@ -342,6 +342,7 @@ class ResponsesAPI:
         if not environment_uri:
             raise HTTPException(status_code=400, detail=f"No environment found for context_id: {context_id}")
         
+        # Use A2AClient for JSON-RPC agents (ClientFactory doesn't support JSON-RPC yet)
         async with httpx.AsyncClient(timeout=300.0) as httpx_client:
             resolver = A2ACardResolver(httpx_client=httpx_client, base_url=self.agent_base_url)
             agent_card = await resolver.get_agent_card()
@@ -529,6 +530,7 @@ class ResponsesAPI:
             yield f"data: {json.dumps({'error': {'message': f'No environment found for context_id: {context_id}'}})}\n\n"
             return
         
+        # Use A2AClient for JSON-RPC agents (ClientFactory doesn't support JSON-RPC yet)
         async with httpx.AsyncClient(timeout=300.0) as httpx_client:
             resolver = A2ACardResolver(httpx_client=httpx_client, base_url=self.agent_base_url)
             agent_card = await resolver.get_agent_card()

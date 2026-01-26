@@ -63,7 +63,7 @@ from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
 )
-from a2a.client import A2ACardResolver, A2AClient, ClientFactory, ClientConfig
+from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import (
     AgentCard,
     MessageSendParams,
@@ -73,7 +73,6 @@ from a2a.types import (
     Part,
     DataPart,
     Role,
-    TransportProtocol,
 )
 from a2a.client.helpers import create_text_message_object
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
@@ -377,15 +376,12 @@ Example handoff tool call:
     
     async def handle_agent_handoff(agent_uri: str, message: str) -> str:
         """Handle agent handoff by calling the A2A agent at agent_uri."""
-        # Use A2AClient for JSON-RPC agents (works better than ClientFactory for now)
+        # Use A2AClient for JSON-RPC agents (ClientFactory doesn't support JSON-RPC yet)
         async with httpx.AsyncClient(timeout=60.0) as httpx_client:
-            resolver = A2ACardResolver(
-                httpx_client=httpx_client,
-                base_url=agent_uri,
-            )
+            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=agent_uri)
             agent_card = await resolver.get_agent_card()
             a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
-            
+        
             try:
                 message_obj = create_text_message_object(role="user", content=message)
                 # Extract agent_id from URI (simplified - just use "weather-assistant" for now)
