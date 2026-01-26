@@ -14,6 +14,7 @@ from a2a.types import (
     Role,
     Part,
     DataPart,
+    Message,
 )
 from a2a.client.helpers import create_text_message_object
 from mcp.client.streamable_http import streamable_http_client
@@ -23,10 +24,75 @@ from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
     convert_mcp_tool_to_openai,
     convert_openai_tool_call_to_mcp,
+    TOOL_CALLS_KEY,
+    TOOL_RESULTS_KEY,
 )
 
-# DataPart payload keys
-TOOL_CALLS_KEY = "tool_calls"
+
+def _convert_a2a_message_to_openai(message: Message) -> Optional[Dict[str, Any]]:
+    """Convert an A2A message from task history to OpenAI format.
+    
+    Returns:
+        OpenAI message dict (user, assistant, or tool) or None if message is empty/invalid
+    """
+    if not message or not message.parts:
+        return None
+    
+    # Extract text content
+    text_content = ""
+    tool_calls = []
+    tool_results = []
+    
+    for part in message.parts:
+        part_data = part.root if hasattr(part, "root") else part
+        if hasattr(part_data, "kind"):
+            if part_data.kind == "text" and hasattr(part_data, "text"):
+                text_content += part_data.text or ""
+            elif part_data.kind == "data" and hasattr(part_data, "data"):
+                if isinstance(part_data.data, dict):
+                    if TOOL_CALLS_KEY in part_data.data:
+                        calls = part_data.data[TOOL_CALLS_KEY]
+                        if isinstance(calls, list):
+                            tool_calls.extend(calls)
+                    if TOOL_RESULTS_KEY in part_data.data:
+                        results = part_data.data[TOOL_RESULTS_KEY]
+                        if isinstance(results, list):
+                            tool_results.extend(results)
+    
+    # Determine role from message role
+    role = message.role if hasattr(message, "role") else Role.user
+    
+    # Convert based on role and content
+    if role == Role.user:
+        # User message - can have text or tool results
+        if tool_results:
+            # This is a tool results message - convert to tool messages
+            # (This shouldn't happen in history, but handle it)
+            return None  # Tool results are handled separately
+        if text_content:
+            return {"role": "user", "content": text_content}
+    elif role == Role.agent:
+        # Assistant message - can have text and/or tool calls
+        openai_msg: Dict[str, Any] = {"role": "assistant", "content": text_content or ""}
+        if tool_calls:
+            # Convert MCP tool calls to OpenAI format
+            openai_tool_calls = []
+            for mcp_tc in tool_calls:
+                call_id = mcp_tc.get("call_id", "") if isinstance(mcp_tc, dict) else getattr(mcp_tc, "call_id", "")
+                name = mcp_tc.get("name", "") if isinstance(mcp_tc, dict) else getattr(mcp_tc, "name", "")
+                arguments = mcp_tc.get("arguments", {}) if isinstance(mcp_tc, dict) else getattr(mcp_tc, "arguments", {})
+                openai_tool_calls.append({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
+                    }
+                })
+            openai_msg["tool_calls"] = openai_tool_calls
+        return openai_msg
+    
+    return None
 
 
 class Loop(AgentExecutor):
@@ -107,15 +173,36 @@ class Loop(AgentExecutor):
         # Extract user message and tool results from incoming message
         user_text, tool_results = extract_user_text_and_tool_results(context.message)
         
-        # Build messages list from incoming message
+        # Build messages list - always start with task history
         messages = []
         
-        # Add user message if present
-        if user_text:
-            messages.append({"role": "user", "content": user_text})
+        # Get tool_call_ids from new tool results (if any)
+        new_tool_call_ids = {tool_result.get("call_id") for tool_result in tool_results} if tool_results else set()
         
-        # Add tool results if present
+        # Get task from context and convert full history to OpenAI format
+        task = context.current_task
+        if task and task.history:
+            # Track which tool_call_id sets we've seen (to filter incremental updates)
+            seen_tool_call_sets = set()
+            
+            # Go through history in reverse to keep the last (final) version of each assistant message
+            for hist_message in reversed(task.history):
+                openai_msg = _convert_a2a_message_to_openai(hist_message)
+                if openai_msg:
+                    if openai_msg.get("role") == "assistant" and openai_msg.get("tool_calls"):
+                        # Only keep the last (first in reverse) assistant message for each set of tool_call_ids
+                        tool_calls = openai_msg.get("tool_calls", [])
+                        tool_call_ids = tuple(sorted(tc.get("id") for tc in tool_calls if tc.get("id")))
+                        if tool_call_ids not in seen_tool_call_sets:
+                            messages.insert(0, openai_msg)
+                            seen_tool_call_sets.add(tool_call_ids)
+                    else:
+                        # Keep all other messages
+                        messages.insert(0, openai_msg)
+        
+        # Add the current incoming message
         if tool_results:
+            # Add tool results as tool messages
             for tool_result in tool_results:
                 tool_call_id = tool_result.get("call_id")
                 if not tool_call_id:
@@ -132,6 +219,9 @@ class Loop(AgentExecutor):
                     "tool_call_id": tool_call_id,
                     "content": content,
                 })
+        elif user_text:
+            # Add user message
+            messages.append({"role": "user", "content": user_text})
         
         # Ensure we have at least one message before calling OpenAI
         if not messages:

@@ -3,6 +3,7 @@
 # dependencies = [
 #   "a2a-sdk",
 #   "httpx",
+#   "openai",
 # ]
 # ///
 
@@ -15,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from openai import AsyncOpenAI
 
 from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import (
@@ -151,6 +153,39 @@ async def main() -> None:
             print(chunk.model_dump(mode='json', exclude_none=True))
         logger.info('=== end:send_message_streaming ===')
         # --8<-- [end:send_message_streaming]
+
+        # --8<-- [start:responses_non_streaming]
+        logger.info('\n=== start:responses_non_streaming ===')
+        openai_client = AsyncOpenAI(
+            base_url=f"{base_url}/v1",
+            api_key="dummy-key"  # Not used for local endpoint
+        )
+        
+        response = await openai_client.responses.create(
+            model="gpt-4o-mini",
+            input="What's the weather in Oakland?"
+        )
+        print(response.model_dump_json(indent=2, exclude_none=True))
+        logger.info('=== end:responses_non_streaming ===\n')
+        # --8<-- [end:responses_non_streaming]
+
+        # --8<-- [start:responses_streaming]
+        logger.info('=== start:responses_streaming ===')
+        openai_client = AsyncOpenAI(
+            base_url=f"{base_url}/v1",
+            api_key="dummy-key"  # Not used for local endpoint
+        )
+        
+        stream = await openai_client.responses.create(
+            model="gpt-4o-mini",
+            input="What's the weather in Oakland?",
+            stream=True
+        )
+        
+        async for chunk in stream:
+            print(chunk.model_dump_json(indent=2, exclude_none=True))
+        logger.info('=== end:responses_streaming ===')
+        # --8<-- [end:responses_streaming]
 
 
 if __name__ == '__main__':
