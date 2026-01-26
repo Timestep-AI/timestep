@@ -369,7 +369,7 @@ def main():
     
     async def get_a2a_client() -> A2AClient:
         """Get A2A client for communicating with the agent."""
-        async with httpx.AsyncClient() as httpx_client:
+        async with httpx.AsyncClient(timeout=300.0) as httpx_client:
             resolver = A2ACardResolver(
                 httpx_client=httpx_client,
                 base_url=agent_base_url,
@@ -414,7 +414,7 @@ def main():
         if not environment_uri:
             raise HTTPException(status_code=400, detail=f"No environment found for context_id: {context_id}")
         
-        async with httpx.AsyncClient() as httpx_client:
+        async with httpx.AsyncClient(timeout=300.0) as httpx_client:
             resolver = A2ACardResolver(httpx_client=httpx_client, base_url=agent_base_url)
             agent_card = await resolver.get_agent_card()
             a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
@@ -603,7 +603,7 @@ def main():
             yield f"data: {json.dumps({'error': {'message': f'No environment found for context_id: {context_id}'}})}\n\n"
             return
         
-        async with httpx.AsyncClient() as httpx_client:
+        async with httpx.AsyncClient(timeout=300.0) as httpx_client:
             resolver = A2ACardResolver(httpx_client=httpx_client, base_url=agent_base_url)
             agent_card = await resolver.get_agent_card()
             a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
@@ -650,16 +650,22 @@ def main():
                         else:
                             state_value = None
                     
-                    if event_kind == 'status-update' or (isinstance(event, dict) and event.get('kind') == 'status-update'):
+                    # Check if this is a task or status-update
+                    is_task = event_kind == 'task' or (isinstance(event, dict) and event.get('kind') == 'task')
+                    is_status_update = event_kind == 'status-update' or (isinstance(event, dict) and event.get('kind') == 'status-update')
+                    
+                    if is_task or is_status_update:
                         task = event
                         
                         # Extract task_id and context_id
                         if isinstance(task, dict):
                             task_id = task.get('taskId') or task.get('task_id') or task_id
                             context_id = task.get('contextId') or task.get('context_id') or context_id
+                            is_final = task.get('final', False)
                         else:
                             task_id = getattr(task, 'taskId', None) or getattr(task, 'task_id', None) or task_id
                             context_id = getattr(task, 'contextId', None) or getattr(task, 'context_id', None) or context_id
+                            is_final = getattr(task, 'final', False)
                         
                         # Stream content updates
                         if state_value == "working":
@@ -679,7 +685,10 @@ def main():
                                 current_text = ""
                                 for part in parts:
                                     part_data = part.root if hasattr(part, 'root') else part
-                                    if hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                    if isinstance(part_data, dict):
+                                        if part_data.get('kind') == 'text' and part_data.get('text'):
+                                            current_text += part_data.get('text', '')
+                                    elif hasattr(part_data, 'kind') and part_data.kind == 'text':
                                         if hasattr(part_data, 'text'):
                                             current_text += part_data.text
                                 
@@ -734,11 +743,21 @@ def main():
                                         if hasattr(part_data, 'text'):
                                             final_content = part_data.text  # Use final content
                             
-                            # Also check task history for final content (after tool execution)
-                            if isinstance(task, dict):
-                                task_history = task.get('history', [])
+                            # Also check the event/task itself for history
+                            # The event might be a task object with history
+                            task_history = []
+                            if isinstance(event, dict):
+                                # Check if event itself has history
+                                if 'history' in event:
+                                    task_history = event.get('history', [])
+                                elif isinstance(task, dict) and 'history' in task:
+                                    task_history = task.get('history', [])
                             else:
-                                task_history = getattr(task, 'history', [])
+                                # Event is an object, try to get history
+                                if hasattr(event, 'history'):
+                                    task_history = getattr(event, 'history', [])
+                                elif hasattr(task, 'history'):
+                                    task_history = getattr(task, 'history', [])
                             
                             if task_history:
                                 # Get the last agent message from history
@@ -768,10 +787,14 @@ def main():
                                         break  # Only use the last agent message
                             
                             # Send any remaining content that hasn't been sent yet
-                            if final_content and final_content != last_sent_content:
-                                if final_content.startswith(last_sent_content):
-                                    remaining_content = final_content[len(last_sent_content):]
+                            if final_content:
+                                if last_sent_content:
+                                    if final_content.startswith(last_sent_content):
+                                        remaining_content = final_content[len(last_sent_content):]
+                                    else:
+                                        remaining_content = final_content
                                 else:
+                                    # No content sent yet, send the full thing
                                     remaining_content = final_content
                                 
                                 if remaining_content:
@@ -793,20 +816,24 @@ def main():
                                     yield f"data: {json.dumps(chunk_data)}\n\n"
                                     last_sent_content = final_content
                             
-                            # Send completion marker
-                            chunk_data = {
-                                'id': f'resp_{uuid4().hex}',
-                                'object': 'response.delta',
-                                'created_at': int(time.time()),
-                                'model': agent.model,
-                                'output': [{
-                                    'type': 'message',
-                                    'delta': {}
-                                }]
-                            }
-                            yield f"data: {json.dumps(chunk_data)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            return
+                            # Only return if this is the final message (is_final flag is True)
+                            # Otherwise continue streaming to get more content
+                            if is_final:
+                                # Send completion marker
+                                chunk_data = {
+                                    'id': f'resp_{uuid4().hex}',
+                                    'object': 'response.delta',
+                                    'created_at': int(time.time()),
+                                    'model': agent.model,
+                                    'output': [{
+                                        'type': 'message',
+                                        'delta': {}
+                                    }]
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+                            # If not final, continue streaming (might be intermediate completed state)
                         
                         # Check if tool calls needed
                         if state_value == "input-required":
@@ -829,6 +856,9 @@ def main():
                                 
                                 # Build tool result message and continue outer loop
                                 a2a_message = build_tool_result_message(tool_results, task_id, context_id)
+                                # Reset tracking for new streaming request
+                                accumulated_content = ""
+                                last_sent_content = ""
                                 break  # Break from inner loop, continue outer loop
                             else:
                                 # No tool calls - finish
