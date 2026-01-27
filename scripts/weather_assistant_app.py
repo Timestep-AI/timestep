@@ -66,11 +66,13 @@ def main():
     os.environ["A2A_BASE_URL"] = f"http://{http_host}:{port}"
     
     # Create Environment instance
+    # Disable handoff tool for weather assistant (it doesn't need handoff capability)
     environment = Environment(
         environment_id="weather-assistant-env",
         context_id="weather-context",
         agent_id="weather-assistant",
         human_in_loop=False,
+        enable_handoff=False,  # Disable handoff tool
     )
     
     # Add get_weather tool to the environment
