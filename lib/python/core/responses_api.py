@@ -164,18 +164,6 @@ class ResponsesAPI:
             tool_result_msg.context_id = context_id
         # DataPart tool_results maps to OpenAI tool messages in the A2A server.
         tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
-        # === INVESTIGATION: Log built tool result message structure ===
-        logger.info(f"=== ResponsesAPI: _build_tool_result_message ===")
-        logger.info(f"task_id: {task_id}, context_id: {context_id}")
-        logger.info(f"message.role: {tool_result_msg.role}")
-        logger.info(f"message.parts_count: {len(tool_result_msg.parts) if tool_result_msg.parts else 0}")
-        if tool_result_msg.parts:
-            for i, part in enumerate(tool_result_msg.parts):
-                part_data = part.root if hasattr(part, 'root') else part
-                if hasattr(part_data, 'kind') and part_data.kind == 'data':
-                    data = part_data.data if hasattr(part_data, 'data') else {}
-                    tool_results_in_part = data.get(TOOL_RESULTS_KEY, []) if isinstance(data, dict) else []
-                    logger.info(f"  part[{i}]: kind=data, tool_results_count={len(tool_results_in_part)}")
         return tool_result_msg
     
     async def _execute_tool_via_mcp(self, tool_name: str, arguments: Dict[str, Any], environment_uri: str) -> Dict[str, Any]:
@@ -377,20 +365,6 @@ class ResponsesAPI:
             state_value = None
             tool_calls = None
             async for event in a2a_client.send_message(a2a_message):
-                # === DEBUG: Log raw event structure ===
-                logger.info(f"=== ResponsesAPI: Raw event received ===")
-                logger.info(f"event type: {type(event)}")
-                if isinstance(event, tuple):
-                    logger.info(f"event is tuple, length: {len(event)}")
-                    for i, item in enumerate(event):
-                        logger.info(f"  tuple[{i}]: type={type(item)}")
-                else:
-                    logger.info(f"event is not tuple")
-                    if hasattr(event, '__dict__'):
-                        logger.info(f"event.__dict__ keys: {list(event.__dict__.keys())}")
-                    elif isinstance(event, dict):
-                        logger.info(f"event dict keys: {list(event.keys())}")
-                
                 # Extract event data (handles both tuple and direct event objects)
                 event_data = extract_event_data(event)
                 
@@ -500,19 +474,9 @@ class ResponsesAPI:
                 if state_value == "input-required":
                     tool_calls = self._extract_tool_calls(task)
                     if tool_calls:
-                        # === INVESTIGATION: Log receiving tool calls ===
-                        logger.info(f"=== ResponsesAPI: Receiving tool calls ===")
-                        logger.info(f"task_id: {task_id}, context_id: {context_id}")
-                        logger.info(f"tool_calls_count: {len(tool_calls)}")
                         # Check task history
                         task_history = getattr(task, 'history', None) if hasattr(task, 'history') else (task.get('history') if isinstance(task, dict) else None)
-                        if task_history:
-                            logger.info(f"task.history length: {len(task_history)}")
-                            for i, msg in enumerate(task_history):
-                                msg_role = msg.role if hasattr(msg, 'role') else (msg.get('role') if isinstance(msg, dict) else 'unknown')
-                                parts_count = len(msg.parts) if hasattr(msg, 'parts') and msg.parts else (len(msg.get('parts', [])) if isinstance(msg, dict) else 0)
-                                logger.info(f"  history[{i}]: role={msg_role}, parts_count={parts_count}")
-                        else:
+                        if not task_history:
                             logger.warning(f"task.history is None or empty when tool calls received")
                         
                         # Execute tools
@@ -531,18 +495,8 @@ class ResponsesAPI:
                                 "output": output_text,
                             })
                         
-                        # === INVESTIGATION: Log building tool result message ===
-                        logger.info(f"=== ResponsesAPI: Building tool result message ===")
-                        logger.info(f"tool_results_count: {len(tool_results)}")
-                        for i, tr in enumerate(tool_results):
-                            call_id = tr.get("call_id", "missing")
-                            name = tr.get("name", "missing")
-                            output_preview = (tr.get("output", "") or "")[:50] if tr.get("output") else ""
-                            logger.info(f"  tool_result[{i}]: call_id={call_id}, name={name}, output_preview='{output_preview}'")
-                        
                         # Build tool result message and send it
                         a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
-                        logger.info(f"Built A2A message: role={a2a_message.role}, parts_count={len(a2a_message.parts) if a2a_message.parts else 0}")
                         # Break from inner loop to continue outer loop with new message
                         break
                     else:
@@ -837,23 +791,13 @@ class ResponsesAPI:
                         if state_value == "input-required":
                             tool_calls = self._extract_tool_calls(task)
                             if tool_calls:
-                                # === INVESTIGATION: Log receiving tool calls (streaming) ===
-                                logger.info(f"=== ResponsesAPI: Receiving tool calls (streaming) ===")
-                                logger.info(f"task_id: {task_id}, context_id: {context_id}")
-                                logger.info(f"tool_calls_count: {len(tool_calls)}")
                                 # Check task history
                                 task_history = []
                                 if isinstance(task, dict):
                                     task_history = task.get('history', [])
                                 elif hasattr(task, 'history'):
                                     task_history = getattr(task, 'history', [])
-                                if task_history:
-                                    logger.info(f"task.history length: {len(task_history)}")
-                                    for i, msg in enumerate(task_history):
-                                        msg_role = msg.role if hasattr(msg, 'role') else (msg.get('role') if isinstance(msg, dict) else 'unknown')
-                                        parts_count = len(msg.parts) if hasattr(msg, 'parts') and msg.parts else (len(msg.get('parts', [])) if isinstance(msg, dict) else 0)
-                                        logger.info(f"  history[{i}]: role={msg_role}, parts_count={parts_count}")
-                                else:
+                                if not task_history:
                                     logger.warning(f"task.history is None or empty when tool calls received (streaming)")
                                 
                                 tool_calls_found = True
@@ -873,18 +817,8 @@ class ResponsesAPI:
                                         "output": output_text,
                                     })
                                 
-                                # === INVESTIGATION: Log building tool result message (streaming) ===
-                                logger.info(f"=== ResponsesAPI: Building tool result message (streaming) ===")
-                                logger.info(f"tool_results_count: {len(tool_results)}")
-                                for i, tr in enumerate(tool_results):
-                                    call_id = tr.get("call_id", "missing")
-                                    name = tr.get("name", "missing")
-                                    output_preview = (tr.get("output", "") or "")[:50] if tr.get("output") else ""
-                                    logger.info(f"  tool_result[{i}]: call_id={call_id}, name={name}, output_preview='{output_preview}'")
-                                
                                 # Build tool result message and continue outer loop
                                 a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
-                                logger.info(f"Built A2A message: role={a2a_message.role}, parts_count={len(a2a_message.parts) if a2a_message.parts else 0}")
                                 # Reset tracking for new streaming request
                                 accumulated_content = ""
                                 last_sent_content = ""

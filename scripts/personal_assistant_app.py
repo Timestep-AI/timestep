@@ -386,8 +386,6 @@ Example handoff tool call:
         
         try:
             message_obj = create_text_message_object(role="user", content=message)
-            logger.info(f"=== Handoff: Starting handoff to {agent_uri} ===")
-            logger.info(f"Handoff message: {message}")
             
             # Process message using ClientFactory (non-streaming, polling mode)
             final_message = ""
@@ -404,50 +402,15 @@ Example handoff tool call:
                 state_value = None
                 tool_calls = None
                 async for event in a2a_client.send_message(message_obj):
-                    # === DEBUG: Log raw event structure ===
-                    logger.info(f"=== Handoff: Raw event received ===")
-                    logger.info(f"event type: {type(event)}")
-                    if isinstance(event, tuple):
-                        logger.info(f"event is tuple, length: {len(event)}")
-                        logger.info(f"  tuple[0]: type={type(event[0])}")
-                        logger.info(f"  tuple[1]: type={type(event[1])}")
-                    
                     # Extract Task from tuple (first element contains full Task object)
                     task = extract_task_from_tuple(event)
                     
                     # Extract TaskStatusUpdateEvent for state information (second element)
                     event_data = extract_event_data(event)
                     
-                    # === DEBUG: Log Task extraction ===
                     if task:
-                        logger.info(f"=== Handoff: Task extracted ===")
-                        logger.info(f"task type: {type(task)}")
-                        if hasattr(task, '__dict__'):
-                            logger.info(f"task __dict__ keys: {list(task.__dict__.keys())}")
                         task_id = getattr(task, 'id', None) or task_id
                         context_id = getattr(task, 'context_id', None) or context_id
-                        logger.info(f"task.id: {task_id}")
-                        logger.info(f"task.context_id: {context_id}")
-                        if hasattr(task, 'history'):
-                            history = getattr(task, 'history', [])
-                            logger.info(f"task.history length: {len(history) if history else 0}")
-                    
-                    # === DEBUG: Log TaskStatusUpdateEvent extraction ===
-                    if event_data:
-                        logger.info(f"=== Handoff: TaskStatusUpdateEvent extracted ===")
-                        logger.info(f"event_data type: {type(event_data)}")
-                        if hasattr(event_data, '__dict__'):
-                            logger.info(f"event_data __dict__ keys: {list(event_data.__dict__.keys())}")
-                        if hasattr(event_data, 'task_id'):
-                            logger.info(f"event_data.task_id: {getattr(event_data, 'task_id', None)}")
-                        if hasattr(event_data, 'status'):
-                            status = getattr(event_data, 'status', None)
-                            if status:
-                                if hasattr(status, 'state'):
-                                    state_obj = getattr(status, 'state', None)
-                                    if state_obj:
-                                        state_value = getattr(state_obj, 'value', None)
-                                        logger.info(f"event_data.status.state.value: {state_value}")
                     
                     if not task:
                         logger.warning("Handoff: No task extracted from event, continuing...")
@@ -475,23 +438,13 @@ Example handoff tool call:
                             state_obj = getattr(status, 'state', None)
                             state_value = getattr(state_obj, 'value', None) if state_obj else None
                     
-                    logger.info(f"=== Handoff: State transition ===")
-                    logger.info(f"state_value: {state_value}")
-                    
                     if state_value == "completed":
-                        logger.info("=== Handoff: Task completed, extracting final message ===")
                         final_message = extract_final_message(task)
-                        logger.info(f"final_message: {final_message[:100]}..." if len(final_message) > 100 else f"final_message: {final_message}")
                         break
                     
                     if state_value == "input-required":
-                        logger.info("=== Handoff: Task requires input, extracting tool calls ===")
                         tool_calls = extract_tool_calls(task)
                         if tool_calls:
-                            logger.info(f"tool_calls_count: {len(tool_calls)}")
-                            for i, tc in enumerate(tool_calls):
-                                logger.info(f"  tool_call[{i}]: name={tc.get('name')}, call_id={tc.get('call_id')}")
-                            
                             # Execute tools via MCP
                             tool_results = []
                             for tc in tool_calls:
@@ -499,16 +452,12 @@ Example handoff tool call:
                                 tool_args = tc.get("arguments", {})
                                 call_id = tc.get("call_id", "")
                                 
-                                logger.info(f"=== Handoff: Executing tool {tool_name} ===")
-                                logger.info(f"tool_args: {tool_args}")
-                                
                                 # Construct MCP endpoint URI from agent_uri
                                 weather_env_uri = f"{agent_uri}/mcp"
                                 
                                 result = await execute_tool_via_mcp(tool_name, tool_args, weather_env_uri)
                                 # Extract text from result dict before passing to build_tool_result_message
                                 output_text = extract_tool_output(result)
-                                logger.info(f"tool_result: {output_text[:100]}..." if len(output_text) > 100 else f"tool_result: {output_text}")
                                 
                                 tool_results.append({
                                     "call_id": call_id,
@@ -517,8 +466,6 @@ Example handoff tool call:
                                 })
                             
                             # Build tool result message and send it
-                            logger.info(f"=== Handoff: Building tool result message ===")
-                            logger.info(f"task_id: {task_id}, context_id: {context_id}")
                             tool_result_msg = build_tool_result_message(tool_results, task_id, context_id)
                             message_obj = tool_result_msg
                             # Break from inner loop to continue outer loop with new message
@@ -529,26 +476,18 @@ Example handoff tool call:
                 
                 # If we completed, exit outer loop
                 if state_value == "completed":
-                    logger.info("=== Handoff: Completed, exiting ===")
                     break
                 
                 # If we broke from the loop due to tool calls, continue outer loop
                 if state_value == "input-required" and tool_calls:
-                    logger.info("=== Handoff: Continuing with tool results ===")
                     continue
                 
                 # Otherwise, exit
-                logger.info("=== Handoff: Exiting loop ===")
                 break
             
-            logger.info(f"=== Handoff: Returning final message ===")
             return final_message.strip() or "Task completed."
         except Exception as e:
-            logger.error(f"=== Handoff: Error occurred ===")
-            logger.error(f"Error type: {type(e)}")
-            logger.error(f"Error message: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error during handoff: {str(e)}", exc_info=True)
             return f"Error during handoff: {str(e)}"
     
     async def mcp_sampling_callback(

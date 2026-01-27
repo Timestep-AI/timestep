@@ -206,57 +206,11 @@ class Loop(AgentExecutor):
         # Extract user message and tool results from incoming message
         user_text, tool_results = extract_user_text_and_tool_results(context.message)
         
-        # === INVESTIGATION: Log task history state when entering execute() ===
-        logger.info(f"=== Entering Loop.execute() ===")
-        logger.info(f"task_id: {task_id}, context_id: {context_id}")
-        logger.info(f"context.current_task: {context.current_task}")
-        logger.info(f"context.current_task type: {type(context.current_task)}")
-        
-        # === DEBUG: Log task structure and field names ===
-        task = context.current_task
-        if task:
-            logger.info(f"=== Loop.execute(): Task structure analysis ===")
-            if isinstance(task, dict):
-                logger.info(f"task is dict, keys: {list(task.keys())}")
-                # Log all possible task ID fields
-                for field in ['id', 'taskId', 'task_id']:
-                    if field in task:
-                        logger.info(f"task['{field}']: {task[field]}")
-            elif hasattr(task, '__dict__'):
-                logger.info(f"task is object, __dict__ keys: {list(task.__dict__.keys())}")
-                # Log all possible task ID fields
-                for field in ['id', 'taskId', 'task_id']:
-                    if hasattr(task, field):
-                        logger.info(f"task.{field}: {getattr(task, field)}")
-            else:
-                logger.info(f"task is neither dict nor has __dict__, type: {type(task)}")
-                # Try to get attributes anyway
-                for field in ['id', 'taskId', 'task_id']:
-                    if hasattr(task, field):
-                        logger.info(f"task.{field}: {getattr(task, field)}")
-        
-        if context.current_task:
-            history_len = len(context.current_task.history) if context.current_task.history else 0
-            logger.info(f"task.history length: {history_len}")
-            if context.current_task.history:
-                for i, msg in enumerate(context.current_task.history):
-                    msg_role = msg.role if hasattr(msg, 'role') else (msg.get('role') if isinstance(msg, dict) else 'unknown')
-                    parts_count = len(msg.parts) if hasattr(msg, 'parts') and msg.parts else (len(msg.get('parts', [])) if isinstance(msg, dict) else 0)
-                    logger.info(f"  history[{i}]: role={msg_role}, parts_count={parts_count}")
-        incoming_msg_role = context.message.role if hasattr(context.message, 'role') else 'unknown'
-        incoming_parts_count = len(context.message.parts) if hasattr(context.message, 'parts') and context.message.parts else 0
-        logger.info(f"incoming message: role={incoming_msg_role}, parts_count={incoming_parts_count}")
-        logger.info(f"tool_results: {len(tool_results) if tool_results else 0}")
-        if tool_results:
-            for i, tr in enumerate(tool_results):
-                call_id = tr.get("call_id", "missing") if isinstance(tr, dict) else getattr(tr, "call_id", "missing")
-                logger.info(f"  tool_result[{i}]: call_id={call_id}")
-        
         # Build messages list - always start with task history
         messages = []
         
         # Get task from context and convert full history to OpenAI format
-        # Debug: Log task state when we have tool results
+        task = context.current_task
         if tool_results and (not task or not task.history):
             logger.warning(
                 f"Tool results provided but task history is missing. "
@@ -296,17 +250,6 @@ class Loop(AgentExecutor):
                     if msg.get("role") == "user":
                         insert_pos = i + 1
                 messages.insert(insert_pos, last_assistant_text)
-        
-        # === INVESTIGATION: Log messages extracted from history ===
-        logger.info(f"=== After history processing ===")
-        logger.info(f"Messages extracted from history: {len(messages)}")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "unknown")
-            has_tool_calls = bool(msg.get("tool_calls"))
-            tool_calls_count = len(msg.get("tool_calls", [])) if msg.get("tool_calls") else 0
-            content_preview = (msg.get("content", "") or "")[:50] if msg.get("content") else ""
-            logger.info(f"  messages[{i}]: role={role}, has_tool_calls={has_tool_calls}, "
-                       f"tool_calls_count={tool_calls_count}, content_preview='{content_preview}'")
         
         # Add the current incoming message
         if tool_results:
@@ -400,13 +343,6 @@ class Loop(AgentExecutor):
                             ),
                             final=False,
                         )
-                        # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
-                        logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
-                        logger.info(f"task_id: {task_id}, context_id: {context_id}")
-                        logger.info(f"state: working (streaming text update)")
-                        logger.info(f"message.role: {incremental_message.role}")
-                        logger.info(f"message.parts_count: {len(incremental_message.parts) if incremental_message.parts else 0}")
-                        logger.info(f"final: False")
                         await event_queue.enqueue_event(status_update)
                 if delta.tool_calls:
                     has_tool_calls = True
@@ -465,14 +401,6 @@ class Loop(AgentExecutor):
                             ),
                             final=False,
                         )
-                        # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
-                        logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
-                        logger.info(f"task_id: {task_id}, context_id: {context_id}")
-                        logger.info(f"state: working (incremental tool call update)")
-                        logger.info(f"message.role: {incremental_message.role}")
-                        logger.info(f"message.parts_count: {len(incremental_message.parts) if incremental_message.parts else 0}")
-                        logger.info(f"tool_calls_count: {len(current_mcp_tool_calls)}")
-                        logger.info(f"final: False")
                         await event_queue.enqueue_event(status_update)
                         emitted_streaming_updates = True
         
@@ -508,14 +436,6 @@ class Loop(AgentExecutor):
                 ),
                 final=False,
             )
-            # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
-            logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
-            logger.info(f"task_id: {task_id}, context_id: {context_id}")
-            logger.info(f"state: input-required (tool calls)")
-            logger.info(f"message.role: {a2a_message.role}")
-            logger.info(f"message.parts_count: {len(a2a_message.parts) if a2a_message.parts else 0}")
-            logger.info(f"tool_calls_count: {len(mcp_tool_calls)}")
-            logger.info(f"final: False")
             await event_queue.enqueue_event(status_update)
         else:
             # No tool calls, task complete
@@ -536,13 +456,6 @@ class Loop(AgentExecutor):
                     ),
                     final=True,
                 )
-                # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
-                logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
-                logger.info(f"task_id: {task_id}, context_id: {context_id}")
-                logger.info(f"state: completed (no streaming)")
-                logger.info(f"message.role: {a2a_message.role}")
-                logger.info(f"message.parts_count: {len(a2a_message.parts) if a2a_message.parts else 0}")
-                logger.info(f"final: True")
                 await event_queue.enqueue_event(status_update)
             else:
                 # Emit final status update marking completion (reusing last content)
@@ -560,13 +473,6 @@ class Loop(AgentExecutor):
                     ),
                     final=True,
                 )
-                # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
-                logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
-                logger.info(f"task_id: {task_id}, context_id: {context_id}")
-                logger.info(f"state: completed (after streaming)")
-                logger.info(f"message.role: {final_message.role}")
-                logger.info(f"message.parts_count: {len(final_message.parts) if final_message.parts else 0}")
-                logger.info(f"final: True")
                 await event_queue.enqueue_event(status_update)
     
     async def cancel(
