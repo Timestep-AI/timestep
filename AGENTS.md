@@ -41,27 +41,29 @@ The codebase is organized around A2A and MCP protocols:
 
 ```
 timestep/
-├── lib/                    # Future library code (to be extracted)
-│   ├── python/             # Python library (reserved)
-│   └── typescript/         # TypeScript library (reserved)
-├── examples/               # Working examples
-│   ├── python/             # Python A2A/MCP examples
-│   │   ├── a2a_server.py   # A2A server (Task-generating Agent)
-│   │   ├── mcp_server.py   # MCP server with handoff tool
-│   │   ├── test_client.py  # Client orchestrating A2A/MCP
-│   │   └── compose.yml     # Docker Compose setup
+├── lib/                    # Library code
+│   ├── python/             # Python library
+│   │   └── core/           # Core library components
+│   │       ├── agent.py    # Agent class (A2A Server)
+│   │       ├── environment.py  # Environment class (MCP Server)
+│   │       ├── loop.py     # Loop class (AgentExecutor)
+│   │       └── responses_api.py  # ResponsesAPI class (/v1/responses endpoint)
+│   └── typescript/         # TypeScript library (planned)
+├── scripts/                # Working example applications
+│   ├── personal_assistant_app.py  # Personal assistant with handoff enabled
+│   ├── weather_assistant_app.py   # Weather assistant with handoff disabled
+│   ├── personal_assistant_test_client.py  # Test client for personal assistant
+│   └── weather_assistant_test_client.py   # Test client for weather assistant
+├── examples/               # Legacy examples directory (currently empty)
+│   ├── python/             # (empty - examples moved to scripts/)
 │   └── typescript/         # TypeScript examples (pending v2 SDK)
-│       ├── a2a_server.ts
-│       ├── mcp_server.ts
-│       ├── test_client.ts
-│       └── compose.yml
 └── app/                    # Web UI
     ├── index.html
     ├── index.css
     └── index.js
 ```
 
-**Important**: The library code will be extracted from the working examples in `examples/` once the API surface and patterns are well-established.
+**Important**: The library code is implemented in `lib/python/core/` with working examples in `scripts/`. The `examples/` directory is legacy and may be removed.
 
 ## Core Concepts
 
@@ -690,12 +692,17 @@ The A2A server uses `DefaultRequestHandler` and `InMemoryTaskStore` from the A2A
 
 ### MCP Server
 
-The MCP server provides:
+The MCP server (implemented by `Environment` class) provides:
 
 - Tool registration (e.g., `handoff`, `get_weather`)
+- Built-in `handoff` tool (conditionally registered via `enable_handoff` parameter)
 - Sampling callback registration (for handoffs)
 - HTTP transport for client connections
 - Tool execution and result formatting
+
+**Built-in Handoff Tool:**
+
+The `handoff` tool is built into the `Environment` class and is registered by default. It can be disabled by setting `enable_handoff=False` when creating an Environment instance. The tool uses MCP sampling to call other agents via A2A, enabling seamless agent-to-agent delegation.
 
 ### Client
 
@@ -712,9 +719,21 @@ The client orchestrates A2A and MCP:
 ### Running Examples
 
 **Python:**
+
+The library includes working examples in the `scripts/` directory. To run the personal assistant and weather assistant example:
+
 ```bash
-make test-example-python
+# Terminal 1: Start Weather Assistant (port 10000)
+OPENAI_API_KEY=your-key-here uv run scripts/weather_assistant_app.py
+
+# Terminal 2: Start Personal Assistant (port 9999)
+OPENAI_API_KEY=your-key-here uv run scripts/personal_assistant_app.py
+
+# Terminal 3: Run Test Client
+uv run scripts/personal_assistant_test_client.py
 ```
+
+The test client will send a weather query to the personal assistant, which will hand off to the weather assistant and return the result.
 
 **TypeScript:**
 ```bash
@@ -723,9 +742,9 @@ make test-example-typescript  # Currently shows pending v2 message
 
 ### Test Organization
 
-- Examples are in `examples/` directories
-- Each example includes A2A server, MCP server, and test client
-- Docker Compose files orchestrate the services
+- Examples are in `scripts/` directory
+- Each example includes an A2A server application and a test client
+- The library components (`Agent`, `Environment`, `Loop`, `ResponsesAPI`) are in `lib/python/core/`
 
 ## Code Style and Conventions
 
@@ -782,28 +801,41 @@ Use clear, descriptive commit messages:
 
 ### Adding a New MCP Tool
 
-1. Add tool function to `examples/python/mcp_server.py` (or TypeScript equivalent)
-2. Register tool with MCP server
-3. Update A2A server to include tool in agent's tool list
-4. Test tool execution via client
-5. Update documentation
+1. Add tool function to your Environment instance using `@environment.tool()` decorator
+2. The tool will automatically be available to the agent via MCP
+3. Test tool execution via client or test scripts
+4. Update documentation
+
+Example:
+```python
+@environment.tool()
+async def my_tool(param: str) -> dict:
+    """Tool description."""
+    return {"result": param}
+```
 
 ### Adding a New Agent
 
-1. Create agent executor in A2A server
-2. Define agent card with capabilities
-3. Register agent with A2A server
-4. Add agent-specific tools if needed
-5. Test agent via client
-6. Update documentation
+1. Create an `Environment` instance with agent-specific configuration
+2. Add tools to the environment using `@environment.tool()` decorator
+3. Create an `Agent` instance with the environment URI
+4. Optionally add `ResponsesAPI` for `/v1/responses` endpoint
+5. Start the agent server
+6. Test agent via client or test scripts
+7. Update documentation
+
+See `scripts/personal_assistant_app.py` and `scripts/weather_assistant_app.py` for complete examples.
 
 ### Implementing Handoffs
 
-1. Ensure MCP server has `handoff` tool
-2. Implement sampling callback in client
-3. Sampling callback should make A2A request to target agent
-4. Test handoff flow end-to-end
-5. Verify task state transitions
+1. Create an `Environment` with `enable_handoff=True` (default)
+2. The `handoff` tool is automatically registered in the Environment
+3. Create an `Agent` with `ResponsesAPI` (which includes built-in handoff execution)
+4. The handoff tool uses MCP sampling to call target agents via A2A
+5. Test handoff flow end-to-end using test clients
+6. Verify task state transitions
+
+The handoff functionality is built into the library - no additional setup required. See `scripts/personal_assistant_app.py` for a complete example.
 
 ## Resources
 

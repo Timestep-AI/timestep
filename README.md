@@ -35,11 +35,21 @@ Our first MVP focuses on **handoffs** - enabling agents to seamlessly delegate t
 
 ```
 timestep/
-├── lib/                    # Future library code (to be extracted from examples)
-│   ├── python/             # Python library (reserved)
-│   └── typescript/         # TypeScript library (reserved)
-├── examples/               # Working examples showing A2A/MCP patterns
-│   ├── python/             # Python examples (A2A server, MCP server, test client)
+├── lib/                    # Library code
+│   ├── python/             # Python library
+│   │   └── core/           # Core library components
+│   │       ├── agent.py    # Agent class (A2A Server)
+│   │       ├── environment.py  # Environment class (MCP Server)
+│   │       ├── loop.py     # Loop class (AgentExecutor)
+│   │       └── responses_api.py  # ResponsesAPI class (/v1/responses endpoint)
+│   └── typescript/         # TypeScript library (planned)
+├── scripts/                # Working example applications
+│   ├── personal_assistant_app.py  # Personal assistant with handoff enabled
+│   ├── weather_assistant_app.py   # Weather assistant with handoff disabled
+│   ├── personal_assistant_test_client.py  # Test client for personal assistant
+│   └── weather_assistant_test_client.py   # Test client for weather assistant
+├── examples/               # Legacy examples directory (currently empty)
+│   ├── python/             # (empty - examples moved to scripts/)
 │   └── typescript/         # TypeScript examples (pending MCP SDK v2)
 └── app/                    # Web UI for testing/chatting with agents
     ├── index.html
@@ -50,7 +60,18 @@ timestep/
 ## Implementation Status
 
 ### Python
-✅ **Fully functional** - Python implementation is complete and working with handoffs.
+✅ **Fully functional** - Python library is complete in `lib/python/core/` with working examples in `scripts/`.
+
+The library includes:
+- **Agent**: A2A Server that contains Loop (AgentExecutor) internally
+- **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
+- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
+- **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
+
+Working examples demonstrate:
+- Personal assistant with handoff tool enabled
+- Weather assistant with handoff tool disabled
+- Complete handoff flow between agents
 
 ### TypeScript
 ⚠️ **Pending v2 SDK release** - TypeScript implementation is incomplete.
@@ -68,9 +89,16 @@ See `examples/typescript/*.ts` files for detailed status comments and TODOs.
 The easiest way to get started is to run the working examples:
 
 **Python:**
+
 ```bash
-# Start A2A and MCP servers
-make test-example-python
+# Terminal 1: Start Weather Assistant (port 10000)
+OPENAI_API_KEY=your-key-here uv run scripts/weather_assistant_app.py
+
+# Terminal 2: Start Personal Assistant (port 9999)
+OPENAI_API_KEY=your-key-here uv run scripts/personal_assistant_app.py
+
+# Terminal 3: Run Test Client
+uv run scripts/personal_assistant_test_client.py
 ```
 
 **TypeScript:**
@@ -90,7 +118,7 @@ The examples demonstrate a personal assistant agent that can hand off weather qu
 5. Weather agent responds with weather data
 6. Personal assistant receives the response and presents it to the user
 
-See `examples/python/` for the complete implementation.
+See `scripts/personal_assistant_app.py` and `scripts/weather_assistant_app.py` for the complete implementation.
 
 ## Architecture
 
@@ -104,10 +132,13 @@ The A2A server implements a **Task-generating Agent** that:
 
 ### MCP Server
 
-The MCP server provides:
-- **Tools**: Including the `handoff` tool for agent-to-agent delegation
+The MCP server (implemented by `Environment` class) provides:
+- **Tools**: Custom tools registered via `@environment.tool()` decorator
+- **Built-in `handoff` tool**: Automatically registered when `enable_handoff=True` (default)
 - **Sampling**: Server-initiated LLM interactions that trigger A2A requests
 - Tool execution for standard operations (e.g., `get_weather`)
+
+The `handoff` tool is built into the `Environment` class and uses MCP sampling to enable seamless agent-to-agent delegation.
 
 ### Client
 
@@ -116,7 +147,9 @@ The client orchestrates the interaction:
 - Monitors task state transitions
 - When `input-required` state is detected, extracts tool calls from `DataPart`
 - Calls MCP tools and sends results back to A2A server
-- Handles handoffs via MCP sampling callback
+- Handles handoffs via MCP sampling callback (built into `ResponsesAPI`)
+
+The `ResponsesAPI` component provides a `/v1/responses` endpoint that handles both streaming and non-streaming modes, with built-in handoff execution via MCP sampling.
 
 ## Key Concepts
 
@@ -149,10 +182,16 @@ MCP's sampling feature allows servers to initiate LLM interactions. We use this 
 
 ## Examples
 
-See `examples/python/` for complete working examples:
-- `a2a_server.py` - A2A server implementing Task-generating Agent
-- `mcp_server.py` - MCP server with handoff tool and sampling
-- `test_client.py` - Client orchestrating A2A and MCP interactions
+See `scripts/` for complete working examples:
+- `personal_assistant_app.py` - Personal assistant with handoff tool enabled
+- `weather_assistant_app.py` - Weather assistant with handoff tool disabled
+- `personal_assistant_test_client.py` - Test client for personal assistant
+- `weather_assistant_test_client.py` - Test client for weather assistant
+
+These examples demonstrate:
+- Using the `Agent`, `Environment`, and `ResponsesAPI` classes from `lib/python/core/`
+- Conditional handoff tool registration via `enable_handoff` parameter
+- Complete handoff flow between agents
 
 ## Documentation
 
