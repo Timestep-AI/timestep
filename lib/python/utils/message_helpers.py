@@ -82,19 +82,3 @@ def convert_openai_tool_call_to_mcp(tool_call: Any) -> Dict[str, Any]:
         "name": name,
         "arguments": arguments,
     }
-
-
-def build_tool_result_message(
-    tool_results: List[Dict[str, Any]],
-    task_id: Optional[str] = None,
-    context_id: Optional[str] = None,
-) -> Message:
-    """Build a user message carrying tool results via DataPart."""
-    tool_result_msg = create_text_message_object(role=Role.user, content="")
-    if task_id:
-        tool_result_msg.task_id = task_id
-    if context_id:
-        tool_result_msg.context_id = context_id
-    # DataPart tool_results maps to OpenAI tool messages in the A2A server.
-    tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
-    return tool_result_msg

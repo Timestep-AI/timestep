@@ -189,7 +189,7 @@ The Timestep library includes built-in support for OpenTelemetry tracing using z
 ### Programmatic Configuration
 
 ```python
-from timestep.core.tracing import setup_tracing, instrument_fastapi_app
+from timestep.observability.tracing import setup_tracing, instrument_fastapi_app
 
 # Initialize tracing (defaults to http://localhost:4317)
 setup_tracing(

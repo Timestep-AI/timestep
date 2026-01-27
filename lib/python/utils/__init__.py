@@ -14,7 +14,6 @@ try:
         extract_user_text_and_tool_results,
         convert_mcp_tool_to_openai,
         convert_openai_tool_call_to_mcp,
-        build_tool_result_message,
     )
 except ImportError:
     # If mcp is not available, these functions won't be importable
@@ -22,7 +21,6 @@ except ImportError:
     extract_user_text_and_tool_results = None
     convert_mcp_tool_to_openai = None
     convert_openai_tool_call_to_mcp = None
-    build_tool_result_message = None
 
 __all__ = [
     "extract_event_data",
@@ -31,5 +29,4 @@ __all__ = [
     "extract_user_text_and_tool_results",
     "convert_mcp_tool_to_openai",
     "convert_openai_tool_call_to_mcp",
-    "build_tool_result_message",
 ]

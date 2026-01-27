@@ -1,4 +1,4 @@
-"""ResponsesAPI class - Provides /v1/responses endpoint for agent applications."""
+"""Loop class - Orchestrates agent-environment interaction loop until completion."""
 
 import json
 import logging
@@ -12,8 +12,6 @@ from fastapi.responses import StreamingResponse
 
 from a2a.client import ClientFactory
 from a2a.types import (
-    MessageSendParams,
-    SendMessageRequest,
     Message,
     Part,
     DataPart,
@@ -33,12 +31,13 @@ from timestep.utils.message_helpers import (
 from timestep.utils.event_helpers import extract_event_data, extract_task_from_event, extract_task_from_tuple
 
 
-class ResponsesAPI:
-    """ResponsesAPI provides a /v1/responses endpoint for agent applications.
+class Loop:
+    """Loop orchestrates agent-environment interaction until completion (full rollout/episode).
     
-    This component encapsulates all logic for handling the Responses API endpoint,
-    including streaming and non-streaming modes, tool execution, and A2A protocol
-    integration.
+    This component provides a /v1/responses endpoint (OpenAI-compatible) that:
+    1. Handles tool execution via MCP
+    2. Continues agent loop until final response (complete rollout/episode)
+    3. Supports both streaming and non-streaming modes
     """
     
     def __init__(
@@ -48,7 +47,7 @@ class ResponsesAPI:
         context_id_to_environment_uri: Dict[str, str],
         sampling_callback: Optional[Callable] = None,  # Deprecated: will be auto-created
     ):
-        """Initialize ResponsesAPI.
+        """Initialize Loop.
         
         Args:
             agent: The Agent instance

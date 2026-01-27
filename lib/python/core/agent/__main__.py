@@ -1,4 +1,4 @@
-"""Agent class - A2A Server that contains Loop internally."""
+"""Agent class - A2A Server that contains AgentExecutor internally."""
 
 import asyncio
 import logging
@@ -8,8 +8,6 @@ import uvicorn
 
 logger = logging.getLogger(__name__)
 from a2a.server.apps.jsonrpc.fastapi_app import A2AFastAPIApplication
-from a2a.server.request_handlers.default_request_handler import DefaultRequestHandler
-from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from a2a.types import (
     AgentCard,
     AgentCapabilities,
@@ -17,14 +15,16 @@ from a2a.types import (
     TransportProtocol,
 )
 
-from timestep.core.loop import Loop
+from timestep.core.agent.services.agent_executor import AgentExecutor
+from timestep.core.agent.api.request_handler import DefaultRequestHandler
+from timestep.core.agent.stores.task_store import InMemoryTaskStore
 
 
 class Agent:
-    """Agent is an A2A Server that contains Loop (AgentExecutor) internally.
+    """Agent is an A2A Server that contains AgentExecutor internally.
     
     The Agent:
-    1. Contains Loop (AgentExecutor) internally
+    1. Contains AgentExecutor internally for single-step execution
     2. Exposes agent URI via A2A protocol
     3. Responds to A2A requests
     4. Maps context_id to environment URI
@@ -44,17 +44,17 @@ class Agent:
         self.context_id_to_environment_uri = context_id_to_environment_uri or {}
         self.human_in_loop = human_in_loop
         
-        # Loop (AgentExecutor) is inside Agent
-        self.loop = Loop(
+        # AgentExecutor is inside Agent
+        self.agent_executor = AgentExecutor(
             agent_id=agent_id,
             model=model,
             context_id_to_environment_uri=self.context_id_to_environment_uri,
             human_in_loop=human_in_loop,
         )
         
-        # Create A2A server with Loop as AgentExecutor
+        # Create A2A server with AgentExecutor
         self.handler = DefaultRequestHandler(
-            agent_executor=self.loop,
+            agent_executor=self.agent_executor,
             task_store=InMemoryTaskStore(),
         )
         
@@ -137,3 +137,19 @@ class Agent:
             os.environ["A2A_BASE_URL"] = f"http://{http_host}:{port}"
         
         uvicorn.run(self.fastapi_app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    # Example usage
+    import sys
+    if len(sys.argv) > 1:
+        port = int(sys.argv[1])
+    else:
+        port = 9999
+    
+    agent = Agent(
+        agent_id="example-agent",
+        name="Example Agent",
+        model="gpt-4o-mini",
+    )
+    agent.run(port=port)

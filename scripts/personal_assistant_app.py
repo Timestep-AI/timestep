@@ -61,8 +61,8 @@ core_module = importlib.util.module_from_spec(spec)
 sys.modules['timestep.core'] = core_module
 spec.loader.exec_module(core_module)
 
-# Now we can import Agent, Environment, and ResponsesAPI
-from timestep.core import Agent, Environment, ResponsesAPI
+# Now we can import Agent, Environment, and Loop
+from timestep.core import Agent, Environment, Loop
 from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
     TOOL_CALLS_KEY,
@@ -87,7 +87,7 @@ def main():
     """Run the Personal Assistant Agent."""
     # Initialize OpenTelemetry tracing (if available)
     try:
-        from timestep.core.tracing import setup_tracing
+        from timestep.observability.tracing import setup_tracing
         setup_tracing()
     except ImportError:
         pass  # Graceful degradation if OpenTelemetry not available
@@ -177,7 +177,7 @@ Example handoff tool call:
     
     # Instrument FastAPI app for tracing (if available)
     try:
-        from timestep.core.tracing import instrument_fastapi_app
+        from timestep.observability.tracing import instrument_fastapi_app
         instrument_fastapi_app(combined_app)
     except ImportError:
         pass  # Graceful degradation if OpenTelemetry not available
@@ -190,23 +190,23 @@ Example handoff tool call:
     for route in mcp_app.routes:
         combined_app.routes.append(route)
     
-    # Get agent base URL for ResponsesAPI
+    # Get agent base URL for Loop
     agent_base_url = f"http://{http_host}:{port}"
     
-    # Create ResponsesAPI instance
+    # Create Loop instance
     # Handoff functionality is built-in (sampling callback auto-created)
-    responses_api = ResponsesAPI(
+    loop = Loop(
         agent=agent,
         agent_base_url=agent_base_url,
         context_id_to_environment_uri=agent.context_id_to_environment_uri,
     )
     
-    # Mount ResponsesAPI routes
-    for route in responses_api.fastapi_app.routes:
+    # Mount Loop routes
+    for route in loop.fastapi_app.routes:
         combined_app.routes.append(route)
     
-    # All /v1/responses endpoint code has been moved to ResponsesAPI
-    # The endpoint is now registered via responses_api.fastapi_app above
+    # All /v1/responses endpoint code has been moved to Loop
+    # The endpoint is now registered via loop.fastapi_app above
     
     # Run combined app (blocking)
     print(f"Starting Personal Assistant Agent on port {port}...")
