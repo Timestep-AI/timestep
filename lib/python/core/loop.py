@@ -1,9 +1,12 @@
 """Loop class - AgentExecutor that uses MCP client to get system prompt and tools."""
 
 import json
+import logging
 import os
 from typing import Dict, List, Any, Optional
 from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
@@ -35,7 +38,18 @@ def _convert_a2a_message_to_openai(message: Message) -> Optional[Dict[str, Any]]
     Returns:
         OpenAI message dict (user, assistant, or tool) or None if message is empty/invalid
     """
-    if not message or not message.parts:
+    if not message:
+        return None
+    
+    # Handle both dict and object access for message
+    if isinstance(message, dict):
+        message_parts = message.get("parts", [])
+        message_role = message.get("role")
+    else:
+        message_parts = getattr(message, "parts", []) if hasattr(message, "parts") else []
+        message_role = getattr(message, "role", None) if hasattr(message, "role") else None
+    
+    if not message_parts:
         return None
     
     # Extract text content
@@ -43,9 +57,25 @@ def _convert_a2a_message_to_openai(message: Message) -> Optional[Dict[str, Any]]
     tool_calls = []
     tool_results = []
     
-    for part in message.parts:
+    for part in message_parts:
         part_data = part.root if hasattr(part, "root") else part
-        if hasattr(part_data, "kind"):
+        # Handle both dict and object access for part_data
+        if isinstance(part_data, dict):
+            part_kind = part_data.get("kind")
+            if part_kind == "text":
+                text_content += part_data.get("text", "") or ""
+            elif part_kind == "data":
+                part_data_dict = part_data.get("data")
+                if isinstance(part_data_dict, dict):
+                    if TOOL_CALLS_KEY in part_data_dict:
+                        calls = part_data_dict[TOOL_CALLS_KEY]
+                        if isinstance(calls, list):
+                            tool_calls.extend(calls)
+                    if TOOL_RESULTS_KEY in part_data_dict:
+                        results = part_data_dict[TOOL_RESULTS_KEY]
+                        if isinstance(results, list):
+                            tool_results.extend(results)
+        elif hasattr(part_data, "kind"):
             if part_data.kind == "text" and hasattr(part_data, "text"):
                 text_content += part_data.text or ""
             elif part_data.kind == "data" and hasattr(part_data, "data"):
@@ -60,7 +90,10 @@ def _convert_a2a_message_to_openai(message: Message) -> Optional[Dict[str, Any]]
                             tool_results.extend(results)
     
     # Determine role from message role
-    role = message.role if hasattr(message, "role") else Role.user
+    if message_role is None:
+        role = Role.user
+    else:
+        role = message_role
     
     # Convert based on role and content
     if role == Role.user:
@@ -173,14 +206,63 @@ class Loop(AgentExecutor):
         # Extract user message and tool results from incoming message
         user_text, tool_results = extract_user_text_and_tool_results(context.message)
         
+        # === INVESTIGATION: Log task history state when entering execute() ===
+        logger.info(f"=== Entering Loop.execute() ===")
+        logger.info(f"task_id: {task_id}, context_id: {context_id}")
+        logger.info(f"context.current_task: {context.current_task}")
+        logger.info(f"context.current_task type: {type(context.current_task)}")
+        
+        # === DEBUG: Log task structure and field names ===
+        task = context.current_task
+        if task:
+            logger.info(f"=== Loop.execute(): Task structure analysis ===")
+            if isinstance(task, dict):
+                logger.info(f"task is dict, keys: {list(task.keys())}")
+                # Log all possible task ID fields
+                for field in ['id', 'taskId', 'task_id']:
+                    if field in task:
+                        logger.info(f"task['{field}']: {task[field]}")
+            elif hasattr(task, '__dict__'):
+                logger.info(f"task is object, __dict__ keys: {list(task.__dict__.keys())}")
+                # Log all possible task ID fields
+                for field in ['id', 'taskId', 'task_id']:
+                    if hasattr(task, field):
+                        logger.info(f"task.{field}: {getattr(task, field)}")
+            else:
+                logger.info(f"task is neither dict nor has __dict__, type: {type(task)}")
+                # Try to get attributes anyway
+                for field in ['id', 'taskId', 'task_id']:
+                    if hasattr(task, field):
+                        logger.info(f"task.{field}: {getattr(task, field)}")
+        
+        if context.current_task:
+            history_len = len(context.current_task.history) if context.current_task.history else 0
+            logger.info(f"task.history length: {history_len}")
+            if context.current_task.history:
+                for i, msg in enumerate(context.current_task.history):
+                    msg_role = msg.role if hasattr(msg, 'role') else (msg.get('role') if isinstance(msg, dict) else 'unknown')
+                    parts_count = len(msg.parts) if hasattr(msg, 'parts') and msg.parts else (len(msg.get('parts', [])) if isinstance(msg, dict) else 0)
+                    logger.info(f"  history[{i}]: role={msg_role}, parts_count={parts_count}")
+        incoming_msg_role = context.message.role if hasattr(context.message, 'role') else 'unknown'
+        incoming_parts_count = len(context.message.parts) if hasattr(context.message, 'parts') and context.message.parts else 0
+        logger.info(f"incoming message: role={incoming_msg_role}, parts_count={incoming_parts_count}")
+        logger.info(f"tool_results: {len(tool_results) if tool_results else 0}")
+        if tool_results:
+            for i, tr in enumerate(tool_results):
+                call_id = tr.get("call_id", "missing") if isinstance(tr, dict) else getattr(tr, "call_id", "missing")
+                logger.info(f"  tool_result[{i}]: call_id={call_id}")
+        
         # Build messages list - always start with task history
         messages = []
         
-        # Get tool_call_ids from new tool results (if any)
-        new_tool_call_ids = {tool_result.get("call_id") for tool_result in tool_results} if tool_results else set()
-        
         # Get task from context and convert full history to OpenAI format
-        task = context.current_task
+        # Debug: Log task state when we have tool results
+        if tool_results and (not task or not task.history):
+            logger.warning(
+                f"Tool results provided but task history is missing. "
+                f"task={task}, has_history={task.history if task else False}, "
+                f"task_id={task_id}, context_id={context_id}"
+            )
         if task and task.history:
             # Track which tool_call_id sets we've seen (to filter incremental updates)
             seen_tool_call_sets = set()
@@ -215,9 +297,21 @@ class Loop(AgentExecutor):
                         insert_pos = i + 1
                 messages.insert(insert_pos, last_assistant_text)
         
+        # === INVESTIGATION: Log messages extracted from history ===
+        logger.info(f"=== After history processing ===")
+        logger.info(f"Messages extracted from history: {len(messages)}")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            has_tool_calls = bool(msg.get("tool_calls"))
+            tool_calls_count = len(msg.get("tool_calls", [])) if msg.get("tool_calls") else 0
+            content_preview = (msg.get("content", "") or "")[:50] if msg.get("content") else ""
+            logger.info(f"  messages[{i}]: role={role}, has_tool_calls={has_tool_calls}, "
+                       f"tool_calls_count={tool_calls_count}, content_preview='{content_preview}'")
+        
         # Add the current incoming message
         if tool_results:
             # Add tool results as tool messages
+            # The assistant message with matching tool_calls should already be in messages from history processing
             for tool_result in tool_results:
                 tool_call_id = tool_result.get("call_id")
                 if not tool_call_id:
@@ -241,6 +335,26 @@ class Loop(AgentExecutor):
         # Ensure we have at least one message before calling OpenAI
         if not messages:
             raise ValueError(f"No messages to send to OpenAI. Task: {task_id}, Context: {context_id}")
+        
+        # Validate message structure: if we have tool messages, ensure there's a preceding assistant message with tool_calls
+        if messages and any(msg.get("role") == "tool" for msg in messages):
+            # Find the first tool message
+            first_tool_idx = next((i for i, msg in enumerate(messages) if msg.get("role") == "tool"), None)
+            if first_tool_idx is not None:
+                # Check if there's an assistant message with tool_calls before this tool message
+                has_assistant_with_tool_calls = False
+                for i in range(first_tool_idx - 1, -1, -1):
+                    if messages[i].get("role") == "assistant" and messages[i].get("tool_calls"):
+                        has_assistant_with_tool_calls = True
+                        break
+                
+                if not has_assistant_with_tool_calls:
+                    # This should never happen if task history is maintained correctly
+                    raise ValueError(
+                        f"Tool messages found at index {first_tool_idx} but no preceding assistant message with tool_calls. "
+                        f"This indicates the task history is missing the assistant message that emitted these tool calls. "
+                        f"Messages: {[msg.get('role') for msg in messages]}"
+                    )
         
         # Variables for streaming
         assistant_content = ""
@@ -286,6 +400,13 @@ class Loop(AgentExecutor):
                             ),
                             final=False,
                         )
+                        # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
+                        logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
+                        logger.info(f"task_id: {task_id}, context_id: {context_id}")
+                        logger.info(f"state: working (streaming text update)")
+                        logger.info(f"message.role: {incremental_message.role}")
+                        logger.info(f"message.parts_count: {len(incremental_message.parts) if incremental_message.parts else 0}")
+                        logger.info(f"final: False")
                         await event_queue.enqueue_event(status_update)
                 if delta.tool_calls:
                     has_tool_calls = True
@@ -344,6 +465,14 @@ class Loop(AgentExecutor):
                             ),
                             final=False,
                         )
+                        # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
+                        logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
+                        logger.info(f"task_id: {task_id}, context_id: {context_id}")
+                        logger.info(f"state: working (incremental tool call update)")
+                        logger.info(f"message.role: {incremental_message.role}")
+                        logger.info(f"message.parts_count: {len(incremental_message.parts) if incremental_message.parts else 0}")
+                        logger.info(f"tool_calls_count: {len(current_mcp_tool_calls)}")
+                        logger.info(f"final: False")
                         await event_queue.enqueue_event(status_update)
                         emitted_streaming_updates = True
         
@@ -379,6 +508,14 @@ class Loop(AgentExecutor):
                 ),
                 final=False,
             )
+            # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
+            logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
+            logger.info(f"task_id: {task_id}, context_id: {context_id}")
+            logger.info(f"state: input-required (tool calls)")
+            logger.info(f"message.role: {a2a_message.role}")
+            logger.info(f"message.parts_count: {len(a2a_message.parts) if a2a_message.parts else 0}")
+            logger.info(f"tool_calls_count: {len(mcp_tool_calls)}")
+            logger.info(f"final: False")
             await event_queue.enqueue_event(status_update)
         else:
             # No tool calls, task complete
@@ -399,6 +536,13 @@ class Loop(AgentExecutor):
                     ),
                     final=True,
                 )
+                # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
+                logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
+                logger.info(f"task_id: {task_id}, context_id: {context_id}")
+                logger.info(f"state: completed (no streaming)")
+                logger.info(f"message.role: {a2a_message.role}")
+                logger.info(f"message.parts_count: {len(a2a_message.parts) if a2a_message.parts else 0}")
+                logger.info(f"final: True")
                 await event_queue.enqueue_event(status_update)
             else:
                 # Emit final status update marking completion (reusing last content)
@@ -416,6 +560,13 @@ class Loop(AgentExecutor):
                     ),
                     final=True,
                 )
+                # === INVESTIGATION: Log emitting TaskStatusUpdateEvent ===
+                logger.info(f"=== Emitting TaskStatusUpdateEvent ===")
+                logger.info(f"task_id: {task_id}, context_id: {context_id}")
+                logger.info(f"state: completed (after streaming)")
+                logger.info(f"message.role: {final_message.role}")
+                logger.info(f"message.parts_count: {len(final_message.parts) if final_message.parts else 0}")
+                logger.info(f"final: True")
                 await event_queue.enqueue_event(status_update)
     
     async def cancel(

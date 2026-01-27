@@ -28,7 +28,6 @@ from uuid import uuid4
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
-import httpx
 
 # Fix package import: lib/python/ contains the timestep package
 # but Python needs to import it as 'timestep', not 'python'
@@ -63,7 +62,8 @@ from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
 )
-from a2a.client import A2ACardResolver, A2AClient
+from timestep.utils.event_helpers import extract_event_data, extract_task_from_tuple
+from a2a.client import ClientFactory
 from a2a.types import (
     AgentCard,
     MessageSendParams,
@@ -268,21 +268,14 @@ Example handoff tool call:
         
         return None
     
-    def extract_task_from_event(event: Any) -> Any:
-        """Extract Task object from A2A event."""
-        if isinstance(event, tuple):
-            task, _ = event
-            return task
-        elif hasattr(event, 'id') and hasattr(event, 'status'):
-            return event
-        else:
-            raise ValueError(f"Received non-Task event from Task-generating agent: {type(event)}")
-    
     def extract_final_message(task: Any) -> str:
-        """Extract final message text from a completed task."""
+        """Extract final message text from a completed task.
+        
+        Only extracts the final completed message, not incremental updates.
+        """
         message_text = ""
         
-        # Extract from task.status.message if available - handle both dict and object access
+        # First, try to extract from task.status.message (this is the final completed message)
         status = getattr(task, 'status', None) if hasattr(task, 'status') else (task.get('status') if isinstance(task, dict) else None)
         if status:
             # Get message from status - handle both dict and object access
@@ -307,14 +300,20 @@ Example handoff tool call:
                         if hasattr(part_data, 'text'):
                             message_text += part_data.text
         
-        # Also check task history for agent messages - handle both dict and object access
+        # If we got text from status.message, return it (this is the final message)
+        if message_text.strip():
+            return message_text.strip()
+        
+        # Otherwise, check task history for the LAST agent message (not all of them)
+        # This handles cases where status.message might not be set
         if isinstance(task, dict):
             task_history = task.get('history', [])
         else:
             task_history = getattr(task, 'history', []) if hasattr(task, 'history') else []
         
         if task_history:
-            for msg in task_history:
+            # Iterate in reverse to find the last agent message
+            for msg in reversed(task_history):
                 # Handle both dict and object access for message
                 if isinstance(msg, dict):
                     msg_role = msg.get('role')
@@ -326,7 +325,7 @@ Example handoff tool call:
                     msg_content = getattr(msg, 'content', '') if hasattr(msg, 'content') else ''
                 
                 if msg_role == Role.agent or str(msg_role) == "agent":
-                    # Extract text from parts
+                    # Extract text from parts - only from this last agent message
                     for part in msg_parts:
                         part_data = part.root if hasattr(part, 'root') else part
                         if isinstance(part_data, dict):
@@ -338,6 +337,9 @@ Example handoff tool call:
                     # Also check for direct content if no parts
                     if not msg_parts and msg_content:
                         message_text += str(msg_content)
+                    
+                    # Found the last agent message, return it (don't accumulate from earlier messages)
+                    break
         
         return message_text.strip()
     
@@ -376,73 +378,120 @@ Example handoff tool call:
     
     async def handle_agent_handoff(agent_uri: str, message: str) -> str:
         """Handle agent handoff by calling the A2A agent at agent_uri."""
-        # Use A2AClient for JSON-RPC agents (ClientFactory doesn't support JSON-RPC yet)
-        async with httpx.AsyncClient(timeout=60.0) as httpx_client:
-            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=agent_uri)
-            agent_card = await resolver.get_agent_card()
-            a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
+        import logging
+        logger = logging.getLogger(__name__)
         
-            try:
-                message_obj = create_text_message_object(role="user", content=message)
-                # Extract agent_id from URI (simplified - just use "weather-assistant" for now)
-                agent_id = "weather-assistant" if "10000" in agent_uri else "unknown"
+        # Use ClientFactory (supports JSON-RPC by default)
+        a2a_client = await ClientFactory.connect(agent_uri)
+        
+        try:
+            message_obj = create_text_message_object(role="user", content=message)
+            logger.info(f"=== Handoff: Starting handoff to {agent_uri} ===")
+            logger.info(f"Handoff message: {message}")
+            
+            # Process message using ClientFactory (non-streaming, polling mode)
+            final_message = ""
+            task_id = None
+            context_id = None
+            
+            # Process message stream until completion
+            while True:
+                # Send message - Client.send_message returns an async generator
+                # Client.send_message expects just the message object, not SendMessageRequest
                 
-                # Process message using A2AClient (non-streaming, polling mode)
-                final_message = ""
-                task_id = None
-                context_id = None
-                
-                # Send initial message
-                send_request = SendMessageRequest(
-                    id=str(uuid4()),
-                    params=MessageSendParams(message=message_obj)
-                )
-                response = await a2a_client.send_message(send_request)
-                
-                # Extract task from response
-                response_dict = response.model_dump() if hasattr(response, 'model_dump') else {}
-                task_data = response_dict.get('result') or getattr(response, 'result', None)
-                
-                if not task_data:
-                    return "Error: Failed to get task from response"
-                
-                # Convert to object-like access if it's a dict
-                if isinstance(task_data, dict):
-                    class TaskObj:
-                        def __init__(self, d):
-                            for k, v in d.items():
-                                if isinstance(v, dict):
-                                    setattr(self, k, TaskObj(v))
-                                else:
-                                    setattr(self, k, v)
-                    task = TaskObj(task_data)
-                else:
-                    task = task_data
-                
-                task_id = getattr(task, 'id', None)
-                context_id = getattr(task, 'context_id', None)
-                
-                # Process task until completion
-                while True:
-                    # Get status
+                # Process message stream
+                task = None
+                state_value = None
+                tool_calls = None
+                async for event in a2a_client.send_message(message_obj):
+                    # === DEBUG: Log raw event structure ===
+                    logger.info(f"=== Handoff: Raw event received ===")
+                    logger.info(f"event type: {type(event)}")
+                    if isinstance(event, tuple):
+                        logger.info(f"event is tuple, length: {len(event)}")
+                        logger.info(f"  tuple[0]: type={type(event[0])}")
+                        logger.info(f"  tuple[1]: type={type(event[1])}")
+                    
+                    # Extract Task from tuple (first element contains full Task object)
+                    task = extract_task_from_tuple(event)
+                    
+                    # Extract TaskStatusUpdateEvent for state information (second element)
+                    event_data = extract_event_data(event)
+                    
+                    # === DEBUG: Log Task extraction ===
+                    if task:
+                        logger.info(f"=== Handoff: Task extracted ===")
+                        logger.info(f"task type: {type(task)}")
+                        if hasattr(task, '__dict__'):
+                            logger.info(f"task __dict__ keys: {list(task.__dict__.keys())}")
+                        task_id = getattr(task, 'id', None) or task_id
+                        context_id = getattr(task, 'context_id', None) or context_id
+                        logger.info(f"task.id: {task_id}")
+                        logger.info(f"task.context_id: {context_id}")
+                        if hasattr(task, 'history'):
+                            history = getattr(task, 'history', [])
+                            logger.info(f"task.history length: {len(history) if history else 0}")
+                    
+                    # === DEBUG: Log TaskStatusUpdateEvent extraction ===
+                    if event_data:
+                        logger.info(f"=== Handoff: TaskStatusUpdateEvent extracted ===")
+                        logger.info(f"event_data type: {type(event_data)}")
+                        if hasattr(event_data, '__dict__'):
+                            logger.info(f"event_data __dict__ keys: {list(event_data.__dict__.keys())}")
+                        if hasattr(event_data, 'task_id'):
+                            logger.info(f"event_data.task_id: {getattr(event_data, 'task_id', None)}")
+                        if hasattr(event_data, 'status'):
+                            status = getattr(event_data, 'status', None)
+                            if status:
+                                if hasattr(status, 'state'):
+                                    state_obj = getattr(status, 'state', None)
+                                    if state_obj:
+                                        state_value = getattr(state_obj, 'value', None)
+                                        logger.info(f"event_data.status.state.value: {state_value}")
+                    
+                    if not task:
+                        logger.warning("Handoff: No task extracted from event, continuing...")
+                        continue
+                    
+                    # Get status from Task object
                     status = getattr(task, 'status', None)
                     if not status:
-                        break
+                        logger.warning("Handoff: Task has no status, continuing...")
+                        continue
                     
-                    state_value = None
-                    if isinstance(status, dict):
-                        state_value = status.get('state', {}).get('value') if isinstance(status.get('state'), dict) else status.get('state')
+                    # Extract state from TaskStatusUpdateEvent if available, otherwise from Task
+                    if event_data and hasattr(event_data, 'status'):
+                        event_status = getattr(event_data, 'status', None)
+                        if event_status:
+                            if hasattr(event_status, 'state'):
+                                state_obj = getattr(event_status, 'state', None)
+                                if state_obj:
+                                    state_value = getattr(state_obj, 'value', None)
                     else:
-                        state_obj = getattr(status, 'state', None)
-                        state_value = getattr(state_obj, 'value', None) if state_obj else None
+                        # Fallback to Task status
+                        if isinstance(status, dict):
+                            state_value = status.get('state', {}).get('value') if isinstance(status.get('state'), dict) else status.get('state')
+                        else:
+                            state_obj = getattr(status, 'state', None)
+                            state_value = getattr(state_obj, 'value', None) if state_obj else None
+                    
+                    logger.info(f"=== Handoff: State transition ===")
+                    logger.info(f"state_value: {state_value}")
                     
                     if state_value == "completed":
+                        logger.info("=== Handoff: Task completed, extracting final message ===")
                         final_message = extract_final_message(task)
+                        logger.info(f"final_message: {final_message[:100]}..." if len(final_message) > 100 else f"final_message: {final_message}")
                         break
                     
                     if state_value == "input-required":
+                        logger.info("=== Handoff: Task requires input, extracting tool calls ===")
                         tool_calls = extract_tool_calls(task)
                         if tool_calls:
+                            logger.info(f"tool_calls_count: {len(tool_calls)}")
+                            for i, tc in enumerate(tool_calls):
+                                logger.info(f"  tool_call[{i}]: name={tc.get('name')}, call_id={tc.get('call_id')}")
+                            
                             # Execute tools via MCP
                             tool_results = []
                             for tc in tool_calls:
@@ -450,12 +499,17 @@ Example handoff tool call:
                                 tool_args = tc.get("arguments", {})
                                 call_id = tc.get("call_id", "")
                                 
+                                logger.info(f"=== Handoff: Executing tool {tool_name} ===")
+                                logger.info(f"tool_args: {tool_args}")
+                                
                                 # Construct MCP endpoint URI from agent_uri
                                 weather_env_uri = f"{agent_uri}/mcp"
                                 
                                 result = await execute_tool_via_mcp(tool_name, tool_args, weather_env_uri)
                                 # Extract text from result dict before passing to build_tool_result_message
                                 output_text = extract_tool_output(result)
+                                logger.info(f"tool_result: {output_text[:100]}..." if len(output_text) > 100 else f"tool_result: {output_text}")
+                                
                                 tool_results.append({
                                     "call_id": call_id,
                                     "name": tool_name,
@@ -463,32 +517,39 @@ Example handoff tool call:
                                 })
                             
                             # Build tool result message and send it
+                            logger.info(f"=== Handoff: Building tool result message ===")
+                            logger.info(f"task_id: {task_id}, context_id: {context_id}")
                             tool_result_msg = build_tool_result_message(tool_results, task_id, context_id)
-                            send_request = SendMessageRequest(
-                                id=str(uuid4()),
-                                params=MessageSendParams(message=tool_result_msg)
-                            )
-                            response = await a2a_client.send_message(send_request)
-                            
-                            # Extract task from response
-                            response_dict = response.model_dump() if hasattr(response, 'model_dump') else {}
-                            task_data = response_dict.get('result') or getattr(response, 'result', None)
-                            
-                            if task_data:
-                                if isinstance(task_data, dict):
-                                    task = TaskObj(task_data)
-                                else:
-                                    task = task_data
-                                task_id = getattr(task, 'id', None) or task_id
-                                context_id = getattr(task, 'context_id', None) or context_id
-                                continue
-                        break
-                    else:
-                        break
+                            message_obj = tool_result_msg
+                            # Break from inner loop to continue outer loop with new message
+                            break
+                        else:
+                            logger.warning("Handoff: input-required but no tool calls found")
+                            break
                 
-                return final_message.strip() or "Task completed."
-            except Exception as e:
-                return f"Error during handoff: {str(e)}"
+                # If we completed, exit outer loop
+                if state_value == "completed":
+                    logger.info("=== Handoff: Completed, exiting ===")
+                    break
+                
+                # If we broke from the loop due to tool calls, continue outer loop
+                if state_value == "input-required" and tool_calls:
+                    logger.info("=== Handoff: Continuing with tool results ===")
+                    continue
+                
+                # Otherwise, exit
+                logger.info("=== Handoff: Exiting loop ===")
+                break
+            
+            logger.info(f"=== Handoff: Returning final message ===")
+            return final_message.strip() or "Task completed."
+        except Exception as e:
+            logger.error(f"=== Handoff: Error occurred ===")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Error message: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return f"Error during handoff: {str(e)}"
     
     async def mcp_sampling_callback(
         context: RequestContext["ClientSession", Any],

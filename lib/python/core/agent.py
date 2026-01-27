@@ -82,7 +82,7 @@ class Agent:
             version="1.0.0",
             description=f"{self.name} agent",
             url=f"{base_url}",
-            preferred_transport=TransportProtocol.http_json,
+            preferred_transport=TransportProtocol.jsonrpc,
             default_input_modes=["text/plain"],
             default_output_modes=["text/plain"],
             capabilities=AgentCapabilities(streaming=True),

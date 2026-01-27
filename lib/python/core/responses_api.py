@@ -1,18 +1,19 @@
 """ResponsesAPI class - Provides /v1/responses endpoint for agent applications."""
 
 import json
+import logging
 import time
 from typing import Dict, Any, List, Optional, Callable
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
-from a2a.client import A2ACardResolver, A2AClient
-import httpx
+from a2a.client import ClientFactory
 from a2a.types import (
     MessageSendParams,
     SendMessageRequest,
-    SendStreamingMessageRequest,
     Message,
     Part,
     DataPart,
@@ -27,6 +28,7 @@ from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
 )
+from timestep.utils.event_helpers import extract_event_data, extract_task_from_event, extract_task_from_tuple
 
 
 class ResponsesAPI:
@@ -162,6 +164,18 @@ class ResponsesAPI:
             tool_result_msg.context_id = context_id
         # DataPart tool_results maps to OpenAI tool messages in the A2A server.
         tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
+        # === INVESTIGATION: Log built tool result message structure ===
+        logger.info(f"=== ResponsesAPI: _build_tool_result_message ===")
+        logger.info(f"task_id: {task_id}, context_id: {context_id}")
+        logger.info(f"message.role: {tool_result_msg.role}")
+        logger.info(f"message.parts_count: {len(tool_result_msg.parts) if tool_result_msg.parts else 0}")
+        if tool_result_msg.parts:
+            for i, part in enumerate(tool_result_msg.parts):
+                part_data = part.root if hasattr(part, 'root') else part
+                if hasattr(part_data, 'kind') and part_data.kind == 'data':
+                    data = part_data.data if hasattr(part_data, 'data') else {}
+                    tool_results_in_part = data.get(TOOL_RESULTS_KEY, []) if isinstance(data, dict) else []
+                    logger.info(f"  part[{i}]: kind=data, tool_results_count={len(tool_results_in_part)}")
         return tool_result_msg
     
     async def _execute_tool_via_mcp(self, tool_name: str, arguments: Dict[str, Any], environment_uri: str) -> Dict[str, Any]:
@@ -342,59 +356,80 @@ class ResponsesAPI:
         if not environment_uri:
             raise HTTPException(status_code=400, detail=f"No environment found for context_id: {context_id}")
         
-        # Use A2AClient for JSON-RPC agents (ClientFactory doesn't support JSON-RPC yet)
-        async with httpx.AsyncClient(timeout=300.0) as httpx_client:
-            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=self.agent_base_url)
-            agent_card = await resolver.get_agent_card()
-            a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
+        # Use ClientFactory (supports JSON-RPC by default)
+        a2a_client = await ClientFactory.connect(self.agent_base_url)
+        
+        # Convert Responses API input to A2A
+        a2a_message = self._convert_responses_input_to_a2a(input_data)
+        if context_id:
+            a2a_message.context_id = context_id
+        
+        task_id = None
+        final_content = ""
+        
+        # Process conversation loop until completion
+        while True:
+            # Send message - Client.send_message returns an async generator
+            # Client.send_message expects just the message object, not SendMessageRequest
             
-            # Convert Responses API input to A2A
-            a2a_message = self._convert_responses_input_to_a2a(input_data)
-            if context_id:
-                a2a_message.context_id = context_id
-            
-            task_id = None
-            final_content = ""
-            
-            # Process conversation loop until completion
-            while True:
-                # Send message
-                send_request = SendMessageRequest(
-                    id=str(uuid4()),
-                    params=MessageSendParams(message=a2a_message)
-                )
-                response = await a2a_client.send_message(send_request)
-                
-                # Extract task from response - response is a Pydantic model
-                # Try to get result from dict representation first (most reliable)
-                response_dict = response.model_dump() if hasattr(response, 'model_dump') else {}
-                task_data = response_dict.get('result')
-                
-                if not task_data:
-                    # Try direct attribute access as fallback
-                    task_data = getattr(response, 'result', None)
-                
-                if not task_data:
-                    raise HTTPException(status_code=500, detail="Failed to get result from response")
-                
-                # Convert to object-like access if it's a dict
-                if isinstance(task_data, dict):
-                    class TaskObj:
-                        def __init__(self, d):
-                            for k, v in d.items():
-                                if isinstance(v, dict):
-                                    setattr(self, k, TaskObj(v))
-                                else:
-                                    setattr(self, k, v)
-                    task = TaskObj(task_data)
+            # Iterate over events from send_message
+            task = None
+            state_value = None
+            tool_calls = None
+            async for event in a2a_client.send_message(a2a_message):
+                # === DEBUG: Log raw event structure ===
+                logger.info(f"=== ResponsesAPI: Raw event received ===")
+                logger.info(f"event type: {type(event)}")
+                if isinstance(event, tuple):
+                    logger.info(f"event is tuple, length: {len(event)}")
+                    for i, item in enumerate(event):
+                        logger.info(f"  tuple[{i}]: type={type(item)}")
                 else:
-                    task = task_data
+                    logger.info(f"event is not tuple")
+                    if hasattr(event, '__dict__'):
+                        logger.info(f"event.__dict__ keys: {list(event.__dict__.keys())}")
+                    elif isinstance(event, dict):
+                        logger.info(f"event dict keys: {list(event.keys())}")
+                
+                # Extract event data (handles both tuple and direct event objects)
+                event_data = extract_event_data(event)
+                
+                # Extract the Task object from the tuple (first element) if available
+                # This gives us the full task with history
+                task_obj = extract_task_from_tuple(event)
+                
+                # Extract task_id from TaskStatusUpdateEvent (event_data)
+                # TaskStatusUpdateEvent uses 'task_id' (snake_case)
+                if hasattr(event_data, 'task_id'):
+                    extracted_task_id = event_data.task_id
+                elif isinstance(event_data, dict):
+                    extracted_task_id = event_data.get('task_id')
+                else:
+                    extracted_task_id = None
+                
+                if extracted_task_id:
+                    task_id = extracted_task_id
+                
+                # Extract context_id from TaskStatusUpdateEvent
+                if hasattr(event_data, 'context_id'):
+                    extracted_context_id = event_data.context_id
+                elif isinstance(event_data, dict):
+                    extracted_context_id = event_data.get('context_id')
+                else:
+                    extracted_context_id = None
+                
+                if extracted_context_id:
+                    context_id = extracted_context_id
+                
+                # Use the Task object from tuple if available (has full history), otherwise use event_data
+                if task_obj:
+                    task = task_obj
+                else:
+                    # Fallback: try to extract task from event_data
+                    task = extract_task_from_event(event_data)
                 
                 if not task:
-                    raise HTTPException(status_code=500, detail="Failed to get task from response")
-                
-                task_id = getattr(task, 'id', None) or task_id
-                context_id = getattr(task, 'context_id', None) or context_id
+                    continue
                 
                 # Get status - handle both object and dict access
                 status = getattr(task, 'status', None)
@@ -465,6 +500,21 @@ class ResponsesAPI:
                 if state_value == "input-required":
                     tool_calls = self._extract_tool_calls(task)
                     if tool_calls:
+                        # === INVESTIGATION: Log receiving tool calls ===
+                        logger.info(f"=== ResponsesAPI: Receiving tool calls ===")
+                        logger.info(f"task_id: {task_id}, context_id: {context_id}")
+                        logger.info(f"tool_calls_count: {len(tool_calls)}")
+                        # Check task history
+                        task_history = getattr(task, 'history', None) if hasattr(task, 'history') else (task.get('history') if isinstance(task, dict) else None)
+                        if task_history:
+                            logger.info(f"task.history length: {len(task_history)}")
+                            for i, msg in enumerate(task_history):
+                                msg_role = msg.role if hasattr(msg, 'role') else (msg.get('role') if isinstance(msg, dict) else 'unknown')
+                                parts_count = len(msg.parts) if hasattr(msg, 'parts') and msg.parts else (len(msg.get('parts', [])) if isinstance(msg, dict) else 0)
+                                logger.info(f"  history[{i}]: role={msg_role}, parts_count={parts_count}")
+                        else:
+                            logger.warning(f"task.history is None or empty when tool calls received")
+                        
                         # Execute tools
                         tool_results = []
                         for tc in tool_calls:
@@ -481,33 +531,40 @@ class ResponsesAPI:
                                 "output": output_text,
                             })
                         
-                        # Build tool result message and continue loop to get next response
+                        # === INVESTIGATION: Log building tool result message ===
+                        logger.info(f"=== ResponsesAPI: Building tool result message ===")
+                        logger.info(f"tool_results_count: {len(tool_results)}")
+                        for i, tr in enumerate(tool_results):
+                            call_id = tr.get("call_id", "missing")
+                            name = tr.get("name", "missing")
+                            output_preview = (tr.get("output", "") or "")[:50] if tr.get("output") else ""
+                            logger.info(f"  tool_result[{i}]: call_id={call_id}, name={name}, output_preview='{output_preview}'")
+                        
+                        # Build tool result message and send it
                         a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
-                        continue  # Continue outer loop to send tool results and get next response
+                        logger.info(f"Built A2A message: role={a2a_message.role}, parts_count={len(a2a_message.parts) if a2a_message.parts else 0}")
+                        # Break from inner loop to continue outer loop with new message
+                        break
                     else:
                         # No tool calls but input required - break
                         break
                 
-                # If working state, accumulate content (shouldn't happen in non-streaming, but handle it)
+                # In non-streaming mode, skip "working" states - we only want the final "completed" state
+                # Working states are incremental updates that we don't need in non-streaming
                 if state_value == "working":
-                    status_message = getattr(status, 'message', None) if hasattr(status, 'message') else status.get('message') if isinstance(status, dict) else None
-                    if status_message:
-                        # Handle both object and dict access for message
-                        if isinstance(status_message, dict):
-                            parts = status_message.get('parts', [])
-                        else:
-                            parts = getattr(status_message, 'parts', [])
-                        for part in parts:
-                            part_data = part.root if hasattr(part, 'root') else part
-                            if hasattr(part_data, 'kind') and part_data.kind == 'text':
-                                if hasattr(part_data, 'text'):
-                                    final_content += part_data.text
-                    # In non-streaming, working state means we should continue to get final response
                     continue
             
-            # Convert to Responses API format - get final status from task
-            final_status = getattr(task, 'status', None) if task else None
-            return self._convert_a2a_response_to_responses(task, final_content, final_status)
+            # If we broke from the loop due to tool calls, continue outer loop
+            if state_value == "input-required" and tool_calls:
+                continue
+            
+            # If we completed or broke for other reasons, exit outer loop
+            if state_value == "completed" or state_value != "input-required":
+                break
+        
+        # Convert to Responses API format - get final status from task
+        final_status = getattr(task, 'status', None) if task else None
+        return self._convert_a2a_response_to_responses(task, final_content, final_status)
     
     async def _handle_responses_streaming(self, body: Dict[str, Any]):
         """Handle streaming /v1/responses request."""
@@ -530,70 +587,91 @@ class ResponsesAPI:
             yield f"data: {json.dumps({'error': {'message': f'No environment found for context_id: {context_id}'}})}\n\n"
             return
         
-        # Use A2AClient for JSON-RPC agents (ClientFactory doesn't support JSON-RPC yet)
-        async with httpx.AsyncClient(timeout=300.0) as httpx_client:
-            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=self.agent_base_url)
-            agent_card = await resolver.get_agent_card()
-            a2a_client = A2AClient(httpx_client=httpx_client, agent_card=agent_card)
-            
-            # Convert Responses API input to A2A
-            a2a_message = self._convert_responses_input_to_a2a(input_data)
-            if context_id:
-                a2a_message.context_id = context_id
-            
-            task_id = None
-            accumulated_content = ""
-            last_sent_content = ""  # Track what we've already sent
-            
-            # Process conversation loop
-            while True:
-                # Send streaming message
-                streaming_request = SendStreamingMessageRequest(
-                    id=str(uuid4()),
-                    params=MessageSendParams(message=a2a_message)
-                )
-                
-                stream_response = a2a_client.send_message_streaming(streaming_request)
+        # Use ClientFactory (supports JSON-RPC by default)
+        a2a_client = await ClientFactory.connect(self.agent_base_url)
+        
+        # Convert Responses API input to A2A
+        a2a_message = self._convert_responses_input_to_a2a(input_data)
+        if context_id:
+            a2a_message.context_id = context_id
+        
+        task_id = None
+        accumulated_content = ""
+        last_sent_content = ""  # Track what we've already sent
+        
+        # Process conversation loop
+        while True:
+                # Send message - Client.send_message() already returns an async generator (streaming)
+                # There is no separate send_message_streaming method in the new Client API
                 
                 tool_calls_found = False
-                async for chunk in stream_response:
-                    # Handle chunk - can be dict or object
-                    chunk_dict = chunk.model_dump() if hasattr(chunk, 'model_dump') else (dict(chunk) if hasattr(chunk, '__dict__') else chunk)
-                    event = chunk_dict.get('result') if isinstance(chunk_dict, dict) else (getattr(chunk, 'result', None) or chunk)
+                async for event in a2a_client.send_message(a2a_message):
+                    # Extract event data (handles both tuple and direct event objects)
+                    event_data = extract_event_data(event)
                     
-                    # Handle both dict and object access
-                    if isinstance(event, dict):
-                        event_kind = event.get('kind')
-                        event_status = event.get('status', {})
+                    # Handle both dict and object access for TaskStatusUpdateEvent
+                    if isinstance(event_data, dict):
+                        event_kind = event_data.get('kind')
+                        event_status = event_data.get('status', {})
                         if isinstance(event_status, dict):
                             state_value = event_status.get('state', {}).get('value') if isinstance(event_status.get('state'), dict) else event_status.get('state')
                         else:
                             state_value = getattr(event_status, 'state', {}).get('value') if hasattr(event_status, 'state') else None
                     else:
-                        event_kind = getattr(event, 'kind', None)
-                        event_status = getattr(event, 'status', None)
+                        event_kind = getattr(event_data, 'kind', None)
+                        event_status = getattr(event_data, 'status', None)
                         if event_status:
                             state_obj = getattr(event_status, 'state', None)
                             state_value = getattr(state_obj, 'value', None) if state_obj else None
                         else:
                             state_value = None
                     
-                    # Check if this is a task or status-update
-                    is_task = event_kind == 'task' or (isinstance(event, dict) and event.get('kind') == 'task')
-                    is_status_update = event_kind == 'status-update' or (isinstance(event, dict) and event.get('kind') == 'status-update')
+                    # Check if this is a status-update (TaskStatusUpdateEvent)
+                    is_status_update = event_kind == 'status-update' or (isinstance(event_data, dict) and event_data.get('kind') == 'status-update')
                     
-                    if is_task or is_status_update:
-                        task = event
+                    if is_status_update:
+                        # Extract event data (handles both tuple and direct event objects)
+                        event_data_for_extraction = extract_event_data(event)
                         
-                        # Extract task_id and context_id
-                        if isinstance(task, dict):
-                            task_id = task.get('taskId') or task.get('task_id') or task_id
-                            context_id = task.get('contextId') or task.get('context_id') or context_id
-                            is_final = task.get('final', False)
+                        # Extract the Task object from the tuple (first element) if available
+                        task_obj = extract_task_from_tuple(event)
+                        
+                        # Extract task_id from TaskStatusUpdateEvent (event_data)
+                        # TaskStatusUpdateEvent uses 'task_id' (snake_case)
+                        if hasattr(event_data_for_extraction, 'task_id'):
+                            extracted_task_id = event_data_for_extraction.task_id
+                        elif isinstance(event_data_for_extraction, dict):
+                            extracted_task_id = event_data_for_extraction.get('task_id')
                         else:
-                            task_id = getattr(task, 'taskId', None) or getattr(task, 'task_id', None) or task_id
-                            context_id = getattr(task, 'contextId', None) or getattr(task, 'context_id', None) or context_id
-                            is_final = getattr(task, 'final', False)
+                            extracted_task_id = None
+                        
+                        if extracted_task_id:
+                            task_id = extracted_task_id
+                        
+                        # Extract context_id from TaskStatusUpdateEvent
+                        if hasattr(event_data_for_extraction, 'context_id'):
+                            extracted_context_id = event_data_for_extraction.context_id
+                        elif isinstance(event_data_for_extraction, dict):
+                            extracted_context_id = event_data_for_extraction.get('context_id')
+                        else:
+                            extracted_context_id = None
+                        
+                        if extracted_context_id:
+                            context_id = extracted_context_id
+                        
+                        # Extract is_final from TaskStatusUpdateEvent
+                        if hasattr(event_data_for_extraction, 'final'):
+                            is_final = event_data_for_extraction.final
+                        elif isinstance(event_data_for_extraction, dict):
+                            is_final = event_data_for_extraction.get('final', False)
+                        else:
+                            is_final = False
+                        
+                        # Use the Task object from tuple if available (has full history), otherwise use event
+                        if task_obj:
+                            task = task_obj
+                        else:
+                            task = event
                         
                         # Stream content updates
                         if state_value == "working":
@@ -671,19 +749,11 @@ class ResponsesAPI:
                                         if hasattr(part_data, 'text'):
                                             final_content = part_data.text  # Use final content
                             
-                            # Also check the event/task itself for history
-                            # The event might be a task object with history
+                            # Get task history from the Task object (from tuple)
                             task_history = []
-                            if isinstance(event, dict):
-                                # Check if event itself has history
-                                if 'history' in event:
-                                    task_history = event.get('history', [])
-                                elif isinstance(task, dict) and 'history' in task:
+                            if task:
+                                if isinstance(task, dict):
                                     task_history = task.get('history', [])
-                            else:
-                                # Event is an object, try to get history
-                                if hasattr(event, 'history'):
-                                    task_history = getattr(event, 'history', [])
                                 elif hasattr(task, 'history'):
                                     task_history = getattr(task, 'history', [])
                             
@@ -767,6 +837,25 @@ class ResponsesAPI:
                         if state_value == "input-required":
                             tool_calls = self._extract_tool_calls(task)
                             if tool_calls:
+                                # === INVESTIGATION: Log receiving tool calls (streaming) ===
+                                logger.info(f"=== ResponsesAPI: Receiving tool calls (streaming) ===")
+                                logger.info(f"task_id: {task_id}, context_id: {context_id}")
+                                logger.info(f"tool_calls_count: {len(tool_calls)}")
+                                # Check task history
+                                task_history = []
+                                if isinstance(task, dict):
+                                    task_history = task.get('history', [])
+                                elif hasattr(task, 'history'):
+                                    task_history = getattr(task, 'history', [])
+                                if task_history:
+                                    logger.info(f"task.history length: {len(task_history)}")
+                                    for i, msg in enumerate(task_history):
+                                        msg_role = msg.role if hasattr(msg, 'role') else (msg.get('role') if isinstance(msg, dict) else 'unknown')
+                                        parts_count = len(msg.parts) if hasattr(msg, 'parts') and msg.parts else (len(msg.get('parts', [])) if isinstance(msg, dict) else 0)
+                                        logger.info(f"  history[{i}]: role={msg_role}, parts_count={parts_count}")
+                                else:
+                                    logger.warning(f"task.history is None or empty when tool calls received (streaming)")
+                                
                                 tool_calls_found = True
                                 # Execute tools
                                 tool_results = []
@@ -784,8 +873,18 @@ class ResponsesAPI:
                                         "output": output_text,
                                     })
                                 
+                                # === INVESTIGATION: Log building tool result message (streaming) ===
+                                logger.info(f"=== ResponsesAPI: Building tool result message (streaming) ===")
+                                logger.info(f"tool_results_count: {len(tool_results)}")
+                                for i, tr in enumerate(tool_results):
+                                    call_id = tr.get("call_id", "missing")
+                                    name = tr.get("name", "missing")
+                                    output_preview = (tr.get("output", "") or "")[:50] if tr.get("output") else ""
+                                    logger.info(f"  tool_result[{i}]: call_id={call_id}, name={name}, output_preview='{output_preview}'")
+                                
                                 # Build tool result message and continue outer loop
                                 a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
+                                logger.info(f"Built A2A message: role={a2a_message.role}, parts_count={len(a2a_message.parts) if a2a_message.parts else 0}")
                                 # Reset tracking for new streaming request
                                 accumulated_content = ""
                                 last_sent_content = ""
