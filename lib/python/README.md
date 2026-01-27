@@ -151,11 +151,98 @@ Three existing protocol mechanisms:
 2. **MCP Elicitation**: When MCP server needs human input, it can use elicitation.
 3. **MCP Sampling**: When tool (like `handoff`) needs to call another agent, it uses MCP sampling. The sampling callback can pause for human input.
 
+## OpenTelemetry Tracing
+
+The Timestep library includes built-in support for OpenTelemetry tracing using zero-code instrumentation. Tracing exports to Jaeger or other OTLP-compatible backends for visualization.
+
+### Quick Start
+
+1. **Start Jaeger all-in-one** (for local development):
+   ```bash
+   docker run -d -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest
+   ```
+
+2. **Configure tracing** (optional - defaults work for local Jaeger):
+   ```bash
+   # Optional: Set service name (default: "timestep")
+   export OTEL_SERVICE_NAME=timestep-personal-assistant
+
+   # Optional: Set OTLP endpoint (default: "http://localhost:4317")
+   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+   # Optional: Disable tracing
+   export OTEL_ENABLED=false
+   ```
+
+3. **Run your application** - traces will automatically be sent to Jaeger
+
+4. **View traces** in Jaeger UI: http://localhost:16686
+
+### What Gets Traced
+
+- **FastAPI requests**: All HTTP requests to your FastAPI endpoints
+- **HTTP clients**: Outgoing HTTP requests (httpx, requests)
+- **OpenAI API calls**: Calls to OpenAI's API
+- **A2A protocol**: A2A requests and responses (via `a2a-sdk[telemetry]`)
+- **MCP protocol**: MCP tool calls and responses
+
+### Programmatic Configuration
+
+```python
+from timestep.core.tracing import setup_tracing, instrument_fastapi_app
+
+# Initialize tracing (defaults to http://localhost:4317)
+setup_tracing(
+    service_name="my-service",
+    otlp_endpoint="http://localhost:4317",  # Optional
+    enabled=True
+)
+
+# Instrument a FastAPI app
+from fastapi import FastAPI
+app = FastAPI()
+instrument_fastapi_app(app)
+```
+
+### Viewing Traces
+
+Traces are sent to Jaeger (or another OTLP-compatible backend) and can be viewed in the Jaeger UI at http://localhost:16686.
+
+**Using other backends:**
+- **Tempo + Grafana**: Set `OTEL_EXPORTER_OTLP_ENDPOINT` to your Tempo endpoint
+- **Custom OTLP endpoint**: Set `OTEL_EXPORTER_OTLP_ENDPOINT` to your endpoint URL
+
+### Troubleshooting
+
+If traces don't appear in Jaeger:
+1. Ensure Jaeger is running: `docker ps | grep jaeger`
+2. Check the OTLP endpoint: `echo $OTEL_EXPORTER_OTLP_ENDPOINT`
+3. Verify the service name appears in Jaeger UI
+4. Check application logs for tracing initialization messages
+
+View traces using `jq` (if you need to export to file):
+
+```bash
+# View all traces
+cat traces.jsonl | jq .
+
+# View a specific trace
+cat traces.jsonl | jq 'select(.trace_id == "abc123...")'
+
+# Count spans per trace
+cat traces.jsonl | jq '.spans | length'
+```
+
+See [OpenTelemetry Python Documentation](https://opentelemetry.io/docs/languages/python/) for more details.
+
 ## Dependencies
 
 - `openai>=1.0.0`
-- `a2a-sdk[http-server]`
+- `a2a-sdk[http-server,telemetry]` - Includes telemetry extra for A2A protocol tracing
 - `mcp`
+- `opentelemetry-distro` - For automatic instrumentation (optional)
+- `opentelemetry-sdk` - Core SDK (optional)
+- `opentelemetry-instrumentation-*` - Library-specific instrumentations (optional)
 
 ## Examples
 

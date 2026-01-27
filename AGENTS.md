@@ -837,12 +837,59 @@ See `scripts/personal_assistant_app.py` and `scripts/weather_assistant_app.py` f
 
 The handoff functionality is built into the library - no additional setup required. See `scripts/personal_assistant_app.py` for a complete example.
 
+## OpenTelemetry Tracing
+
+The Timestep library includes built-in support for OpenTelemetry tracing using zero-code instrumentation. This provides automatic tracing of FastAPI requests, HTTP clients, OpenAI API calls, A2A protocol operations, and MCP tool calls.
+
+### Quick Start with Jaeger
+
+1. **Start Jaeger all-in-one**:
+   ```bash
+   docker run -d -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest
+   ```
+
+2. **Run your application** - traces are automatically sent to Jaeger
+
+3. **View traces** at http://localhost:16686
+
+### Configuration
+
+Tracing is automatically enabled when OpenTelemetry packages are installed. Configure via environment variables:
+
+- `OTEL_ENABLED` (default: `true`) - Enable/disable tracing
+- `OTEL_SERVICE_NAME` (default: `timestep`) - Service name for traces
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (default: `http://localhost:4317`) - OTLP endpoint URL
+
+### Usage
+
+Traces are exported via OTLP to Jaeger or other compatible backends. The library automatically instruments:
+- FastAPI applications
+- HTTP clients (httpx, requests)
+- OpenAI API calls
+- A2A protocol (via `a2a-sdk[telemetry]`)
+- MCP protocol operations
+
+### Programmatic Setup
+
+```python
+from timestep.core.tracing import setup_tracing, instrument_fastapi_app
+
+# Initialize tracing (defaults to http://localhost:4317)
+setup_tracing(service_name="my-service", otlp_endpoint="http://localhost:4317")
+
+# Instrument FastAPI app
+instrument_fastapi_app(app)
+```
+
+See `lib/python/README.md` for more details on tracing configuration and usage.
+
 ## Resources
 
 - **A2A Protocol Specification**: https://a2a-protocol.org/latest/specification/
 - **A2A Task-generating Agents**: https://a2a-protocol.org/latest/topics/life-of-a-task/#agent-response-message-or-task
 - **MCP Protocol Specification**: https://modelcontextprotocol.io/specification/latest
 - **Documentation**: https://timestep-ai.github.io/timestep/
+- **OpenTelemetry Python**: https://opentelemetry.io/docs/languages/python/
 
 ## Notes for AI Agents
 

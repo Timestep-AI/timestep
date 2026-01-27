@@ -1,12 +1,19 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "a2a-sdk[http-server]",
+#   "a2a-sdk[http-server,telemetry]",
 #   "mcp",
 #   "openai",
 #   "fastapi",
 #   "uvicorn",
 #   "httpx",
+#   "opentelemetry-sdk",
+#   "opentelemetry-api",
+#   "opentelemetry-exporter-otlp-proto-grpc",
+#   "opentelemetry-instrumentation-fastapi",
+#   "opentelemetry-instrumentation-httpx",
+#   "opentelemetry-instrumentation-requests",
+#   "opentelemetry-instrumentation-openai",
 # ]
 # ///
 
@@ -78,6 +85,13 @@ from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 
 def main():
     """Run the Personal Assistant Agent."""
+    # Initialize OpenTelemetry tracing (if available)
+    try:
+        from timestep.core.tracing import setup_tracing
+        setup_tracing()
+    except ImportError:
+        pass  # Graceful degradation if OpenTelemetry not available
+    
     # Get port from environment variable or use default
     port = int(os.getenv("PERSONAL_AGENT_PORT", "9999"))
     host = "0.0.0.0"
@@ -160,6 +174,13 @@ Example handoff tool call:
         title="Personal Assistant Agent",
         lifespan=lifespan,
     )
+    
+    # Instrument FastAPI app for tracing (if available)
+    try:
+        from timestep.core.tracing import instrument_fastapi_app
+        instrument_fastapi_app(combined_app)
+    except ImportError:
+        pass  # Graceful degradation if OpenTelemetry not available
     
     # Include all routes from the agent's FastAPI app
     for route in fastapi_app.routes:

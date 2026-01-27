@@ -1,12 +1,19 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "a2a-sdk[http-server]",
+#   "a2a-sdk[http-server,telemetry]",
 #   "mcp",
 #   "openai",
 #   "fastapi",
 #   "uvicorn",
 #   "httpx",
+#   "opentelemetry-sdk",
+#   "opentelemetry-api",
+#   "opentelemetry-exporter-otlp-proto-grpc",
+#   "opentelemetry-instrumentation-fastapi",
+#   "opentelemetry-instrumentation-httpx",
+#   "opentelemetry-instrumentation-requests",
+#   "opentelemetry-instrumentation-openai",
 # ]
 # ///
 
@@ -55,6 +62,13 @@ from timestep.core import Agent, Environment, ResponsesAPI
 
 def main():
     """Run the Weather Assistant Agent."""
+    # Initialize OpenTelemetry tracing (if available)
+    try:
+        from timestep.core.tracing import setup_tracing
+        setup_tracing()
+    except ImportError:
+        pass  # Graceful degradation if OpenTelemetry not available
+    
     # Get port from environment variable or use default
     port = int(os.getenv("WEATHER_AGENT_PORT", "10000"))
     host = "0.0.0.0"
@@ -139,6 +153,13 @@ def main():
         title="Weather Assistant Agent",
         lifespan=lifespan,
     )
+    
+    # Instrument FastAPI app for tracing (if available)
+    try:
+        from timestep.core.tracing import instrument_fastapi_app
+        instrument_fastapi_app(combined_app)
+    except ImportError:
+        pass  # Graceful degradation if OpenTelemetry not available
     
     # Include all routes from the agent's FastAPI app
     for route in fastapi_app.routes:
