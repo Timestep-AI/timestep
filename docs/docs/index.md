@@ -33,7 +33,8 @@ Our first MVP focuses on **handoffs** - enabling agents to seamlessly delegate t
 
 - Getting started: [Installation and Quick Start](getting-started.md)
 - Core concepts: [Architecture](architecture.md)
-- Examples: See `examples/` directory in the repository
+- Examples: See `scripts/` directory in the repository
+- Library code: See `lib/python/core/` directory
 
 ## Core Features
 
@@ -61,7 +62,18 @@ Our first MVP focuses on **handoffs** - enabling agents to seamlessly delegate t
 ## Implementation Status
 
 ### Python
-✅ **Fully functional** - Python implementation is complete and working with handoffs.
+✅ **Fully functional** - Python library is complete in `lib/python/core/` with working examples in `scripts/`.
+
+The library includes:
+- **Agent**: A2A Server that contains Loop (AgentExecutor) internally
+- **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
+- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
+- **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
+
+Working examples demonstrate:
+- Personal assistant with handoff tool enabled
+- Weather assistant with handoff tool disabled
+- Complete handoff flow between agents
 
 ### TypeScript
 ⚠️ **Pending v2 SDK release** - TypeScript implementation is incomplete, pending `@modelcontextprotocol/sdk` v2 release.

@@ -9,10 +9,21 @@ Timestep provides a clean foundation for building agentic systems using A2A and 
 The easiest way to get started is to run the working examples:
 
 **Python:**
+
+The library includes working examples in the `scripts/` directory:
+
 ```bash
-# Start A2A and MCP servers, then run test client
-make test-example-python
+# Terminal 1: Start Weather Assistant (port 10000)
+OPENAI_API_KEY=your-key-here uv run scripts/weather_assistant_app.py
+
+# Terminal 2: Start Personal Assistant (port 9999)
+OPENAI_API_KEY=your-key-here uv run scripts/personal_assistant_app.py
+
+# Terminal 3: Run Test Client
+uv run scripts/personal_assistant_test_client.py
 ```
+
+The test client will send a weather query to the personal assistant, which will hand off to the weather assistant and return the result.
 
 **TypeScript:**
 ```bash
@@ -22,11 +33,12 @@ make test-example-typescript
 
 ## Quick Start: Understanding the Architecture
 
-Timestep examples demonstrate a complete A2A/MCP setup:
+Timestep provides a library in `lib/python/core/` with working examples in `scripts/`:
 
-1. **A2A Server**: Implements a Task-generating Agent
-2. **MCP Server**: Provides tools and sampling capabilities
-3. **Client**: Orchestrates A2A and MCP interactions
+1. **Agent**: A2A Server that contains Loop (AgentExecutor) internally
+2. **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
+3. **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
+4. **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
 
 ### Example Flow: Agent Handoff
 
@@ -39,94 +51,104 @@ Here's how a handoff works in the examples:
 5. **Weather agent responds** with weather data
 6. **Personal assistant receives** response and presents to user
 
-## A2A Server Setup
+## Agent Setup
 
-The A2A server implements a **Task-generating Agent**:
+The `Agent` class implements a **Task-generating Agent**:
 
 ```python
-# examples/python/a2a_server.py
-from a2a.server.apps.rest.fastapi_app import A2ARESTFastAPIApplication
-from a2a.server.agent_execution.agent_executor import AgentExecutor
+# scripts/personal_assistant_app.py
+from timestep.core import Agent, Environment, ResponsesAPI
 
-# Create agent executor
-executor = MultiAgentExecutor(agent_id=agent_id)
+# Create environment (MCP Server)
+environment = Environment(
+    environment_id="personal-assistant-env",
+    context_id="personal-context",
+    agent_id="personal-assistant",
+    enable_handoff=True,  # Enable built-in handoff tool
+)
 
-# Create A2A app
-a2a_app = A2ARESTFastAPIApplication(
-    agent_card=agent_card,
-    http_handler=handler,
+# Create agent (A2A Server)
+agent = Agent(
+    agent_id="personal-assistant",
+    name="Personal Assistant",
+    model="gpt-4o-mini",
+    context_id_to_environment_uri={
+        "personal-context": "http://localhost:9999/mcp"
+    }
+)
+
+# Create ResponsesAPI for /v1/responses endpoint
+responses_api = ResponsesAPI(
+    agent=agent,
+    agent_base_url="http://localhost:9999",
+    context_id_to_environment_uri={
+        "personal-context": "http://localhost:9999/mcp"
+    }
 )
 ```
 
 Key points:
-- Always responds with Task objects
+- `Agent` always responds with Task objects
 - Uses `input-required` state when tool calls are needed
 - Includes tool calls in `DataPart` within task status message
+- `ResponsesAPI` provides `/v1/responses` endpoint with built-in handoff execution
 
-## MCP Server Setup
+## Environment Setup
 
-The MCP server provides tools and sampling:
+The `Environment` class provides tools and sampling:
 
 ```python
-# examples/python/mcp_server.py
-from mcp.server.fastmcp import FastMCP
+# scripts/personal_assistant_app.py
+from timestep.core import Environment
 
-mcp = FastMCP("MCP Server")
+# Create environment (MCP Server)
+environment = Environment(
+    environment_id="personal-assistant-env",
+    context_id="personal-context",
+    agent_id="personal-assistant",
+    enable_handoff=True,  # Enable built-in handoff tool (default)
+)
 
-@mcp.tool()
-async def handoff(
-    agent_uri: str,
-    message: str,
-    ctx: Context = None,
-) -> Dict[str, Any]:
-    """Handoff tool that uses MCP sampling to call another agent."""
-    # Use ctx.session.create_message() to trigger sampling
-    result = await ctx.session.create_message(
-        messages=[sampling_message],
-        metadata={"agent_uri": agent_uri}
-    )
-    return {"response": result.content.text.strip()}
+# Register custom tools
+@environment.tool()
+async def my_tool(param: str) -> dict:
+    """Tool description."""
+    return {"result": param}
 ```
 
 Key points:
-- Tools are registered with `@mcp.tool()`
-- `handoff` tool uses sampling to trigger A2A requests
-- Sampling callback is implemented in the client
+- `Environment` extends FastMCP and provides MCP server functionality
+- Built-in `handoff` tool is registered by default (controlled by `enable_handoff` parameter)
+- Custom tools are registered with `@environment.tool()` decorator
+- `handoff` tool uses MCP sampling to trigger A2A requests
+- Handoff execution is built into `ResponsesAPI` component
 
 ## Client Setup
 
-The client orchestrates A2A and MCP:
+The test clients demonstrate how to interact with agents:
 
 ```python
-# examples/python/test_client.py
+# scripts/personal_assistant_test_client.py
 from a2a.client import ClientFactory
-from mcp import ClientSession
+from timestep.utils.event_helpers import extract_event_data, extract_task_from_tuple
 
 # Connect to A2A server
-a2a_client = await ClientFactory.connect(agent_url)
+a2a_client = await ClientFactory.connect("http://localhost:9999")
 
-# Connect to MCP server with sampling callback
-async with ClientSession(read, write, sampling_callback=mcp_sampling_callback) as session:
-    # Process A2A message stream
-    async for event in a2a_client.send_message(message_obj):
-        task = extract_task_from_event(event)
-        
-        # Check for input-required state
-        if task.status.state.value == "input-required":
-            # Extract tool calls from DataPart
-            tool_calls = extract_tool_calls(task)
-            
-            # Call MCP tools
-            for tool_call in tool_calls:
-                result = await call_mcp_tool(tool_name, tool_args)
-                # Send result back to A2A server
+# Send message and process events
+message_obj = create_text_message_object(role="user", content="What's the weather in Oakland?")
+async for event in a2a_client.send_message(message_obj):
+    task_obj = extract_task_from_tuple(event)
+    event_data = extract_event_data(event)
+    # Process task state transitions...
 ```
 
 Key points:
-- Monitors A2A task state transitions
-- Extracts tool calls from `DataPart` when `input-required`
-- Implements MCP sampling callback for handoffs
-- Calls MCP tools and sends results back to A2A
+- Test clients use `ClientFactory.connect()` to connect to agents
+- Monitor A2A task state transitions
+- Extract tool calls from `DataPart` when `input-required`
+- The `ResponsesAPI` component handles tool execution and handoffs automatically
+- For custom clients, MCP sampling callback is built into `ResponsesAPI`
 
 ## Understanding Tool Call Communication
 
@@ -190,6 +212,7 @@ Handoffs use MCP's sampling feature:
 ## Next Steps
 
 - Learn about [Architecture](architecture.md) - A2A/MCP integration patterns
-- Explore examples in `examples/python/` - complete working implementations
+- Explore examples in `scripts/` - complete working implementations
+- Review the library code in `lib/python/core/` - Agent, Environment, Loop, ResponsesAPI
 - Review [A2A Protocol Specification](https://a2a-protocol.org/latest/specification/)
 - Review [MCP Protocol Specification](https://modelcontextprotocol.io/specification/latest)
