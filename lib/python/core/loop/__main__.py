@@ -27,8 +27,15 @@ from mcp.shared.context import RequestContext
 from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
+    convert_agui_event_to_responses_api,
+    convert_a2a_message_to_agui_event,
 )
-from timestep.utils.event_helpers import extract_event_data, extract_task_from_event, extract_task_from_tuple
+from timestep.utils.event_helpers import (
+    extract_event_data,
+    extract_task_from_event,
+    extract_task_from_tuple,
+    add_canonical_type_to_message,
+)
 
 
 class Loop:
@@ -166,6 +173,8 @@ class Loop:
             tool_result_msg.context_id = context_id
         # DataPart tool_results maps to OpenAI tool messages in the A2A server.
         tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
+        # Add canonical_type for tool call results
+        tool_result_msg = add_canonical_type_to_message(tool_result_msg, "ToolCallResultEvent")
         return tool_result_msg
     
     def _extract_final_message(self, task: Any) -> str:
@@ -427,7 +436,10 @@ class Loop:
         """
         # Handle string input
         if isinstance(input_data, str):
-            return create_text_message_object(role=Role.user, content=input_data)
+            user_message = create_text_message_object(role=Role.user, content=input_data)
+            # Add canonical_type for user text message
+            user_message = add_canonical_type_to_message(user_message, "TextMessageContentEvent")
+            return user_message
         
         # Handle list input (messages or items)
         if isinstance(input_data, list):
@@ -475,6 +487,11 @@ class Loop:
             a2a_message = create_text_message_object(role=Role.user, content=user_content)
             if tool_results:
                 a2a_message.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
+                # Add canonical_type for tool call results
+                a2a_message = add_canonical_type_to_message(a2a_message, "ToolCallResultEvent")
+            else:
+                # Add canonical_type for user text message
+                a2a_message = add_canonical_type_to_message(a2a_message, "TextMessageContentEvent")
             return a2a_message
         
         raise ValueError(f"Unsupported input type: {type(input_data)}")

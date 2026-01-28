@@ -27,8 +27,17 @@ from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
     convert_mcp_tool_to_openai,
     convert_openai_tool_call_to_mcp,
+    convert_a2a_message_to_openai,
+    convert_a2a_message_to_agui_event,
+    compact_events,
+    convert_agui_event_to_openai_chat,
+    get_agui_event_type_from_a2a_message,
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
+)
+from timestep.utils.event_helpers import (
+    get_agui_event_type_from_task_status_update,
+    add_canonical_type_to_message,
 )
 
 # Optional tracing imports
@@ -37,102 +46,6 @@ try:
     TRACING_AVAILABLE = True
 except ImportError:
     TRACING_AVAILABLE = False
-
-
-def _convert_a2a_message_to_openai(message: Message) -> Optional[Dict[str, Any]]:
-    """Convert an A2A message from task history to OpenAI format.
-    
-    Returns:
-        OpenAI message dict (user, assistant, or tool) or None if message is empty/invalid
-    """
-    if not message:
-        return None
-    
-    # Handle both dict and object access for message
-    if isinstance(message, dict):
-        message_parts = message.get("parts", [])
-        message_role = message.get("role")
-    else:
-        message_parts = getattr(message, "parts", []) if hasattr(message, "parts") else []
-        message_role = getattr(message, "role", None) if hasattr(message, "role") else None
-    
-    if not message_parts:
-        return None
-    
-    # Extract text content
-    text_content = ""
-    tool_calls = []
-    tool_results = []
-    
-    for part in message_parts:
-        part_data = part.root if hasattr(part, "root") else part
-        # Handle both dict and object access for part_data
-        if isinstance(part_data, dict):
-            part_kind = part_data.get("kind")
-            if part_kind == "text":
-                text_content += part_data.get("text", "") or ""
-            elif part_kind == "data":
-                part_data_dict = part_data.get("data")
-                if isinstance(part_data_dict, dict):
-                    if TOOL_CALLS_KEY in part_data_dict:
-                        calls = part_data_dict[TOOL_CALLS_KEY]
-                        if isinstance(calls, list):
-                            tool_calls.extend(calls)
-                    if TOOL_RESULTS_KEY in part_data_dict:
-                        results = part_data_dict[TOOL_RESULTS_KEY]
-                        if isinstance(results, list):
-                            tool_results.extend(results)
-        elif hasattr(part_data, "kind"):
-            if part_data.kind == "text" and hasattr(part_data, "text"):
-                text_content += part_data.text or ""
-            elif part_data.kind == "data" and hasattr(part_data, "data"):
-                if isinstance(part_data.data, dict):
-                    if TOOL_CALLS_KEY in part_data.data:
-                        calls = part_data.data[TOOL_CALLS_KEY]
-                        if isinstance(calls, list):
-                            tool_calls.extend(calls)
-                    if TOOL_RESULTS_KEY in part_data.data:
-                        results = part_data.data[TOOL_RESULTS_KEY]
-                        if isinstance(results, list):
-                            tool_results.extend(results)
-    
-    # Determine role from message role
-    if message_role is None:
-        role = Role.user
-    else:
-        role = message_role
-    
-    # Convert based on role and content
-    if role == Role.user:
-        # User message - can have text or tool results
-        if tool_results:
-            # This is a tool results message - convert to tool messages
-            # (This shouldn't happen in history, but handle it)
-            return None  # Tool results are handled separately
-        if text_content:
-            return {"role": "user", "content": text_content}
-    elif role == Role.agent:
-        # Assistant message - can have text and/or tool calls
-        openai_msg: Dict[str, Any] = {"role": "assistant", "content": text_content or ""}
-        if tool_calls:
-            # Convert MCP tool calls to OpenAI format
-            openai_tool_calls = []
-            for mcp_tc in tool_calls:
-                call_id = mcp_tc.get("call_id", "") if isinstance(mcp_tc, dict) else getattr(mcp_tc, "call_id", "")
-                name = mcp_tc.get("name", "") if isinstance(mcp_tc, dict) else getattr(mcp_tc, "name", "")
-                arguments = mcp_tc.get("arguments", {}) if isinstance(mcp_tc, dict) else getattr(mcp_tc, "arguments", {})
-                openai_tool_calls.append({
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
-                    }
-                })
-            openai_msg["tool_calls"] = openai_tool_calls
-        return openai_msg
-    
-    return None
 
 
 class AgentExecutor(BaseAgentExecutor):
@@ -249,62 +162,72 @@ class AgentExecutor(BaseAgentExecutor):
                     f"task_id={task_id}, context_id={context_id}"
                 )
             if task and task.history:
-                # Track which tool_call_id sets we've seen (to filter incremental updates)
-                seen_tool_call_sets = set()
-                # Track the last assistant message without tool_calls (to filter incremental text updates)
-                last_assistant_text = None
-            
-                # Go through history in reverse to keep the last (final) version of each assistant message
-                for hist_message in reversed(task.history):
-                    openai_msg = _convert_a2a_message_to_openai(hist_message)
+                # Map-reduce-map pattern: A2A → AG-UI → compacted AG-UI → OpenAI
+                logger.info(f"Processing task history: {len(task.history)} messages")
+                
+                # Map: Convert A2A messages to AG-UI events
+                agui_events = [convert_a2a_message_to_agui_event(msg) for msg in task.history]
+                logger.info(f"Converted to {len(agui_events)} AG-UI events")
+                
+                # Reduce: Compact streaming events into final events
+                compacted_agui_events = compact_events(agui_events)
+                logger.info(f"Compacted to {len(compacted_agui_events)} final AG-UI events")
+                
+                # Map: Convert compacted AG-UI events to OpenAI format
+                for agui_event in compacted_agui_events:
+                    openai_msg, tool_messages = convert_agui_event_to_openai_chat(agui_event)
+                    
+                    # Add the main message if it exists
                     if openai_msg:
-                        if openai_msg.get("role") == "assistant" and openai_msg.get("tool_calls"):
-                            # Only keep the last (first in reverse) assistant message for each set of tool_call_ids
-                            tool_calls = openai_msg.get("tool_calls", [])
-                            tool_call_ids = tuple(sorted(tc.get("id") for tc in tool_calls if tc.get("id")))
-                            if tool_call_ids not in seen_tool_call_sets:
-                                messages.insert(0, openai_msg)
-                                seen_tool_call_sets.add(tool_call_ids)
-                        elif openai_msg.get("role") == "assistant":
-                            # For assistant messages without tool_calls, only keep the last one (filter incremental text updates)
-                            if last_assistant_text is None:
-                                last_assistant_text = openai_msg
-                        else:
-                            # Keep all other messages (user, tool)
-                            messages.insert(0, openai_msg)
-            
-                # Add the last assistant text message (if any) at the appropriate position
-                if last_assistant_text:
-                    # Insert after the last user message or at the beginning
-                    insert_pos = 0
-                    for i, msg in enumerate(messages):
-                        if msg.get("role") == "user":
-                            insert_pos = i + 1
-                    messages.insert(insert_pos, last_assistant_text)
+                        messages.append(openai_msg)
+                    # Add tool messages if any (from tool_results in user messages)
+                    if tool_messages:
+                        messages.extend(tool_messages)
         
             # Add the current incoming message
-            if tool_results:
-                # Add tool results as tool messages
-                # The assistant message with matching tool_calls should already be in messages from history processing
-                for tool_result in tool_results:
-                    tool_call_id = tool_result.get("call_id")
-                    if not tool_call_id:
-                        raise ValueError("tool_result missing call_id")
-                    raw_result = tool_result.get("output")
-                    if raw_result is None:
-                        raise ValueError("tool_result missing output")
-                    if isinstance(raw_result, (dict, list)):
-                        content = json.dumps(raw_result)
+            # Check if incoming message is already in history (same message_id) to avoid duplicates
+            incoming_message_id = None
+            if isinstance(context.message, dict):
+                incoming_message_id = context.message.get("message_id") or context.message.get("messageId")
+            else:
+                incoming_message_id = getattr(context.message, "message_id", None) or getattr(context.message, "messageId", None)
+            
+            # Check if this message is already in history
+            message_already_in_history = False
+            if incoming_message_id and task and task.history:
+                for hist_message in task.history:
+                    if isinstance(hist_message, dict):
+                        hist_msg_id = hist_message.get("message_id") or hist_message.get("messageId")
                     else:
-                        content = str(raw_result)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": content,
-                    })
-            elif user_text:
-                # Add user message
-                messages.append({"role": "user", "content": user_text})
+                        hist_msg_id = getattr(hist_message, "message_id", None) or getattr(hist_message, "messageId", None)
+                    if hist_msg_id == incoming_message_id:
+                        message_already_in_history = True
+                        logger.info(f"Incoming message (id: {incoming_message_id}) already in history, skipping duplicate")
+                        break
+            
+            if not message_already_in_history:
+                if tool_results:
+                    # Add tool results as tool messages
+                    # The assistant message with matching tool_calls should already be in messages from history processing
+                    for tool_result in tool_results:
+                        tool_call_id = tool_result.get("call_id")
+                        if not tool_call_id:
+                            raise ValueError("tool_result missing call_id")
+                        raw_result = tool_result.get("output")
+                        if raw_result is None:
+                            raise ValueError("tool_result missing output")
+                        if isinstance(raw_result, (dict, list)):
+                            content = json.dumps(raw_result)
+                        else:
+                            content = str(raw_result)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": content,
+                        })
+                elif user_text:
+                    # Add user message
+                    messages.append({"role": "user", "content": user_text})
         
             # Ensure we have at least one message before calling OpenAI
             if not messages:
@@ -337,11 +260,33 @@ class AgentExecutor(BaseAgentExecutor):
             emitted_streaming_updates = False
             previous_tool_calls_state: Optional[str] = None  # Track previous tool calls state to avoid duplicate emissions
         
+            # Log the incoming message
+            logger.info(
+                f"Incoming message: user_text={bool(user_text)}, "
+                f"tool_results_count={len(tool_results) if tool_results else 0}"
+            )
+            
+            # Log final messages array before OpenAI call
+            messages_roles = [msg.get("role") for msg in messages]
+            logger.info(f"Final messages array (before OpenAI call): roles={messages_roles}")
+            
+            # Log detailed structure for debugging
+            for idx, msg in enumerate(messages):
+                role = msg.get("role")
+                if role == "assistant" and msg.get("tool_calls"):
+                    tool_call_ids = [tc.get("id") for tc in msg.get("tool_calls", []) if tc.get("id")]
+                    logger.info(f"Messages[{idx}]: assistant with tool_calls, ids={tool_call_ids}")
+                elif role == "tool":
+                    tool_call_id = msg.get("tool_call_id")
+                    logger.info(f"Messages[{idx}]: tool message, tool_call_id={tool_call_id}")
+                else:
+                    logger.info(f"Messages[{idx}]: {role}")
+            
             # Call OpenAI with streaming (include system prompt)
             openai_messages = [
                 {"role": "system", "content": system_prompt}
             ] + messages
-        
+            
             # Always use streaming - emit incremental status updates as chunks arrive
             stream = await self.openai_client.chat.completions.create(
                 model=self.model,
@@ -365,6 +310,8 @@ class AgentExecutor(BaseAgentExecutor):
                                 role=Role.agent,
                                 content=assistant_content
                             )
+                            # Add canonical_type for streaming chunk
+                            incremental_message = add_canonical_type_to_message(incremental_message, "TextMessageChunkEvent")
                             status_update = TaskStatusUpdateEvent(
                                 task_id=task_id or "",
                                 context_id=context_id or "",
@@ -421,6 +368,8 @@ class AgentExecutor(BaseAgentExecutor):
                             )
                             if current_mcp_tool_calls:
                                 incremental_message.parts.append(Part(DataPart(data={TOOL_CALLS_KEY: current_mcp_tool_calls})))
+                            # Add canonical_type for incremental tool call args (ToolCallArgsEvent for streaming updates)
+                            incremental_message = add_canonical_type_to_message(incremental_message, "ToolCallArgsEvent")
                         
                             # Emit incremental status update with working state
                             status_update = TaskStatusUpdateEvent(
@@ -456,6 +405,8 @@ class AgentExecutor(BaseAgentExecutor):
                     content=assistant_content
                 )
                 a2a_message.parts.append(Part(DataPart(data={TOOL_CALLS_KEY: mcp_tool_calls})))
+                # Add canonical_type for tool call start (final)
+                a2a_message = add_canonical_type_to_message(a2a_message, "ToolCallStartEvent")
             
                 # Emit input-required status (human-in-the-loop point)
                 status_update = TaskStatusUpdateEvent(
@@ -477,6 +428,8 @@ class AgentExecutor(BaseAgentExecutor):
                         role=Role.agent,
                         content=assistant_content
                     )
+                    # Add canonical_type for final text message
+                    a2a_message = add_canonical_type_to_message(a2a_message, "TextMessageEndEvent")
                 
                     status_update = TaskStatusUpdateEvent(
                         task_id=task_id or "",
@@ -494,6 +447,8 @@ class AgentExecutor(BaseAgentExecutor):
                         role=Role.agent,
                         content=assistant_content
                     )
+                    # Add canonical_type for final text message after streaming
+                    final_message = add_canonical_type_to_message(final_message, "TextMessageEndEvent")
                 
                     status_update = TaskStatusUpdateEvent(
                         task_id=task_id or "",

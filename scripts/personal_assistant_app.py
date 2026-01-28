@@ -87,7 +87,7 @@ def main():
     """Run the Personal Assistant Agent."""
     
     # Get port from environment variable or use default
-    port = int(os.getenv("PERSONAL_AGENT_PORT", "9999"))
+    port = int(os.getenv("PERSONAL_ASSISTANT_AGENT_PORT", "9999"))
     host = "0.0.0.0"
     http_host = "localhost" if host == "0.0.0.0" else host
     
