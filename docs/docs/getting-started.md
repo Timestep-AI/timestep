@@ -26,10 +26,7 @@ uv run scripts/personal_assistant_test_client.py
 The test client will send a weather query to the personal assistant, which will hand off to the weather assistant and return the result.
 
 **TypeScript:**
-```bash
-# Currently shows pending v2 SDK message
-make test-example-typescript
-```
+⚠️ TypeScript implementation is pending MCP SDK v2 release (expected Q1 2026). See `examples/typescript/` for details.
 
 ## Quick Start: Understanding the Architecture
 
@@ -37,8 +34,7 @@ Timestep provides a library in `lib/python/core/` with working examples in `scri
 
 1. **Agent**: A2A Server that contains Loop (AgentExecutor) internally
 2. **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
-3. **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
-4. **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
+3. **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment, and provides `/v1/responses` endpoint with built-in handoff execution
 
 ### Example Flow: Agent Handoff
 
@@ -57,7 +53,7 @@ The `Agent` class implements a **Task-generating Agent**:
 
 ```python
 # scripts/personal_assistant_app.py
-from timestep.core import Agent, Environment, ResponsesAPI
+from timestep.core import Agent, Environment, Loop
 
 # Create environment (MCP Server)
 environment = Environment(
@@ -77,8 +73,8 @@ agent = Agent(
     }
 )
 
-# Create ResponsesAPI for /v1/responses endpoint
-responses_api = ResponsesAPI(
+# Create Loop for /v1/responses endpoint
+loop = Loop(
     agent=agent,
     agent_base_url="http://localhost:9999",
     context_id_to_environment_uri={
@@ -91,7 +87,7 @@ Key points:
 - `Agent` always responds with Task objects
 - Uses `input-required` state when tool calls are needed
 - Includes tool calls in `DataPart` within task status message
-- `ResponsesAPI` provides `/v1/responses` endpoint with built-in handoff execution
+- `Loop` provides `/v1/responses` endpoint with built-in handoff execution
 
 ## Environment Setup
 
@@ -121,7 +117,7 @@ Key points:
 - Built-in `handoff` tool is registered by default (controlled by `enable_handoff` parameter)
 - Custom tools are registered with `@environment.tool()` decorator
 - `handoff` tool uses MCP sampling to trigger A2A requests
-- Handoff execution is built into `ResponsesAPI` component
+- Handoff execution is built into `Loop` component
 
 ## Client Setup
 
@@ -147,8 +143,8 @@ Key points:
 - Test clients use `ClientFactory.connect()` to connect to agents
 - Monitor A2A task state transitions
 - Extract tool calls from `DataPart` when `input-required`
-- The `ResponsesAPI` component handles tool execution and handoffs automatically
-- For custom clients, MCP sampling callback is built into `ResponsesAPI`
+- The `Loop` component handles tool execution and handoffs automatically
+- For custom clients, MCP sampling callback is built into `Loop`
 
 ## Understanding Tool Call Communication
 
@@ -213,6 +209,6 @@ Handoffs use MCP's sampling feature:
 
 - Learn about [Architecture](architecture.md) - A2A/MCP integration patterns
 - Explore examples in `scripts/` - complete working implementations
-- Review the library code in `lib/python/core/` - Agent, Environment, Loop, ResponsesAPI
+- Review the library code in `lib/python/core/` - Agent, Environment, Loop
 - Review [A2A Protocol Specification](https://a2a-protocol.org/latest/specification/)
 - Review [MCP Protocol Specification](https://modelcontextprotocol.io/specification/latest)

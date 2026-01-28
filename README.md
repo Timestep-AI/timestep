@@ -38,10 +38,9 @@ timestep/
 ├── lib/                    # Library code
 │   ├── python/             # Python library
 │   │   └── core/           # Core library components
-│   │       ├── agent.py    # Agent class (A2A Server)
-│   │       ├── environment.py  # Environment class (MCP Server)
-│   │       ├── loop.py     # Loop class (AgentExecutor)
-│   │       └── responses_api.py  # ResponsesAPI class (/v1/responses endpoint)
+│   │       ├── agent/      # Agent class (A2A Server)
+│   │       ├── environment/ # Environment class (MCP Server)
+│   │       └── loop/        # Loop class (provides /v1/responses endpoint)
 │   └── typescript/         # TypeScript library (planned)
 ├── scripts/                # Working example applications
 │   ├── personal_assistant_app.py  # Personal assistant with handoff enabled
@@ -65,8 +64,7 @@ timestep/
 The library includes:
 - **Agent**: A2A Server that contains Loop (AgentExecutor) internally
 - **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
-- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
-- **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
+- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment, and provides `/v1/responses` endpoint with built-in handoff execution
 
 Working examples demonstrate:
 - Personal assistant with handoff tool enabled
@@ -102,10 +100,7 @@ uv run scripts/personal_assistant_test_client.py
 ```
 
 **TypeScript:**
-```bash
-# Start A2A and MCP servers (pending v2 SDK)
-make test-example-typescript
-```
+⚠️ TypeScript implementation is pending MCP SDK v2 release (expected Q1 2026). See `examples/typescript/` for details.
 
 ### Example: Agent Handoff
 
@@ -147,9 +142,9 @@ The client orchestrates the interaction:
 - Monitors task state transitions
 - When `input-required` state is detected, extracts tool calls from `DataPart`
 - Calls MCP tools and sends results back to A2A server
-- Handles handoffs via MCP sampling callback (built into `ResponsesAPI`)
+- Handles handoffs via MCP sampling callback (built into `Loop`)
 
-The `ResponsesAPI` component provides a `/v1/responses` endpoint that handles both streaming and non-streaming modes, with built-in handoff execution via MCP sampling.
+The `Loop` component provides a `/v1/responses` endpoint that handles both streaming and non-streaming modes, with built-in handoff execution via MCP sampling.
 
 ## Key Concepts
 
@@ -189,7 +184,7 @@ See `scripts/` for complete working examples:
 - `weather_assistant_test_client.py` - Test client for weather assistant
 
 These examples demonstrate:
-- Using the `Agent`, `Environment`, and `ResponsesAPI` classes from `lib/python/core/`
+- Using the `Agent`, `Environment`, and `Loop` classes from `lib/python/core/`
 - Conditional handoff tool registration via `enable_handoff` parameter
 - Complete handoff flow between agents
 

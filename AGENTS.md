@@ -44,10 +44,9 @@ timestep/
 ├── lib/                    # Library code
 │   ├── python/             # Python library
 │   │   └── core/           # Core library components
-│   │       ├── agent.py    # Agent class (A2A Server)
-│   │       ├── environment.py  # Environment class (MCP Server)
-│   │       ├── loop.py     # Loop class (AgentExecutor)
-│   │       └── responses_api.py  # ResponsesAPI class (/v1/responses endpoint)
+│   │       ├── agent/      # Agent class (A2A Server)
+│   │       ├── environment/ # Environment class (MCP Server)
+│   │       └── loop/        # Loop class (provides /v1/responses endpoint)
 │   └── typescript/         # TypeScript library (planned)
 ├── scripts/                # Working example applications
 │   ├── personal_assistant_app.py  # Personal assistant with handoff enabled
@@ -744,7 +743,7 @@ make test-example-typescript  # Currently shows pending v2 message
 
 - Examples are in `scripts/` directory
 - Each example includes an A2A server application and a test client
-- The library components (`Agent`, `Environment`, `Loop`, `ResponsesAPI`) are in `lib/python/core/`
+- The library components (`Agent`, `Environment`, `Loop`) are in `lib/python/core/`
 
 ## Code Style and Conventions
 
@@ -819,7 +818,7 @@ async def my_tool(param: str) -> dict:
 1. Create an `Environment` instance with agent-specific configuration
 2. Add tools to the environment using `@environment.tool()` decorator
 3. Create an `Agent` instance with the environment URI
-4. Optionally add `ResponsesAPI` for `/v1/responses` endpoint
+4. Optionally add `Loop` for `/v1/responses` endpoint
 5. Start the agent server
 6. Test agent via client or test scripts
 7. Update documentation
@@ -830,7 +829,7 @@ See `scripts/personal_assistant_app.py` and `scripts/weather_assistant_app.py` f
 
 1. Create an `Environment` with `enable_handoff=True` (default)
 2. The `handoff` tool is automatically registered in the Environment
-3. Create an `Agent` with `ResponsesAPI` (which includes built-in handoff execution)
+3. Create an `Agent` with `Loop` (which includes built-in handoff execution)
 4. The handoff tool uses MCP sampling to call target agents via A2A
 5. Test handoff flow end-to-end using test clients
 6. Verify task state transitions

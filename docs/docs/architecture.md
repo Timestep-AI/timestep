@@ -39,7 +39,7 @@ agent = Agent(
 The `Loop` class (inside `Agent`) implements the `AgentExecutor` interface:
 
 ```python
-# lib/python/core/loop.py
+# lib/python/core/loop/__main__.py
 class Loop(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Process message and generate response
@@ -171,14 +171,14 @@ This pattern allows agents to delegate work to specialized peers without requiri
 
 ## Client Architecture
 
-The `ResponsesAPI` component provides a `/v1/responses` endpoint that orchestrates A2A and MCP interactions:
+The `Loop` component provides a `/v1/responses` endpoint that orchestrates A2A and MCP interactions:
 
 ```python
-# lib/python/core/responses_api.py
-from timestep.core import ResponsesAPI
+# lib/python/core/loop/__main__.py
+from timestep.core import Loop
 
-# Create ResponsesAPI instance
-responses_api = ResponsesAPI(
+# Create Loop instance
+loop = Loop(
     agent=agent,
     agent_base_url="http://localhost:8000",
     context_id_to_environment_uri={
@@ -186,12 +186,12 @@ responses_api = ResponsesAPI(
     }
 )
 
-# Mount ResponsesAPI routes to FastAPI app
-for route in responses_api.fastapi_app.routes:
+# Mount Loop routes to FastAPI app
+for route in loop.fastapi_app.routes:
     fastapi_app.add_api_route(route.path, route.endpoint, methods=route.methods)
 ```
 
-The `ResponsesAPI` component handles:
+The `Loop` component handles:
 - Receiving requests via `/v1/responses` endpoint
 - Converting to A2A messages and sending to agent
 - Monitoring A2A task state transitions

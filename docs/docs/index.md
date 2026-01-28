@@ -67,8 +67,7 @@ Our first MVP focuses on **handoffs** - enabling agents to seamlessly delegate t
 The library includes:
 - **Agent**: A2A Server that contains Loop (AgentExecutor) internally
 - **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
-- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
-- **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
+- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment, and provides `/v1/responses` endpoint with built-in handoff execution
 
 Working examples demonstrate:
 - Personal assistant with handoff tool enabled

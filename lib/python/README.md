@@ -4,12 +4,11 @@ A clean, simple library for building multi-agent systems using A2A (Agent-to-Age
 
 ## Overview
 
-Timestep provides four core entities:
+Timestep provides three core entities:
 
 - **Agent**: A2A Server that contains Loop (AgentExecutor) internally
 - **Environment**: MCP Server (extends FastMCP) that provides system prompt and tools
-- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment
-- **ResponsesAPI**: Reusable component for `/v1/responses` endpoint with built-in handoff execution
+- **Loop**: AgentExecutor inside Agent that uses MCP client to get system prompt and tools from Environment, and provides `/v1/responses` endpoint with built-in handoff execution
 
 ## Architecture
 
@@ -62,25 +61,6 @@ async def my_tool(param: str) -> dict:
 env_uri = await environment.start(port=8080)
 ```
 
-### Create ResponsesAPI
-
-```python
-from timestep.core import ResponsesAPI
-
-# Create ResponsesAPI instance
-responses_api = ResponsesAPI(
-    agent=agent,
-    agent_base_url=f"http://localhost:8000",
-    context_id_to_environment_uri={
-        "context-1": env_uri
-    }
-)
-
-# Mount ResponsesAPI routes to your FastAPI app
-for route in responses_api.fastapi_app.routes:
-    fastapi_app.add_api_route(route.path, route.endpoint, methods=route.methods)
-```
-
 ### Create an Agent
 
 ```python
@@ -100,6 +80,25 @@ agent = Agent(
 agent_uri = await agent.start(port=8000)
 ```
 
+### Create Loop for /v1/responses Endpoint
+
+```python
+from timestep.core import Loop
+
+# Create Loop instance (provides /v1/responses endpoint)
+loop = Loop(
+    agent=agent,
+    agent_base_url="http://localhost:8000",
+    context_id_to_environment_uri={
+        "context-1": env_uri
+    }
+)
+
+# Mount Loop routes to your FastAPI app
+for route in loop.fastapi_app.routes:
+    fastapi_app.add_api_route(route.path, route.endpoint, methods=route.methods)
+```
+
 ### Example: Personal Assistant + Weather Assistant
 
 See `scripts/` for complete working examples:
@@ -109,7 +108,7 @@ See `scripts/` for complete working examples:
 - `weather_assistant_test_client.py` - Test client for weather assistant
 
 These examples demonstrate:
-- Using `Agent`, `Environment`, and `ResponsesAPI` classes
+- Using `Agent`, `Environment`, and `Loop` classes
 - Conditional handoff tool registration via `enable_handoff` parameter
 - Complete handoff flow between agents
 - Custom tool registration (e.g., `get_weather`)
@@ -121,7 +120,7 @@ The `Environment` class includes a built-in `handoff` tool that enables agent-to
 - **Automatic Registration**: The handoff tool is registered by default when `enable_handoff=True` (default)
 - **Conditional Registration**: Set `enable_handoff=False` to disable the tool (useful for specialized agents that don't need handoff capability)
 - **MCP Sampling**: The handoff tool uses MCP sampling to call target agents via A2A
-- **Built-in Execution**: The `ResponsesAPI` component includes built-in handoff execution, so no additional setup is required
+- **Built-in Execution**: The `Loop` component includes built-in handoff execution, so no additional setup is required
 
 Example:
 ```python
@@ -132,16 +131,16 @@ environment = Environment(..., enable_handoff=True)
 environment = Environment(..., enable_handoff=False)
 ```
 
-## ResponsesAPI Component
+## Loop Component
 
-The `ResponsesAPI` class provides a reusable `/v1/responses` endpoint:
+The `Loop` class provides a reusable `/v1/responses` endpoint:
 
 - **Streaming and Non-streaming**: Handles both streaming and non-streaming response modes
 - **Built-in Handoff Execution**: Automatically executes handoff tool calls via MCP sampling
 - **Tool Execution**: Executes MCP tools and sends results back to the agent
 - **A2A Integration**: Seamlessly integrates with the A2A protocol
 
-The `ResponsesAPI` is designed to be mounted on a FastAPI application alongside the agent's A2A endpoints.
+The `Loop` is designed to be mounted on a FastAPI application alongside the agent's A2A endpoints.
 
 ## Human-in-the-Loop
 
@@ -247,5 +246,5 @@ See `scripts/` for complete working examples:
 These examples show:
 - Creating `Agent` and `Environment` instances
 - Registering custom tools
-- Using `ResponsesAPI` for `/v1/responses` endpoint
+- Using `Loop` for `/v1/responses` endpoint
 - Handoff flow between agents
