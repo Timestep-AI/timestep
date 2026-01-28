@@ -17,6 +17,5 @@ node_modules/
 .env
 .venv/
 
-# Test outputs (from test_client)
-tasks/
-traces/
+# Other
+data/
