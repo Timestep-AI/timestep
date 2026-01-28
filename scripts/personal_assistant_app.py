@@ -85,12 +85,6 @@ from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 
 def main():
     """Run the Personal Assistant Agent."""
-    # Initialize OpenTelemetry tracing (if available)
-    try:
-        from timestep.observability.tracing import setup_tracing
-        setup_tracing()
-    except ImportError:
-        pass  # Graceful degradation if OpenTelemetry not available
     
     # Get port from environment variable or use default
     port = int(os.getenv("PERSONAL_AGENT_PORT", "9999"))
@@ -175,12 +169,9 @@ Example handoff tool call:
         lifespan=lifespan,
     )
     
-    # Instrument FastAPI app for tracing (if available)
-    try:
-        from timestep.observability.tracing import instrument_fastapi_app
-        instrument_fastapi_app(combined_app)
-    except ImportError:
-        pass  # Graceful degradation if OpenTelemetry not available
+    # Enable OpenTelemetry tracing (if available)
+    from timestep.observability.tracing import enable_tracing
+    enable_tracing(combined_app)
     
     # Include all routes from the agent's FastAPI app
     for route in fastapi_app.routes:

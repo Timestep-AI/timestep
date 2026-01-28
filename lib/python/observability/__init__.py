@@ -16,6 +16,10 @@ from timestep.observability.types import (
     CriterionResult,
     EvalAggregation,
 )
+from timestep.observability.tracing import (
+    enable_tracing,
+    disable_tracing,
+)
 
 __all__ = [
     "Dataset",
@@ -27,4 +31,6 @@ __all__ = [
     "EvalCaseResult",
     "CriterionResult",
     "EvalAggregation",
+    "enable_tracing",
+    "disable_tracing",
 ]

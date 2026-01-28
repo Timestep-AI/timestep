@@ -51,9 +51,67 @@ if OPENTELEMETRY_AVAILABLE:
 else:
     tracer = None
 
+# Configure logger to suppress noisy OTLP export errors
+# This prevents "Transient error StatusCode.UNAVAILABLE" messages from cluttering logs
+if OPENTELEMETRY_AVAILABLE:
+    export_logger = logging.getLogger("opentelemetry.sdk.trace.export")
+    export_logger.setLevel(logging.WARNING)  # Suppress INFO/DEBUG export errors
 
-# Tracing setup and configuration
-def setup_tracing(
+
+# High-level tracing API
+def enable_tracing(
+    app: Optional[Any] = None,
+    service_name: Optional[str] = None,
+    otlp_endpoint: Optional[str] = None,
+    enabled: Optional[bool] = None,
+) -> bool:
+    """Enable OpenTelemetry tracing for the application.
+    
+    This function combines setup and instrumentation into a single call.
+    It handles all error cases gracefully.
+    
+    Args:
+        app: FastAPI application instance (optional, can be None if only setting up)
+        service_name: Service name for traces (defaults to OTEL_SERVICE_NAME or "timestep")
+        otlp_endpoint: OTLP endpoint URL (defaults to OTEL_EXPORTER_OTLP_ENDPOINT or "http://localhost:4317")
+        enabled: Whether to enable tracing (defaults to OTEL_ENABLED or True)
+    
+    Returns:
+        True if tracing was successfully enabled, False otherwise
+    """
+    if not OPENTELEMETRY_AVAILABLE:
+        logger.debug("OpenTelemetry not available, skipping tracing setup")
+        return False
+    
+    # Setup tracing (internal function)
+    if not _setup_tracing(service_name, otlp_endpoint, enabled):
+        return False
+    
+    # Instrument FastAPI app if provided
+    if app is not None:
+        _instrument_fastapi_app(app)
+    
+    return True
+
+
+def disable_tracing() -> None:
+    """Disable OpenTelemetry tracing.
+    
+    This resets the tracer provider to a no-op implementation.
+    """
+    if not OPENTELEMETRY_AVAILABLE:
+        return
+    
+    try:
+        from opentelemetry.trace import NoOpTracerProvider
+        trace.set_tracer_provider(NoOpTracerProvider())
+        logger.debug("Tracing disabled")
+    except Exception as e:
+        logger.debug(f"Error disabling tracing: {e}")
+
+
+# Internal tracing setup and configuration
+def _setup_tracing(
     service_name: Optional[str] = None,
     otlp_endpoint: Optional[str] = None,
     enabled: Optional[bool] = None,
@@ -137,10 +195,14 @@ def setup_tracing(
         # Set global tracer provider
         trace.set_tracer_provider(tracer_provider)
         
+        # Log initialization (warn if OTLP endpoint might be unavailable)
         logger.info(
             f"OpenTelemetry tracing initialized: service={service_name}, "
             f"otlp_endpoint={otlp_endpoint}"
         )
+        
+        # Note: Export errors are suppressed via logger configuration above
+        # If OTLP is unavailable, spans will be dropped silently after initial warning
         
         # Try to enable programmatic instrumentation for common libraries
         _setup_programmatic_instrumentation()
@@ -159,7 +221,7 @@ def _setup_programmatic_instrumentation():
     - HTTP clients (httpx, requests)
     - OpenAI (if available)
     
-    Note: FastAPI instrumentation is done separately via instrument_fastapi_app()
+    Note: FastAPI instrumentation is done separately via _instrument_fastapi_app()
     to ensure the app is created first.
     """
     if not OPENTELEMETRY_AVAILABLE:
@@ -193,8 +255,8 @@ def _setup_programmatic_instrumentation():
         logger.warning(f"Error setting up programmatic instrumentation: {e}", exc_info=True)
 
 
-def instrument_fastapi_app(app):
-    """Instrument a FastAPI application for tracing.
+def _instrument_fastapi_app(app):
+    """Instrument a FastAPI application for tracing (internal helper).
     
     This should be called after creating the FastAPI app instance.
     

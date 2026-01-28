@@ -189,19 +189,12 @@ The Timestep library includes built-in support for OpenTelemetry tracing using z
 ### Programmatic Configuration
 
 ```python
-from timestep.observability.tracing import setup_tracing, instrument_fastapi_app
+from timestep.observability.tracing import enable_tracing
 
-# Initialize tracing (defaults to http://localhost:4317)
-setup_tracing(
-    service_name="my-service",
-    otlp_endpoint="http://localhost:4317",  # Optional
-    enabled=True
-)
-
-# Instrument a FastAPI app
+# Enable tracing and instrument FastAPI app in one call
 from fastapi import FastAPI
 app = FastAPI()
-instrument_fastapi_app(app)
+enable_tracing(app, service_name="my-service", otlp_endpoint="http://localhost:4317")
 ```
 
 ### Viewing Traces

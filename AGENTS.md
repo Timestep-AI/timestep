@@ -872,13 +872,10 @@ Traces are exported via OTLP to Jaeger or other compatible backends. The library
 ### Programmatic Setup
 
 ```python
-from timestep.observability.tracing import setup_tracing, instrument_fastapi_app
+from timestep.observability.tracing import enable_tracing
 
-# Initialize tracing (defaults to http://localhost:4317)
-setup_tracing(service_name="my-service", otlp_endpoint="http://localhost:4317")
-
-# Instrument FastAPI app
-instrument_fastapi_app(app)
+# Enable tracing and instrument FastAPI app in one call
+enable_tracing(app, service_name="my-service", otlp_endpoint="http://localhost:4317")
 ```
 
 See `lib/python/README.md` for more details on tracing configuration and usage.
