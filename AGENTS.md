@@ -893,4 +893,5 @@ See `lib/python/README.md` for more details on tracing configuration and usage.
 - **Follow A2A and MCP specifications**: Ensure protocol compliance
 - **Test handoffs**: Verify handoff functionality when making changes
 - **Keep it simple**: The library is intentionally minimal - avoid over-engineering
-- **Do NOT create documentation files unless explicitly requested**: Only create markdown documentation files (like README, architecture docs, etc.) when the user explicitly asks for them. Do not create evaluation documents, mapping documents, or other analysis documents unless specifically requested.
+- **Do NOT create documentation files unless explicitly requested**: Only create markdown documentation files (like README, architecture docs, etc.) when the user explicitly asks for them. Do not create evaluation documents, mapping documents, or other analysis documents unless specifically requested
+- **Do NOT add fallback logic**: Fallback logic hides real issues and makes codebases overly complex. Instead, fix the root cause. If a search/query fails, investigate why it fails rather than adding multiple fallback attempts
