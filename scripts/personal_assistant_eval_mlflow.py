@@ -205,32 +205,51 @@ async def main():
             logger.warning(f"Trace row {idx} has no trace_id, skipping")
             continue
         
-        # Try to extract the request/question from the trace
-        # The trace DataFrame has a 'request' column that contains the input
-        trace_request = None
-        if 'request' in trace_row:
-            trace_request = trace_row['request']
-        elif 'trace' in trace_row and hasattr(trace_row['trace'], 'data'):
-            # Try to get from trace data structure
-            trace_data = trace_row['trace'].data if hasattr(trace_row['trace'], 'data') else None
-            if trace_data and isinstance(trace_data, dict):
-                trace_request = (
-                    trace_data.get('request', {}).get('inputs', {}).get('question') or
-                    trace_data.get('request', {}).get('input') or
-                    trace_data.get('inputs', {}).get('question') or
-                    trace_data.get('input')
-                )
+        # Extract the actual user question from the trace
+        # The 'request' column contains the full system prompt, not the user question
+        # The user question is in the span attributes: gen_ai.prompt.1.content (where role="user")
+        user_question = None
         
-        # Match trace to task by comparing request/question content
+        # Try to get from spans if available
+        if 'spans' in trace_row and trace_row['spans']:
+            try:
+                # Spans is a list, get the first span (usually the main LLM call)
+                spans = trace_row['spans']
+                if isinstance(spans, list) and len(spans) > 0:
+                    first_span = spans[0]
+                    if isinstance(first_span, dict) and 'attributes' in first_span:
+                        attrs = first_span['attributes']
+                        # Look for user prompt in attributes (gen_ai.prompt.1.content where role="user")
+                        # Check prompts 0-5 to find the user message
+                        for i in range(6):
+                            prompt_role_key = f'gen_ai.prompt.{i}.role'
+                            prompt_content_key = f'gen_ai.prompt.{i}.content'
+                            if prompt_role_key in attrs and attrs[prompt_role_key] == '"user"':
+                                if prompt_content_key in attrs:
+                                    user_question = attrs[prompt_content_key].strip('"')
+                                    break
+            except Exception as e:
+                logger.debug(f"Could not extract user question from spans: {e}")
+        
+        # Fallback: try to extract from request column (might contain system prompt + question)
+        if not user_question and 'request' in trace_row:
+            trace_request = trace_row['request']
+            # Try to find the actual question in the request (after system prompt)
+            for question in question_to_answer.keys():
+                if question in trace_request:
+                    user_question = question
+                    break
+        
+        # Match trace to task by comparing user question
         expected_answer = None
-        if trace_request:
+        if user_question:
             # Try exact match first
-            if trace_request in question_to_answer:
-                expected_answer = question_to_answer[trace_request]
+            if user_question in question_to_answer:
+                expected_answer = question_to_answer[user_question]
             else:
-                # Try partial match (trace request might contain system prompt + question)
+                # Try partial match (question might be slightly different)
                 for question, answer in question_to_answer.items():
-                    if question in trace_request or trace_request in question:
+                    if question in user_question or user_question in question:
                         expected_answer = answer
                         break
         
@@ -243,11 +262,11 @@ async def main():
                     value=expected_answer
                 )
                 annotated_count += 1
-                logger.debug(f"Added expectation to trace {trace_id} for question: {trace_request[:50] if trace_request else 'N/A'}...")
+                logger.debug(f"Added expectation to trace {trace_id} for question: {user_question[:50] if user_question else 'N/A'}...")
             except Exception as e:
                 logger.warning(f"Could not add expectation to trace {trace_id}: {e}")
         else:
-            logger.warning(f"Could not match trace {trace_id} to any task. Request: {trace_request[:100] if trace_request else 'N/A'}...")
+            logger.warning(f"Could not match trace {trace_id} to any task. User question: {user_question[:100] if user_question else 'N/A'}...")
     
     print(f"Annotated {annotated_count} traces with expectations")
     
