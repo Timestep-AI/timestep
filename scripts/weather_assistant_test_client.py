@@ -66,19 +66,19 @@ async def main() -> None:
 
     base_url = 'http://localhost:10000'
 
-    # Use ClientFactory (supports JSON-RPC by default)
-    client = await ClientFactory.connect(base_url)
-    logger.info('Client initialized.')
+    # # Use ClientFactory (supports JSON-RPC by default)
+    # client = await ClientFactory.connect(base_url)
+    # logger.info('Client initialized.')
 
-    send_message_payload: dict[str, Any] = {
-        'message': {
-            'role': 'user',
-            'parts': [
-                {'kind': 'text', 'text': "What's the weather in Oakland?"}
-            ],
-            'messageId': uuid4().hex,
-        },
-    }
+    # send_message_payload: dict[str, Any] = {
+    #     'message': {
+    #         'role': 'user',
+    #         'parts': [
+    #             {'kind': 'text', 'text': "What's the weather in Oakland?"}
+    #         ],
+    #         'messageId': uuid4().hex,
+    #     },
+    # }
 
     # --8<-- [start:send_message]
     # logger.info('\n=== start:send_message ===')
