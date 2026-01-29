@@ -40,12 +40,8 @@ from timestep.utils.event_helpers import (
     add_canonical_type_to_message,
 )
 
-# Optional tracing imports
-try:
-    from timestep.observability.tracing import get_test_context, create_invoke_agent_span
-    TRACING_AVAILABLE = True
-except ImportError:
-    TRACING_AVAILABLE = False
+# Tracing not used
+TRACING_AVAILABLE = False
 
 
 class AgentExecutor(BaseAgentExecutor):
@@ -83,29 +79,6 @@ class AgentExecutor(BaseAgentExecutor):
         """Execute agent task using OpenAI and MCP client for system prompt/tools."""
         task_id = context.task_id
         context_id = context.context_id
-        
-        # Extract test context from baggage (for eval runs) - Phase 1: minimal implementation
-        if TRACING_AVAILABLE:
-            try:
-                test_context = get_test_context()
-                # TODO: Create test.case span when test_context.case_name is present
-            except Exception:
-                pass
-        
-        # Create invoke_agent span for observability - Phase 1: minimal implementation
-        agent_span_ctx = None
-        if TRACING_AVAILABLE:
-            try:
-                agent_span_ctx = create_invoke_agent_span(
-                    agent_name=self.agent_id,
-                    agent_id=self.agent_id,
-                )
-            except Exception:
-                agent_span_ctx = None
-        
-        # Use span as context manager if available
-        if agent_span_ctx:
-            agent_span_ctx.__enter__()
         
         try:
             # Get Environment URI from context_id - fail fast if not found
@@ -460,13 +433,6 @@ class AgentExecutor(BaseAgentExecutor):
                         final=True,
                     )
                     await event_queue.enqueue_event(status_update)
-        finally:
-            # End agent span if created - Phase 1: minimal implementation
-            if agent_span_ctx:
-                try:
-                    agent_span_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
     
     async def cancel(
         self,

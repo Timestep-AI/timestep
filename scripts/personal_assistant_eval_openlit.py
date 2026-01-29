@@ -20,9 +20,26 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # Initialize OpenLIT (following Grafana AI Observability guide)
+# OpenLIT automatically picks up standard OTEL env vars:
+# - OTEL_EXPORTER_OTLP_ENDPOINT
+# - OTEL_EXPORTER_OTLP_HEADERS
+# - OTEL_RESOURCE_ATTRIBUTES (for service.name, deployment.environment, etc.)
 import openlit
-openlit.init()  # Handles all OpenTelemetry setup automatically
-print("OpenLIT initialized")
+
+# Set OTEL_RESOURCE_ATTRIBUTES if not already set (standard OTEL way)
+if "OTEL_RESOURCE_ATTRIBUTES" not in os.environ:
+    os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "service.name=timestep,deployment.environment=evaluation"
+
+# Initialize OpenLIT - it will read configuration from standard OTEL env vars
+openlit.init(disable_metrics=False)
+
+otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "not set")
+otlp_headers = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "not set")
+resource_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "not set")
+print(f"OpenLIT initialized with standard OTEL env vars")
+print(f"OTLP endpoint: {otlp_endpoint}")
+print(f"OTLP headers: {'set' if otlp_headers != 'not set' else 'not set'}")
+print(f"Resource attributes: {resource_attrs}")
 
 # Initialize OpenLIT evaluator
 evaluator = openlit.evals.All(
@@ -61,6 +78,23 @@ def check_answer(got: str, expected: str) -> bool:
     return got.strip().lower() == expected.strip().lower()
 
 
+def to_dict(obj: Any) -> Dict[str, Any]:
+    """Convert Pydantic model or other object to dict."""
+    if isinstance(obj, dict):
+        return obj
+    # Try Pydantic v2 model_dump() first
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    # Try Pydantic v1 dict() method
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    # Try to access as attributes if it's a Pydantic model
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    # Fallback: return as-is (will be converted to string in error cases)
+    return obj
+
+
 def print_summary(results: List[Dict[str, Any]]):
     """Print evaluation summary."""
     if not results:
@@ -74,11 +108,20 @@ def print_summary(results: List[Dict[str, Any]]):
         print(f"\nResults: {passed}/{total} passed ({passed/total*100:.1f}%)")
     
     # Show OpenLIT evaluation summary
+    # Each evaluator.measure() returns a single JsonOutput object with:
+    # - score: float
+    # - evaluation: "hallucination", "bias_detection", or "toxicity_detection"
+    # - classification: category or "none"
+    # - explanation: string
+    # - verdict: "yes" or "no"
     openlit_results = [r.get("openlit_results") for r in results if r.get("openlit_results")]
     if openlit_results:
-        hallucinations = sum(1 for r in openlit_results if r.get("evaluation") == "Hallucination" and r.get("verdict") == "yes")
-        bias = sum(1 for r in openlit_results if r.get("evaluation") == "Bias" and r.get("verdict") == "yes")
-        toxicity = sum(1 for r in openlit_results if r.get("evaluation") == "Toxicity" and r.get("verdict") == "yes")
+        # Convert Pydantic models to dicts for safe access
+        openlit_dicts = [to_dict(r) for r in openlit_results]
+        # Check evaluation field values as per OpenLIT documentation
+        hallucinations = sum(1 for r in openlit_dicts if r.get("evaluation") == "hallucination" and r.get("verdict") == "yes")
+        bias = sum(1 for r in openlit_dicts if r.get("evaluation") == "bias_detection" and r.get("verdict") == "yes")
+        toxicity = sum(1 for r in openlit_dicts if r.get("evaluation") == "toxicity_detection" and r.get("verdict") == "yes")
         print(f"\nOpenLIT Evaluations:")
         print(f"  Hallucinations detected: {hallucinations}")
         print(f"  Bias detected: {bias}")
@@ -94,7 +137,8 @@ def print_summary(results: List[Dict[str, Any]]):
             print(f"  Expected: {f['expected']}")
             print(f"  Got: {f['output'][:100]}...")
             if f.get("openlit_results"):
-                print(f"  OpenLIT: {f['openlit_results']}")
+                openlit_dict = to_dict(f["openlit_results"])
+                print(f"  OpenLIT: {openlit_dict}")
 
 
 async def main():
@@ -182,13 +226,18 @@ async def main():
                 try:
                     # Run comprehensive evaluation (hallucination, bias, toxicity)
                     # Metrics automatically sent to Grafana via collect_metrics=True
+                    # The evaluator makes OpenAI API calls internally which OpenLIT instruments
+                    print(f"Running OpenLIT evaluation for case {case_id}...")
                     openlit_results = evaluator.measure(
                         prompt=input_text,
                         contexts=contexts or [],
                         text=output
                     )
+                    print(f"OpenLIT evaluation completed for case {case_id}")
                 except Exception as e:
                     logger.warning(f"OpenLIT evaluation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
                 result = {
                     "case_id": case_id,
@@ -219,13 +268,47 @@ async def main():
     # Save failures
     failures = [r for r in results if r.get("correct") is False]
     if failures:
+        # Convert JsonOutput objects to dicts for JSON serialization
+        failures_serializable = []
+        for f in failures:
+            failure_dict = dict(f)
+            if "openlit_results" in failure_dict and failure_dict["openlit_results"] is not None:
+                failure_dict["openlit_results"] = to_dict(failure_dict["openlit_results"])
+            failures_serializable.append(failure_dict)
+        
         failures_file = data_dir / "gaia_failures.json"
         with open(failures_file, "w") as f:
-            json.dump(failures, f, indent=2)
+            json.dump(failures_serializable, f, indent=2)
         print(f"\nFailures saved to {failures_file}")
+    
+    # Flush OpenLIT data to ensure all metrics/traces are sent before script exits
+    try:
+        from opentelemetry import trace
+        tracer_provider = trace.get_tracer_provider()
+        if hasattr(tracer_provider, 'force_flush'):
+            tracer_provider.force_flush()
+            print("OpenLIT traces flushed")
+    except Exception as e:
+        logger.debug(f"Could not flush traces: {e}")
+    
+    try:
+        from opentelemetry import metrics
+        meter_provider = metrics.get_meter_provider()
+        if hasattr(meter_provider, 'force_flush'):
+            meter_provider.force_flush()
+            print("OpenLIT metrics flushed")
+    except Exception as e:
+        logger.debug(f"Could not flush metrics: {e}")
+    
+    # Give OpenLIT time to send all data before script exits
+    import time
+    print("\nWaiting for OpenLIT to send data to Grafana Cloud...")
+    time.sleep(2)  # Wait 2 seconds for data to be sent
     
     print(f"\nEvaluation metrics sent to Grafana Cloud")
     print(f"View in Grafana AI Observability dashboards")
+    print(f"Resource attributes: {resource_attrs}")
+    print(f"Note: It may take a few minutes for data to appear in the dashboard")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "a2a-sdk[http-server,telemetry]",
+#   "a2a-sdk[http-server]",
 #   "mcp",
 #   "openai",
 #   "fastapi",
@@ -9,10 +9,8 @@
 #   "httpx",
 #   "opentelemetry-sdk",
 #   "opentelemetry-api",
+#   "opentelemetry-exporter-otlp-proto-http",
 #   "opentelemetry-exporter-otlp-proto-grpc",
-#   "opentelemetry-instrumentation-fastapi",
-#   "opentelemetry-instrumentation-httpx",
-#   "opentelemetry-instrumentation-requests",
 #   "opentelemetry-instrumentation-openai",
 # ]
 # ///
@@ -53,16 +51,38 @@ timestep_module = types.ModuleType('timestep')
 timestep_module.__path__ = [str(lib_python_dir)]
 sys.modules['timestep'] = timestep_module
 
-# Now import the core module which will set up timestep.core
+# Prevent A2A SDK from detecting OpenTelemetry by blocking the import
+# A2A SDK checks for OpenTelemetry at import time - if available, it uses real telemetry
+# We need OpenTelemetry for OpenAI tracing, but we don't want A2A SDK to use it
+# Install the hook BEFORE executing timestep.core so A2A SDK sees OpenTelemetry as unavailable
 import importlib.util
+from importlib.machinery import ModuleSpec
+
+class _BlockOpenTelemetryFinder:
+    """Import finder that blocks opentelemetry imports."""
+    def find_spec(self, name, path, target=None):
+        if name.startswith('opentelemetry'):
+            # Raise ImportError to prevent the import
+            raise ImportError(f"Module '{name}' is blocked")
+        return None
+
+# Install the import hook BEFORE executing core module
+_block_finder = _BlockOpenTelemetryFinder()
+sys.meta_path.insert(0, _block_finder)
+
+# Now import the core module which will set up timestep.core
+# A2A SDK will see OpenTelemetry as unavailable and use NoOp telemetry
 core_init_path = lib_python_dir / "core" / "__init__.py"
 spec = importlib.util.spec_from_file_location("timestep.core", core_init_path)
 core_module = importlib.util.module_from_spec(spec)
 sys.modules['timestep.core'] = core_module
 spec.loader.exec_module(core_module)
 
-# Now we can import Agent, Environment, and Loop
+# Now import A2A SDK - it will see OpenTelemetry as unavailable and use NoOp
 from timestep.core import Agent, Environment, Loop
+
+# Remove the import hook so OpenTelemetry can be imported normally
+sys.meta_path.remove(_block_finder)
 from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
     TOOL_CALLS_KEY,
@@ -169,9 +189,9 @@ Example handoff tool call:
         lifespan=lifespan,
     )
     
-    # Enable OpenTelemetry tracing (if available)
-    from timestep.observability.tracing import enable_tracing
-    enable_tracing(combined_app)
+    # Configure OpenTelemetry tracing
+    from timestep.observability.tracing import configure_tracing
+    configure_tracing()
     
     # Include all routes from the agent's FastAPI app
     for route in fastapi_app.routes:

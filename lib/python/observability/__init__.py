@@ -1,36 +1,7 @@
-"""Unified observability and evaluations module.
+"""OpenTelemetry tracing for observability."""
 
-This module provides trace-based evaluation capabilities using OpenTelemetry
-Test and GenAI semantic conventions. Evaluations are based on spans (for prompts)
-and traces (for full conversations/episodes/rollouts).
-"""
-
-from timestep.observability.types import (
-    Dataset,
-    EvalItem,
-    EvalSpec,
-    Criterion,
-    GraderConfig,
-    EvalRun,
-    EvalCaseResult,
-    CriterionResult,
-    EvalAggregation,
-)
-from timestep.observability.tracing import (
-    enable_tracing,
-    disable_tracing,
-)
+from timestep.observability.tracing import configure_tracing
 
 __all__ = [
-    "Dataset",
-    "EvalItem",
-    "EvalSpec",
-    "Criterion",
-    "GraderConfig",
-    "EvalRun",
-    "EvalCaseResult",
-    "CriterionResult",
-    "EvalAggregation",
-    "enable_tracing",
-    "disable_tracing",
+    "configure_tracing",
 ]

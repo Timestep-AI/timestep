@@ -871,10 +871,10 @@ Traces are exported via OTLP to Jaeger or other compatible backends. The library
 ### Programmatic Setup
 
 ```python
-from timestep.observability.tracing import enable_tracing
+from timestep.observability.tracing import configure_tracing
 
-# Enable tracing and instrument FastAPI app in one call
-enable_tracing(app, service_name="my-service", otlp_endpoint="http://localhost:4317")
+# Configure tracing - all settings come from OTEL environment variables
+configure_tracing()
 ```
 
 See `lib/python/README.md` for more details on tracing configuration and usage.

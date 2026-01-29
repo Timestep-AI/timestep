@@ -80,54 +80,54 @@ async def main() -> None:
         },
     }
 
-    logger.info('\n=== start:send_message ===')
-    # Client.send_message expects just the message object, not SendMessageRequest
-    message_obj = send_message_payload['message']
+    # --8<-- [start:send_message]
+    # logger.info('\n=== start:send_message ===')
+    # # Client.send_message expects just the message object, not SendMessageRequest
+    # message_obj = send_message_payload['message']
 
-    async for event in client.send_message(message_obj):
-        # Extract event data (handles both tuple and direct event objects)
-        event_data = extract_event_data(event)
-        
-        # Print event data
-        if hasattr(event_data, 'model_dump'):
-            print(event_data.model_dump(mode='json', exclude_none=True))
-        else:
-            print(event_data)
-    logger.info('=== end:send_message ===\n')
+    # async for event in client.send_message(message_obj):
+    #     # Extract event data (handles both tuple and direct event objects)
+    #     event_data = extract_event_data(event)
+    #     
+    #     # Print event data
+    #     if hasattr(event_data, 'model_dump'):
+    #         print(event_data.model_dump(mode='json', exclude_none=True))
+    #     else:
+    #         print(event_data)
+    # logger.info('=== end:send_message ===\n')
     # --8<-- [end:send_message]
 
     # --8<-- [start:send_message_streaming]
-
-    logger.info('=== start:send_message_streaming ===')
-    # Note: Client.send_message() already returns an async generator (streaming)
-    # There is no separate send_message_streaming method in the new Client API
-    # send_message() already streams events as they arrive
-    
-    async for event in client.send_message(message_obj):
-        # Extract event data (handles both tuple and direct event objects)
-        event_data = extract_event_data(event)
-        
-        # Print event data
-        if hasattr(event_data, 'model_dump'):
-            print(event_data.model_dump(mode='json', exclude_none=True))
-        else:
-            print(event_data)
-    logger.info('=== end:send_message_streaming ===')
+    # logger.info('=== start:send_message_streaming ===')
+    # # Note: Client.send_message() already returns an async generator (streaming)
+    # # There is no separate send_message_streaming method in the new Client API
+    # # send_message() already streams events as they arrive
+    # 
+    # async for event in client.send_message(message_obj):
+    #     # Extract event data (handles both tuple and direct event objects)
+    #     event_data = extract_event_data(event)
+    #     
+    #     # Print event data
+    #     if hasattr(event_data, 'model_dump'):
+    #         print(event_data.model_dump(mode='json', exclude_none=True))
+    #     else:
+    #         print(event_data)
+    # logger.info('=== end:send_message_streaming ===')
     # --8<-- [end:send_message_streaming]
 
     # --8<-- [start:responses_non_streaming]
-    logger.info('\n=== start:responses_non_streaming ===')
-    openai_client = AsyncOpenAI(
-        base_url=f"{base_url}/v1",
-        api_key="dummy-key"  # Not used for local endpoint
-    )
-    
-    response = await openai_client.responses.create(
-        model="gpt-4o-mini",
-        input="What's the weather in Oakland?"
-    )
-    print(response.model_dump_json(indent=2, exclude_none=True))
-    logger.info('=== end:responses_non_streaming ===\n')
+    # logger.info('\n=== start:responses_non_streaming ===')
+    # openai_client = AsyncOpenAI(
+    #     base_url=f"{base_url}/v1",
+    #     api_key="dummy-key"  # Not used for local endpoint
+    # )
+    # 
+    # response = await openai_client.responses.create(
+    #     model="gpt-4o-mini",
+    #     input="What's the weather in Oakland?"
+    # )
+    # print(response.model_dump_json(indent=2, exclude_none=True))
+    # logger.info('=== end:responses_non_streaming ===\n')
     # --8<-- [end:responses_non_streaming]
 
     # --8<-- [start:responses_streaming]
