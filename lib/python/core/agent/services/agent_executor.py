@@ -39,6 +39,7 @@ from timestep.utils.event_helpers import (
     get_agui_event_type_from_task_status_update,
     add_canonical_type_to_message,
 )
+from timestep.core.agent.stores.memory_store import MemoryStore
 
 # Tracing not used
 TRACING_AVAILABLE = False
@@ -62,11 +63,13 @@ class AgentExecutor(BaseAgentExecutor):
         model: str,
         context_id_to_environment_uri: Dict[str, str],
         human_in_loop: bool = False,
+        memory_store: Optional[MemoryStore] = None,
     ):
         self.agent_id = agent_id
         self.model = model
         self.context_id_to_environment_uri = context_id_to_environment_uri
         self.human_in_loop = human_in_loop
+        self.memory_store = memory_store
         
         # Initialize AsyncOpenAI client
         self.openai_client = AsyncOpenAI()
@@ -226,108 +229,113 @@ class AgentExecutor(BaseAgentExecutor):
                 tr_call_id = tr.get("call_id", "unknown") if isinstance(tr, dict) else getattr(tr, "call_id", "unknown")
                 logger.info(f"    ToolResult[{tr_idx}]: call_id={tr_call_id}")
         
-        # Build messages list - always start with task history
+        # Build messages list - always start with context-level memory history
         messages = []
         
-        # Get task from context and convert full history to OpenAI format
-        task = context.current_task
-        if tool_results and (not task or not task.history):
-            logger.warning(
-                f"Tool results provided but task history is missing. "
-                f"task={task}, has_history={task.history if task else False}, "
-                f"task_id={task_id}, context_id={context_id}"
-            )
-        if task and task.history:
-            # Map-reduce-map pattern: A2A → AG-UI → compacted AG-UI → OpenAI
-            logger.info(f"Processing task history: {len(task.history)} messages")
-            
-            # Map: Convert A2A messages to AG-UI events
-            logger.info("--- Converting A2A messages to AG-UI events ---")
-            agui_events = []
-            for msg_idx, msg in enumerate(task.history):
-                agui_event = convert_a2a_message_to_agui_event(msg)
-                agui_events.append(agui_event)
-                event_type = agui_event.get("type", "unknown")
-                logger.info(f"  A2A Message[{msg_idx}] → AG-UI Event: type={event_type}")
-                if event_type in ["text-message-content", "text-message-end"]:
-                    event_msg = agui_event.get("message", {})
-                    event_role = event_msg.get("role", "unknown")
-                    event_content = event_msg.get("content", "")[:100]
-                    logger.info(f"    Role: {event_role}, Content: {event_content}...")
-                elif event_type in ["tool-call-start", "tool-call-args"]:
-                    tool_calls = agui_event.get("toolCalls", [])
-                    logger.info(f"    Tool calls: {len(tool_calls)}")
-                    for tc_idx, tc in enumerate(tool_calls[:2]):  # Show first 2
-                        tc_name = tc.get("name", "unknown")
-                        logger.info(f"      ToolCall[{tc_idx}]: {tc_name}")
-                elif event_type == "tool-call-result":
-                    results = agui_event.get("results", [])
-                    logger.info(f"    Tool results: {len(results)}")
-            logger.info(f"Converted to {len(agui_events)} AG-UI events")
-            
-            # Reduce: Compact streaming events into final events
-            logger.info("--- Compacting AG-UI events ---")
-            compacted_agui_events = compact_events(agui_events)
-            logger.info(f"Compacted to {len(compacted_agui_events)} final AG-UI events")
-            for comp_idx, comp_event in enumerate(compacted_agui_events):
-                comp_type = comp_event.get("type", "unknown")
-                logger.info(f"  Compacted[{comp_idx}]: type={comp_type}")
-            
-            # Map: Convert compacted AG-UI events to OpenAI format
-            logger.info("--- Converting compacted AG-UI events to OpenAI format ---")
-            for agui_idx, agui_event in enumerate(compacted_agui_events):
-                openai_msg, tool_messages = convert_agui_event_to_openai_chat(agui_event)
+        # Get context-level history from Agent's memory store
+        if self.memory_store:
+            memory_history = await self.memory_store.get_history(context_id)
+            if memory_history:
+                # Map-reduce-map pattern: A2A → AG-UI → compacted AG-UI → OpenAI
+                logger.info(f"Processing context-level memory history: {len(memory_history)} messages")
                 
-                if openai_msg:
-                    openai_role = openai_msg.get("role", "unknown")
-                    logger.info(f"  AG-UI Event[{agui_idx}] → OpenAI Message: role={openai_role}")
-                    if openai_role == "user" or openai_role == "assistant":
-                        content = openai_msg.get("content", "")[:100]
-                        logger.info(f"    Content: {content}...")
-                    if openai_msg.get("tool_calls"):
-                        logger.info(f"    Tool calls: {len(openai_msg.get('tool_calls', []))}")
-                else:
-                    logger.info(f"  AG-UI Event[{agui_idx}] → OpenAI Message: None (intermediate event)")
+                # Map: Convert A2A messages to AG-UI events
+                logger.info("--- Converting A2A messages to AG-UI events ---")
+                agui_events = []
+                for msg_idx, msg in enumerate(memory_history):
+                    agui_event = convert_a2a_message_to_agui_event(msg)
+                    agui_events.append(agui_event)
+                    event_type = agui_event.get("type", "unknown")
+                    logger.info(f"  A2A Message[{msg_idx}] → AG-UI Event: type={event_type}")
+                    if event_type in ["text-message-content", "text-message-end"]:
+                        event_msg = agui_event.get("message", {})
+                        event_role = event_msg.get("role", "unknown")
+                        event_content = event_msg.get("content", "")[:100]
+                        logger.info(f"    Role: {event_role}, Content: {event_content}...")
+                    elif event_type in ["tool-call-start", "tool-call-args"]:
+                        tool_calls = agui_event.get("toolCalls", [])
+                        logger.info(f"    Tool calls: {len(tool_calls)}")
+                        for tc_idx, tc in enumerate(tool_calls[:2]):  # Show first 2
+                            tc_name = tc.get("name", "unknown")
+                            logger.info(f"      ToolCall[{tc_idx}]: {tc_name}")
+                    elif event_type == "tool-call-result":
+                        results = agui_event.get("results", [])
+                        logger.info(f"    Tool results: {len(results)}")
+                logger.info(f"Converted to {len(agui_events)} AG-UI events")
                 
-                if tool_messages:
-                    logger.info(f"  AG-UI Event[{agui_idx}] → Tool Messages: {len(tool_messages)}")
-                    for tm_idx, tm in enumerate(tool_messages[:2]):  # Show first 2
-                        tm_tool_call_id = tm.get("tool_call_id", "unknown")
-                        logger.info(f"    ToolMessage[{tm_idx}]: tool_call_id={tm_tool_call_id}")
+                # Reduce: Compact streaming events into final events
+                logger.info("--- Compacting AG-UI events ---")
+                compacted_agui_events = compact_events(agui_events)
+                logger.info(f"Compacted to {len(compacted_agui_events)} final AG-UI events")
+                for comp_idx, comp_event in enumerate(compacted_agui_events):
+                    comp_type = comp_event.get("type", "unknown")
+                    logger.info(f"  Compacted[{comp_idx}]: type={comp_type}")
                 
-                # Add the main message if it exists
-                if openai_msg:
-                    messages.append(openai_msg)
-                # Add tool messages if any (from tool_results in user messages)
-                if tool_messages:
-                    messages.extend(tool_messages)
+                # Map: Convert compacted AG-UI events to OpenAI format
+                logger.info("--- Converting compacted AG-UI events to OpenAI format ---")
+                for agui_idx, agui_event in enumerate(compacted_agui_events):
+                    openai_msg, tool_messages = convert_agui_event_to_openai_chat(agui_event)
+                    
+                    if openai_msg:
+                        openai_role = openai_msg.get("role", "unknown")
+                        logger.info(f"  AG-UI Event[{agui_idx}] → OpenAI Message: role={openai_role}")
+                        if openai_role == "user" or openai_role == "assistant":
+                            content = openai_msg.get("content", "")[:100]
+                            logger.info(f"    Content: {content}...")
+                        if openai_msg.get("tool_calls"):
+                            logger.info(f"    Tool calls: {len(openai_msg.get('tool_calls', []))}")
+                    else:
+                        logger.info(f"  AG-UI Event[{agui_idx}] → OpenAI Message: None (intermediate event)")
+                    
+                    if tool_messages:
+                        logger.info(f"  AG-UI Event[{agui_idx}] → Tool Messages: {len(tool_messages)}")
+                        for tm_idx, tm in enumerate(tool_messages[:2]):  # Show first 2
+                            tm_tool_call_id = tm.get("tool_call_id", "unknown")
+                            logger.info(f"    ToolMessage[{tm_idx}]: tool_call_id={tm_tool_call_id}")
+                    
+                    # Add the main message if it exists
+                    if openai_msg:
+                        messages.append(openai_msg)
+                    # Add tool messages if any (from tool_results in user messages)
+                    if tool_messages:
+                        messages.extend(tool_messages)
+        else:
+            # Fallback: if no memory store, log warning and continue without history
+            logger.warning("No memory store available, building messages without context history")
         
         # Add the current incoming message
-        # Check if incoming message is already in history (same message_id) to avoid duplicates
+        # Check if incoming message is already in memory (same message_id) to avoid duplicates
         incoming_message_id = None
         if isinstance(context.message, dict):
             incoming_message_id = context.message.get("message_id") or context.message.get("messageId")
         else:
             incoming_message_id = getattr(context.message, "message_id", None) or getattr(context.message, "messageId", None)
         
-        # Check if this message is already in history
-        logger.info("--- Checking if incoming message is already in history ---")
+        # Check if this message is already in memory
+        logger.info("--- Checking if incoming message is already in memory ---")
         logger.info(f"  Incoming message ID: {incoming_message_id}")
-        message_already_in_history = False
-        if incoming_message_id and task and task.history:
-            for hist_message in task.history:
+        message_already_in_memory = False
+        if self.memory_store and incoming_message_id:
+            memory_history = await self.memory_store.get_history(context_id)
+            for hist_message in memory_history:
                 if isinstance(hist_message, dict):
                     hist_msg_id = hist_message.get("message_id") or hist_message.get("messageId")
                 else:
                     hist_msg_id = getattr(hist_message, "message_id", None) or getattr(hist_message, "messageId", None)
                 if hist_msg_id == incoming_message_id:
-                    message_already_in_history = True
-                    logger.info(f"  ✓ Incoming message (id: {incoming_message_id}) already in history, skipping duplicate")
+                    message_already_in_memory = True
+                    logger.info(f"  ✓ Incoming message (id: {incoming_message_id}) already in memory, skipping duplicate")
                     break
-        if not message_already_in_history:
-            logger.info(f"  ✗ Incoming message not in history, will add to messages array")
+        if not message_already_in_memory:
+            logger.info(f"  ✗ Incoming message not in memory, will add to messages array and memory")
         
-        if not message_already_in_history:
+        # Add incoming message to memory store if not already present
+        # context.message should be a Message object from A2A SDK
+        if not message_already_in_memory and self.memory_store:
+            await self.memory_store.add_message(context_id, context.message)
+            logger.info(f"  ✓ Added incoming message to memory store")
+        
+        if not message_already_in_memory:
             logger.info("--- Adding incoming message to messages array ---")
             if tool_results:
                 # Add tool results as tool messages
@@ -579,6 +587,11 @@ class AgentExecutor(BaseAgentExecutor):
                 final=False,
             )
             await event_queue.enqueue_event(status_update)
+            
+            # Add complete agent message (with tool calls) to memory store
+            if self.memory_store:
+                await self.memory_store.add_message(context_id, a2a_message)
+                logger.info("  ✓ Added agent message (input-required with tool calls) to memory store")
         else:
             # No tool calls, task complete
             # Only emit final message if we haven't been streaming (to avoid duplicate)
@@ -601,6 +614,11 @@ class AgentExecutor(BaseAgentExecutor):
                     final=True,
                 )
                 await event_queue.enqueue_event(status_update)
+                
+                # Add complete agent message (final response) to memory store
+                if self.memory_store:
+                    await self.memory_store.add_message(context_id, a2a_message)
+                    logger.info("  ✓ Added agent message (completed, non-streaming) to memory store")
             else:
                 # Emit final status update marking completion (reusing last content)
                 final_message = create_text_message_object(
@@ -620,6 +638,11 @@ class AgentExecutor(BaseAgentExecutor):
                     final=True,
                 )
                 await event_queue.enqueue_event(status_update)
+                
+                # Add complete agent message (final response after streaming) to memory store
+                if self.memory_store:
+                    await self.memory_store.add_message(context_id, final_message)
+                    logger.info("  ✓ Added agent message (completed, streaming) to memory store")
     
     async def cancel(
         self,

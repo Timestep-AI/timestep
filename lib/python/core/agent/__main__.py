@@ -18,6 +18,7 @@ from a2a.types import (
 from timestep.core.agent.services.agent_executor import AgentExecutor
 from timestep.core.agent.api.request_handler import DefaultRequestHandler
 from timestep.core.agent.stores.task_store import InMemoryTaskStore
+from timestep.core.agent.stores.memory_store import MemoryStore, InMemoryMemoryStore
 
 
 class Agent:
@@ -37,6 +38,7 @@ class Agent:
         model: str = "gpt-4o-mini",
         context_id_to_environment_uri: Optional[Dict[str, str]] = None,
         human_in_loop: bool = False,
+        memory_store: Optional[MemoryStore] = None,
     ):
         self.agent_id = agent_id
         self.name = name
@@ -44,12 +46,16 @@ class Agent:
         self.context_id_to_environment_uri = context_id_to_environment_uri or {}
         self.human_in_loop = human_in_loop
         
+        # Initialize memory store (context-level conversation history)
+        self.memory_store = memory_store or InMemoryMemoryStore()
+        
         # AgentExecutor is inside Agent
         self.agent_executor = AgentExecutor(
             agent_id=agent_id,
             model=model,
             context_id_to_environment_uri=self.context_id_to_environment_uri,
             human_in_loop=human_in_loop,
+            memory_store=self.memory_store,
         )
         
         # Create A2A server with AgentExecutor
