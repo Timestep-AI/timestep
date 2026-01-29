@@ -28,7 +28,6 @@ from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
     convert_agui_event_to_responses_api,
-    convert_a2a_message_to_agui_event,
 )
 from timestep.utils.event_helpers import (
     extract_event_data,

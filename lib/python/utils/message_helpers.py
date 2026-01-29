@@ -3,9 +3,7 @@
 import json
 from typing import Dict, List, Any, Tuple, Optional
 from a2a.types import Message, Part, DataPart, Role
-from a2a.client.helpers import create_text_message_object
-from mcp.types import Tool, CallToolResult
-from openai.types.chat import ChatCompletionMessageToolCall
+from mcp.types import Tool
 
 # DataPart payload keys for tool routing
 TOOL_CALLS_KEY = "tool_calls"
@@ -37,6 +35,21 @@ def extract_user_text_and_tool_results(message: Message) -> Tuple[str, List[Dict
     return text_content, tool_results
 
 
+def get_message_id(message: Message) -> Optional[str]:
+    """Extract message ID from A2A message (handles both dict and object formats).
+    
+    Args:
+        message: A2A Message object (can be dict or object)
+        
+    Returns:
+        Message ID string, or None if not found
+    """
+    if isinstance(message, dict):
+        return message.get("message_id") or message.get("messageId")
+    else:
+        return getattr(message, "message_id", None) or getattr(message, "messageId", None)
+
+
 def convert_mcp_tool_to_openai(mcp_tool: Tool) -> Dict[str, Any]:
     """Convert MCP Tool to OpenAI function calling format."""
     return {
@@ -53,7 +66,7 @@ def convert_openai_tool_call_to_mcp(tool_call: Any) -> Dict[str, Any]:
     """Convert OpenAI tool call to MCP format.
     
     Args:
-        tool_call: OpenAI tool call (can be ChatCompletionMessageToolCall or dict)
+        tool_call: OpenAI tool call (can be dict or object with id, function.name, function.arguments)
         
     Returns:
         Dict with call_id, name, and arguments
@@ -279,135 +292,6 @@ def convert_a2a_message_to_agui_event(message: Message) -> Dict[str, Any]:
     }
 
 
-def compact_events(agui_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Compact AG-UI streaming events into final events (reduce function).
-    
-    Merges:
-    - TextMessageChunkEvent chunks → skip if followed by TextMessageEndEvent
-    - ToolCallArgsEvent chunks → merge into final ToolCallStartEvent
-    
-    Args:
-        agui_events: List of AG-UI event dictionaries
-        
-    Returns:
-        List of compacted AG-UI events (only final events, no incremental chunks)
-    """
-    if not agui_events:
-        return []
-    
-    compacted = []
-    i = 0
-    
-    while i < len(agui_events):
-        event = agui_events[i]
-        event_type = event.get("type", "")
-        
-        # Handle text message chunk events - skip if followed by end event
-        # Normalize event type to handle both "text-message-chunk" and "textmessage-chunk"
-        normalized_event_type = event_type.replace("textmessage", "text-message")
-        if normalized_event_type == "text-message-chunk":
-            # Look ahead to see if there's an end event
-            j = i + 1
-            skip_chunk = False
-            
-            while j < len(agui_events):
-                next_event = agui_events[j]
-                next_type = next_event.get("type", "")
-                normalized_next_type = next_type.replace("textmessage", "text-message")
-                
-                if normalized_next_type == "text-message-end":
-                    # Found end event, skip this chunk
-                    skip_chunk = True
-                    break
-                elif normalized_next_type == "text-message-chunk":
-                    # Another chunk, continue looking
-                    j += 1
-                else:
-                    # Different event type, keep this chunk
-                    break
-            
-            if skip_chunk:
-                i += 1
-                continue
-            else:
-                # No end event found, include this chunk (shouldn't happen normally)
-                compacted.append(event)
-                i += 1
-        
-        # Handle text message content/end events - include them
-        # Normalize event type to handle both "text-message-content" and "textmessage-content"
-        normalized_event_type = event_type.replace("textmessage", "text-message")
-        if normalized_event_type in ["text-message-content", "text-message-end"]:
-            compacted.append(event)
-            i += 1
-        
-        # Handle tool call streaming events
-        elif event_type == "tool-call-start":
-            # Look ahead to find args chunks and merge them
-            tool_calls = event.get("toolCalls", [])
-            if not tool_calls:
-                compacted.append(event)
-                i += 1
-                continue
-            
-            # Start with the initial tool calls
-            merged_tool_calls = {tc.get("id"): tc.copy() for tc in tool_calls}
-            j = i + 1
-            found_final_start = False
-            
-            # Collect all argument updates
-            while j < len(agui_events):
-                next_event = agui_events[j]
-                next_type = next_event.get("type", "")
-                
-                if next_type == "tool-call-args":
-                    # Merge argument deltas - each args event has more complete arguments
-                    next_tool_calls = next_event.get("toolCalls", [])
-                    for next_tc in next_tool_calls:
-                        tc_id = next_tc.get("id")
-                        if tc_id in merged_tool_calls:
-                            # Update with more complete arguments (later events have more complete data)
-                            next_args = next_tc.get("arguments", {})
-                            if isinstance(next_args, dict):
-                                merged_tool_calls[tc_id]["arguments"] = next_args
-                    j += 1
-                elif next_type == "tool-call-start":
-                    # Found a more complete tool call start event (final one)
-                    # Use its tool calls as they should be complete
-                    final_tool_calls = next_event.get("toolCalls", [])
-                    merged_tool_calls = {tc.get("id"): tc.copy() for tc in final_tool_calls}
-                    found_final_start = True
-                    j += 1
-                    break
-                else:
-                    # Different event type, stop collecting
-                    break
-            
-            # Create final tool call start event with merged arguments
-            compacted.append({
-                "type": "tool-call-start",
-                "toolCalls": list(merged_tool_calls.values())
-            })
-            i = j if found_final_start else i + 1
-        
-        elif event_type == "tool-call-args":
-            # Standalone args event - will be handled when we see the start event
-            # Skip it (it should have been merged above)
-            i += 1
-        
-        elif event_type == "tool-call-result":
-            # Tool result events are final - include them
-            compacted.append(event)
-            i += 1
-        
-        else:
-            # Unknown event type - include as-is
-            compacted.append(event)
-            i += 1
-    
-    return compacted
-
-
 def convert_agui_event_to_openai_chat(agui_event: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     """Convert AG-UI event to OpenAI Chat Completions format.
     
@@ -581,3 +465,25 @@ def convert_a2a_message_to_openai(message: Message) -> Tuple[Optional[Dict[str, 
     # Convert through AG-UI as intermediate format
     agui_event = convert_a2a_message_to_agui_event(message)
     return convert_agui_event_to_openai_chat(agui_event)
+
+
+def convert_memory_history_to_openai_messages(memory_history: List[Message]) -> List[Dict[str, Any]]:
+    """Convert list of A2A messages from memory store to OpenAI Chat Completions format.
+    
+    Since memory store only contains complete messages (no streaming deltas),
+    we can convert directly without compaction.
+    
+    Args:
+        memory_history: List of A2A Message objects from memory store
+        
+    Returns:
+        Flat list of OpenAI Chat Completions messages (user, assistant, tool)
+    """
+    messages = []
+    for msg in memory_history:
+        openai_msg, tool_messages = convert_a2a_message_to_openai(msg)
+        if openai_msg:
+            messages.append(openai_msg)
+        if tool_messages:
+            messages.extend(tool_messages)
+    return messages
