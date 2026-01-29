@@ -31,11 +31,8 @@ class Environment(FastMCP):
         self.human_in_loop = human_in_loop
         self.enable_handoff = enable_handoff
         
-        # Default system prompt (can be overridden with @environment.prompt() decorator)
-        @self.prompt()
-        def system_prompt(agent_name: str) -> str:
-            """System prompt for the agent."""
-            return f"You are {agent_name}."
+        # Note: System prompt should be registered by the user using @environment.prompt() decorator
+        # No default prompt is registered to avoid override issues
         
         # Register handoff tool conditionally based on enable_handoff parameter
         if enable_handoff:

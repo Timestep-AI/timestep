@@ -214,6 +214,9 @@ def convert_a2a_message_to_agui_event(message: Message) -> Dict[str, Any]:
     
     # Build AG-UI event based on type
     if event_type == "TextMessageContentEvent" or event_type == "TextMessageEndEvent" or event_type == "TextMessageChunkEvent":
+        # Convert "TextMessageContentEvent" -> "text-message-content"
+        # Note: The normalization to handle "textmessage" vs "text-message" is done in consumer functions
+        # to handle both formats correctly
         return {
             "type": event_type.lower().replace("event", "").replace("message", "message-"),
             "message": {
@@ -300,7 +303,9 @@ def compact_events(agui_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         event_type = event.get("type", "")
         
         # Handle text message chunk events - skip if followed by end event
-        if event_type == "text-message-chunk":
+        # Normalize event type to handle both "text-message-chunk" and "textmessage-chunk"
+        normalized_event_type = event_type.replace("textmessage", "text-message")
+        if normalized_event_type == "text-message-chunk":
             # Look ahead to see if there's an end event
             j = i + 1
             skip_chunk = False
@@ -308,12 +313,13 @@ def compact_events(agui_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             while j < len(agui_events):
                 next_event = agui_events[j]
                 next_type = next_event.get("type", "")
+                normalized_next_type = next_type.replace("textmessage", "text-message")
                 
-                if next_type == "text-message-end":
+                if normalized_next_type == "text-message-end":
                     # Found end event, skip this chunk
                     skip_chunk = True
                     break
-                elif next_type == "text-message-chunk":
+                elif normalized_next_type == "text-message-chunk":
                     # Another chunk, continue looking
                     j += 1
                 else:
@@ -329,7 +335,9 @@ def compact_events(agui_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 i += 1
         
         # Handle text message content/end events - include them
-        elif event_type in ["text-message-content", "text-message-end"]:
+        # Normalize event type to handle both "text-message-content" and "textmessage-content"
+        normalized_event_type = event_type.replace("textmessage", "text-message")
+        if normalized_event_type in ["text-message-content", "text-message-end"]:
             compacted.append(event)
             i += 1
         
@@ -413,13 +421,16 @@ def convert_agui_event_to_openai_chat(agui_event: Dict[str, Any]) -> Tuple[Optio
     """
     event_type = agui_event.get("type", "")
     
-    if event_type in ["text-message-content", "text-message-end"]:
+    # Handle both "text-message-content" and "textmessage-content" formats (normalize)
+    normalized_type = event_type.replace("textmessage", "text-message")
+    
+    if normalized_type in ["text-message-content", "text-message-end"]:
         message = agui_event.get("message", {})
         role = message.get("role", "user")
         content = message.get("content", "")
         return {"role": role, "content": content}, []
     
-    elif event_type == "text-message-chunk":
+    elif normalized_type == "text-message-chunk":
         # Intermediate chunks are not included in OpenAI Chat Completions
         return None, []
     
