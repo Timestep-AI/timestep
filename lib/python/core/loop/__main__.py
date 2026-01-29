@@ -27,7 +27,6 @@ from mcp.shared.context import RequestContext
 from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
-    convert_agui_event_to_responses_api,
 )
 from timestep.utils.event_helpers import (
     extract_event_data,
