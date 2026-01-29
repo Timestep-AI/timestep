@@ -746,6 +746,9 @@ class Loop:
     
     async def _handle_responses_streaming(self, body: Dict[str, Any]):
         """Handle streaming /v1/responses request."""
+        request_start = time.time()
+        logger.info(f"[TIMING] Streaming request received")
+        
         # Responses API uses 'input' instead of 'messages'
         input_data = body.get("input")
         if input_data is None:
@@ -766,28 +769,61 @@ class Loop:
             return
         
         # Use ClientFactory (supports JSON-RPC by default)
+        client_start = time.time()
         a2a_client = await ClientFactory.connect(self.agent_base_url)
+        client_time = time.time() - client_start
+        logger.info(f"[TIMING] A2A client connection: {client_time:.3f}s")
         
         # Convert Responses API input to A2A
+        message_start = time.time()
         a2a_message = self._convert_responses_input_to_a2a(input_data)
         if context_id:
             a2a_message.context_id = context_id
+        message_sent_time = time.time() - message_start
+        logger.info(f"[TIMING] Message prepared and sent: {message_sent_time:.3f}s")
         
         task_id = None
         accumulated_content = ""
         last_sent_content = ""  # Track what we've already sent
-        
+
+        first_event_time = None
+        first_delta_time = None
+        loop_iteration = 0
+
         # Process conversation loop
         while True:
                 # Send message - Client.send_message() already returns an async generator (streaming)
                 # There is no separate send_message_streaming method in the new Client API
                 
                 tool_calls_found = False
+                event_count = 0
+                loop_iteration += 1
+                
+                # Time the A2A client send_message call and first event arrival
+                send_message_start = time.time()
+                logger.info(f"[TIMING] Loop iteration #{loop_iteration}: Calling a2a_client.send_message() at {send_message_start - request_start:.3f}s")
+                
+                first_event_in_iteration = None
+                
                 async for event in a2a_client.send_message(a2a_message):
+                    event_received_time = time.time()
+                    event_count += 1
+                    
+                    if first_event_in_iteration is None:
+                        first_event_in_iteration = event_received_time - send_message_start
+                        logger.info(f"[TIMING] Loop iteration #{loop_iteration}: Time from send_message() call to first event: {first_event_in_iteration:.3f}s")
+                    
+                    if first_event_time is None:
+                        first_event_time = event_received_time - request_start
+                        logger.info(f"[TIMING] Time to first A2A event received (overall): {first_event_time:.3f}s (from request start)")
+                    
                     # Extract event data (handles both tuple and direct event objects)
+                    extraction_start = time.time()
                     event_data = extract_event_data(event)
+                    extraction_time = time.time() - extraction_start
                     
                     # Handle both dict and object access for TaskStatusUpdateEvent
+                    state_check_start = time.time()
                     if isinstance(event_data, dict):
                         event_kind = event_data.get('kind')
                         event_status = event_data.get('status', {})
@@ -803,6 +839,9 @@ class Loop:
                             state_value = getattr(state_obj, 'value', None) if state_obj else None
                         else:
                             state_value = None
+                    state_check_time = time.time() - state_check_start
+                    
+                    logger.info(f"[TIMING] Event #{event_count} received: extraction={extraction_time:.3f}s, state_check={state_check_time:.3f}s, state={state_value}, kind={event_kind}")
                     
                     # Check if this is a status-update (TaskStatusUpdateEvent)
                     is_status_update = event_kind == 'status-update' or (isinstance(event_data, dict) and event_data.get('kind') == 'status-update')
@@ -878,6 +917,7 @@ class Loop:
                                 
                                 # Only send the new content (delta)
                                 if current_text and current_text != last_sent_content:
+                                    delta_prep_start = time.time()
                                     # Find the new part
                                     if current_text.startswith(last_sent_content):
                                         delta_content = current_text[len(last_sent_content):]
@@ -886,6 +926,10 @@ class Loop:
                                         delta_content = current_text
                                     
                                     if delta_content:
+                                        delta_yield_start = time.time()
+                                        if first_delta_time is None:
+                                            first_delta_time = delta_yield_start - request_start
+                                            logger.info(f"[TIMING] Time to first delta sent: {first_delta_time:.3f}s")
                                         accumulated_content = current_text
                                         last_sent_content = current_text
                                         chunk_data = {
@@ -903,7 +947,10 @@ class Loop:
                                                 }
                                             }]
                                         }
+                                        delta_prep_time = delta_yield_start - delta_prep_start
                                         yield f"data: {json.dumps(chunk_data)}\n\n"
+                                        delta_yield_time = time.time() - delta_yield_start
+                                        logger.info(f"[TIMING] Delta sent for event #{event_count}: prep={delta_prep_time:.3f}s, yield={delta_yield_time:.3f}s, content_length={len(delta_content)}")
                         
                         # Check if completed
                         if state_value == "completed":
@@ -1068,4 +1115,8 @@ class Loop:
                     continue
                 else:
                     # No more chunks and no tool calls - break
+                    total_time = time.time() - request_start
+                    if first_delta_time is not None:
+                        logger.info(f"[TIMING] Total time-to-first-token: {first_delta_time:.3f}s")
+                    logger.info(f"[TIMING] Total streaming request time: {total_time:.3f}s")
                     break

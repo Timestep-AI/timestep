@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Dict, List, Any, Optional
 from openai import AsyncOpenAI
 
@@ -69,11 +70,13 @@ class AgentExecutor(BaseAgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         """Execute agent task using OpenAI and MCP client for system prompt/tools."""
+        execute_start = time.time()
         task_id = context.task_id
         context_id = context.context_id
         
         # Log essential execution info
         logger.info(f"Execute: task_id={task_id}, context_id={context_id}")
+        logger.info(f"[TIMING] Execute started: task_id={task_id}, context_id={context_id}")
         msg_id = get_message_id(context.message)
         if msg_id:
             logger.info(f"  Incoming message ID: {msg_id}")
@@ -101,21 +104,34 @@ class AgentExecutor(BaseAgentExecutor):
         
         # Get system prompt and tools from Environment via HTTP client
         # Fail fast if prompt not found or other errors occur
+        mcp_connect_start = time.time()
         async with streamable_http_client(environment_uri) as (read, write, _):
+            mcp_connect_time = time.time() - mcp_connect_start
+            logger.info(f"[TIMING] MCP connection: {mcp_connect_time:.3f}s")
+            
+            mcp_init_start = time.time()
             async with ClientSession(read, write) as mcp_session:
                 await mcp_session.initialize()
+                mcp_init_time = time.time() - mcp_init_start
+                logger.info(f"[TIMING] MCP session init: {mcp_init_time:.3f}s")
             
                 # Get system prompt (FastMCP prompt) - fail fast if not found
                 # Human-in-the-loop: MCP Elicitation can happen here
+                prompt_start = time.time()
                 system_prompt_result = await mcp_session.get_prompt("system_prompt", {
                     "agent_name": self.agent_id
                 })
+                prompt_time = time.time() - prompt_start
+                logger.info(f"[TIMING] MCP prompt fetch: {prompt_time:.3f}s")
                 if not system_prompt_result.messages or not system_prompt_result.messages[0].content.text:
                     raise ValueError(f"System prompt 'system_prompt' returned empty result from environment at {environment_uri}")
                 system_prompt = system_prompt_result.messages[0].content.text
             
                 # Get available tools
+                tools_start = time.time()
                 tools_result = await mcp_session.list_tools()
+                tools_time = time.time() - tools_start
+                logger.info(f"[TIMING] MCP tools fetch: {tools_time:.3f}s")
                 tools = [
                     convert_mcp_tool_to_openai(tool)
                     for tool in tools_result.tools
@@ -130,6 +146,7 @@ class AgentExecutor(BaseAgentExecutor):
         messages = []
         
         # Get context-level history from Agent's memory store
+        memory_start = time.time()
         if self.memory_store:
             memory_history = await self.memory_store.get_history(context_id)
             if memory_history:
@@ -153,6 +170,8 @@ class AgentExecutor(BaseAgentExecutor):
         # Add incoming message to memory store if not already present
         if not message_already_in_memory and self.memory_store:
             await self.memory_store.add_message(context_id, context.message)
+        memory_time = time.time() - memory_start
+        logger.info(f"[TIMING] Memory access: {memory_time:.3f}s")
         
         if not message_already_in_memory:
             if tool_results:
@@ -217,6 +236,7 @@ class AgentExecutor(BaseAgentExecutor):
         logger.info(f"Calling OpenAI: model={self.model}, messages={len(openai_messages)}, tools={len(tools) if tools else 0}")
         
         # Always use streaming - emit incremental status updates as chunks arrive
+        openai_start = time.time()
         stream = await self.openai_client.chat.completions.create(
             model=self.model,
             messages=openai_messages,
@@ -224,16 +244,26 @@ class AgentExecutor(BaseAgentExecutor):
             tool_choice="auto" if tools else None,
             stream=True,
         )
+        openai_init_time = time.time() - openai_start
+        logger.info(f"[TIMING] OpenAI API call initiated: {openai_init_time:.3f}s")
         
         # Stream response chunks and emit incremental updates (async iterator)
+        first_chunk_time = None
+        first_event_time = None
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta:
                 delta = chunk.choices[0].delta
                 if delta.content:
+                    if first_chunk_time is None:
+                        first_chunk_time = time.time() - openai_start
+                        logger.info(f"[TIMING] Time to first OpenAI chunk: {first_chunk_time:.3f}s")
                     assistant_content += delta.content
                     # Only emit incremental updates if we don't have tool calls yet
                     # (tool calls will be handled in incremental status updates)
                     if not has_tool_calls:
+                        if first_event_time is None:
+                            first_event_time = time.time() - execute_start
+                            logger.info(f"[TIMING] Time to first A2A event emission: {first_event_time:.3f}s")
                         emitted_streaming_updates = True
                         incremental_message = create_text_message_object(
                             role=Role.agent,
@@ -248,7 +278,10 @@ class AgentExecutor(BaseAgentExecutor):
                             ),
                             final=False,
                         )
+                        enqueue_start = time.time()
                         await event_queue.enqueue_event(status_update)
+                        enqueue_time = time.time() - enqueue_start
+                        logger.info(f"[TIMING] Event enqueued: state=working, enqueue_time={enqueue_time:.3f}s, task_id={task_id}, context_id={context_id}, content_length={len(assistant_content)}")
                 if delta.tool_calls:
                     has_tool_calls = True
                     for tool_call_delta in delta.tool_calls:
@@ -288,6 +321,10 @@ class AgentExecutor(BaseAgentExecutor):
                     if current_state != previous_tool_calls_state:
                         previous_tool_calls_state = current_state
                         
+                        if first_event_time is None:
+                            first_event_time = time.time() - execute_start
+                            logger.info(f"[TIMING] Time to first A2A event emission: {first_event_time:.3f}s")
+                        
                         # Build A2A message with current tool call state
                         incremental_message = create_text_message_object(
                             role=Role.agent,
@@ -306,7 +343,10 @@ class AgentExecutor(BaseAgentExecutor):
                             ),
                             final=False,
                         )
+                        enqueue_start = time.time()
                         await event_queue.enqueue_event(status_update)
+                        enqueue_time = time.time() - enqueue_start
+                        logger.info(f"[TIMING] Event enqueued: state=working, enqueue_time={enqueue_time:.3f}s, task_id={task_id}, context_id={context_id}, tool_calls={len(current_mcp_tool_calls)}")
                         emitted_streaming_updates = True
         
         # Filter out empty tool calls
@@ -343,7 +383,10 @@ class AgentExecutor(BaseAgentExecutor):
                 ),
                 final=False,
             )
+            enqueue_start = time.time()
             await event_queue.enqueue_event(status_update)
+            enqueue_time = time.time() - enqueue_start
+            logger.info(f"[TIMING] Event enqueued: state=input-required, enqueue_time={enqueue_time:.3f}s, task_id={task_id}, context_id={context_id}, tool_calls={len(mcp_tool_calls)}")
             
             # Add complete agent message (with tool calls) to memory store
             if self.memory_store:
@@ -367,7 +410,10 @@ class AgentExecutor(BaseAgentExecutor):
                     ),
                     final=True,
                 )
+                enqueue_start = time.time()
                 await event_queue.enqueue_event(status_update)
+                enqueue_time = time.time() - enqueue_start
+                logger.info(f"[TIMING] Event enqueued: state=completed, enqueue_time={enqueue_time:.3f}s, task_id={task_id}, context_id={context_id}, final=True")
                 
                 # Add complete agent message (final response) to memory store
                 if self.memory_store:
@@ -388,11 +434,17 @@ class AgentExecutor(BaseAgentExecutor):
                     ),
                     final=True,
                 )
+                enqueue_start = time.time()
                 await event_queue.enqueue_event(status_update)
+                enqueue_time = time.time() - enqueue_start
+                logger.info(f"[TIMING] Event enqueued: state=completed, enqueue_time={enqueue_time:.3f}s, task_id={task_id}, context_id={context_id}, final=True, after_streaming=True")
                 
                 # Add complete agent message (final response after streaming) to memory store
                 if self.memory_store:
                     await self.memory_store.add_message(context_id, final_message)
+        
+        total_time = time.time() - execute_start
+        logger.info(f"[TIMING] Total execute time: {total_time:.3f}s")
     
     async def cancel(
         self,
@@ -410,4 +462,7 @@ class AgentExecutor(BaseAgentExecutor):
             status=TaskStatus(state=TaskState.canceled),
             final=True,
         )
+        enqueue_start = time.time()
         await event_queue.enqueue_event(status_update)
+        enqueue_time = time.time() - enqueue_start
+        logger.info(f"[TIMING] Event enqueued: state=canceled, enqueue_time={enqueue_time:.3f}s, task_id={task_id}, context_id={context_id}, final=True")
