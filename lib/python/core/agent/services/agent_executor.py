@@ -31,9 +31,6 @@ from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
 )
-from timestep.utils.event_helpers import (
-    add_canonical_type_to_message,
-)
 from timestep.core.agent.stores.memory_store import MemoryStore
 
 
@@ -242,8 +239,6 @@ class AgentExecutor(BaseAgentExecutor):
                             role=Role.agent,
                             content=assistant_content
                         )
-                        # Add canonical_type for streaming chunk
-                        incremental_message = add_canonical_type_to_message(incremental_message, "TextMessageChunkEvent")
                         status_update = TaskStatusUpdateEvent(
                             task_id=task_id or "",
                             context_id=context_id or "",
@@ -300,8 +295,6 @@ class AgentExecutor(BaseAgentExecutor):
                         )
                         if current_mcp_tool_calls:
                             incremental_message.parts.append(Part(DataPart(data={TOOL_CALLS_KEY: current_mcp_tool_calls})))
-                        # Add canonical_type for incremental tool call args (ToolCallArgsEvent for streaming updates)
-                        incremental_message = add_canonical_type_to_message(incremental_message, "ToolCallArgsEvent")
                         
                         # Emit incremental status update with working state
                         status_update = TaskStatusUpdateEvent(
@@ -339,8 +332,6 @@ class AgentExecutor(BaseAgentExecutor):
                 content=assistant_content
             )
             a2a_message.parts.append(Part(DataPart(data={TOOL_CALLS_KEY: mcp_tool_calls})))
-            # Add canonical_type for tool call start (final)
-            a2a_message = add_canonical_type_to_message(a2a_message, "ToolCallStartEvent")
             
             # Emit input-required status (human-in-the-loop point)
             status_update = TaskStatusUpdateEvent(
@@ -366,8 +357,6 @@ class AgentExecutor(BaseAgentExecutor):
                     role=Role.agent,
                     content=assistant_content
                 )
-                # Add canonical_type for final text message
-                a2a_message = add_canonical_type_to_message(a2a_message, "TextMessageEndEvent")
                 
                 status_update = TaskStatusUpdateEvent(
                     task_id=task_id or "",
@@ -389,8 +378,6 @@ class AgentExecutor(BaseAgentExecutor):
                     role=Role.agent,
                     content=assistant_content
                 )
-                # Add canonical_type for final text message after streaming
-                final_message = add_canonical_type_to_message(final_message, "TextMessageEndEvent")
                 
                 status_update = TaskStatusUpdateEvent(
                     task_id=task_id or "",

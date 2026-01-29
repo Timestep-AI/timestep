@@ -32,7 +32,6 @@ from timestep.utils.event_helpers import (
     extract_event_data,
     extract_task_from_event,
     extract_task_from_tuple,
-    add_canonical_type_to_message,
 )
 
 
@@ -50,7 +49,6 @@ class Loop:
         agent: Any,  # Agent instance
         agent_base_url: str,
         context_id_to_environment_uri: Dict[str, str],
-        sampling_callback: Optional[Callable] = None,  # Deprecated: will be auto-created
     ):
         """Initialize Loop.
         
@@ -58,13 +56,12 @@ class Loop:
             agent: The Agent instance
             agent_base_url: Base URL for the agent (e.g., "http://localhost:9999")
             context_id_to_environment_uri: Mapping from context_id to MCP environment URI
-            sampling_callback: Deprecated - will be auto-created (kept for backward compatibility)
         """
         self.agent = agent
         self.agent_base_url = agent_base_url
         self.context_id_to_environment_uri = context_id_to_environment_uri
         # Always create sampling callback (handoff tool is always in Environment)
-        self.sampling_callback = sampling_callback if sampling_callback else self._create_sampling_callback()
+        self.sampling_callback = self._create_sampling_callback()
         
         # Create FastAPI app for this component
         self.app = FastAPI()
@@ -171,8 +168,6 @@ class Loop:
             tool_result_msg.context_id = context_id
         # DataPart tool_results maps to OpenAI tool messages in the A2A server.
         tool_result_msg.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
-        # Add canonical_type for tool call results
-        tool_result_msg = add_canonical_type_to_message(tool_result_msg, "ToolCallResultEvent")
         return tool_result_msg
     
     def _extract_final_message(self, task: Any) -> str:
@@ -435,8 +430,6 @@ class Loop:
         # Handle string input
         if isinstance(input_data, str):
             user_message = create_text_message_object(role=Role.user, content=input_data)
-            # Add canonical_type for user text message
-            user_message = add_canonical_type_to_message(user_message, "TextMessageContentEvent")
             return user_message
         
         # Handle list input (messages or items)
@@ -485,11 +478,6 @@ class Loop:
             a2a_message = create_text_message_object(role=Role.user, content=user_content)
             if tool_results:
                 a2a_message.parts.append(Part(DataPart(data={TOOL_RESULTS_KEY: tool_results})))
-                # Add canonical_type for tool call results
-                a2a_message = add_canonical_type_to_message(a2a_message, "ToolCallResultEvent")
-            else:
-                # Add canonical_type for user text message
-                a2a_message = add_canonical_type_to_message(a2a_message, "TextMessageContentEvent")
             return a2a_message
         
         raise ValueError(f"Unsupported input type: {type(input_data)}")

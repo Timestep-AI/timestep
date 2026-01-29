@@ -188,7 +188,6 @@ def main():
         agent=agent,
         agent_base_url=agent_base_url,
         context_id_to_environment_uri=agent.context_id_to_environment_uri,
-        sampling_callback=None,  # Weather assistant doesn't need handoffs
     )
     
     # Mount Loop routes
