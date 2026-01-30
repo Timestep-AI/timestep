@@ -241,21 +241,22 @@ async def main():
         print(f"  Filtering out {incomplete_count} incomplete traces (finish_reason='tool_calls')")
         traces = traces.drop(index=incomplete_indices)
     
-    # Filter out weather assistant traces - we only want to evaluate personal assistant traces
+    # Filter to only personal assistant traces - we only want to evaluate personal assistant traces
     # Weather assistant traces are intermediate steps from handoffs, not the final responses
-    print("\nFiltering out weather assistant traces...")
-    weather_indices = []
-    weather_count = 0
+    print("\nFiltering to personal assistant traces only...")
+    personal_assistant_indices = []
     
     for idx, trace_row in traces.iterrows():
         trace_request = trace_row.get('request', '')
-        if 'weather-assistant' in trace_request.lower():
-            weather_indices.append(idx)
-            weather_count += 1
+        if 'personal-assistant' in trace_request.lower():
+            personal_assistant_indices.append(idx)
     
-    if weather_count > 0:
-        print(f"  Filtering out {weather_count} weather assistant traces")
-        traces = traces.drop(index=weather_indices)
+    if len(personal_assistant_indices) < len(traces):
+        excluded_count = len(traces) - len(personal_assistant_indices)
+        print(f"  Keeping {len(personal_assistant_indices)} personal assistant traces (excluding {excluded_count} other traces)")
+        traces = traces.loc[personal_assistant_indices]
+    else:
+        print(f"  All {len(traces)} traces are personal assistant traces")
     
     # Check if any traces were created before we started (shouldn't happen with proper timestamp filter)
     traces_before_start = 0
