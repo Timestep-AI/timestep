@@ -120,7 +120,6 @@ def main():
     # Handoff tool is registered by default in Environment (enable_handoff=True by default)
     environment = Environment(
         environment_id="personal-assistant-env",
-        context_id="personal-context",
         agent_id="personal-assistant",
         human_in_loop=False,
         enable_handoff=True,  # Enable handoff tool (default)
@@ -131,16 +130,19 @@ def main():
     def system_prompt(agent_name: str) -> str:
         """System prompt for the personal assistant agent."""
         return f"""You are {agent_name}, a helpful personal assistant. 
-You can help with various tasks. For weather-related questions, use the handoff tool 
-to delegate to the weather assistant agent.
+You can help with various tasks. For research questions, web searches, or 
+information lookups, use the handoff tool to delegate to the research assistant agent.
+For weather-related questions, use the handoff tool to delegate to the weather assistant agent.
 
-IMPORTANT: When using the handoff tool, you MUST use the exact agent_uri: http://localhost:10000
-Do NOT use placeholder values like weather_agent or weather_service. 
-The agent_uri must be the full URL: http://localhost:10000
+IMPORTANT: When using the handoff tool, you MUST use the exact agent_uri:
+- Research Assistant: http://localhost:10000
+- Weather Assistant: http://localhost:10001
+Do NOT use placeholder values like research_service or weather_agent. 
+The agent_uri must be the full URL.
 
-Example handoff tool call:
-- agent_uri: http://localhost:10000
-- message: What is the current weather in Oakland?"""
+Example handoff tool calls:
+- Research: agent_uri: http://localhost:10000, message: Search for information about quantum computing.
+- Weather: agent_uri: http://localhost:10001, message: What is the current weather in Oakland?"""
     
     # Get MCP app from environment
     mcp_app = environment.streamable_http_app()
@@ -149,10 +151,8 @@ Example handoff tool call:
     agent = Agent(
         agent_id="personal-assistant",
         name="Personal Assistant",
+        environment_uri=f"http://{http_host}:{port}/mcp",
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        context_id_to_environment_uri={
-            "personal-context": f"http://{http_host}:{port}/mcp"
-        },
         human_in_loop=False,
     )
     
@@ -209,7 +209,7 @@ Example handoff tool call:
     loop = Loop(
         agent=agent,
         agent_base_url=agent_base_url,
-        context_id_to_environment_uri=agent.context_id_to_environment_uri,
+        environment_uri=agent.environment_uri,
     )
     
     # Mount Loop routes

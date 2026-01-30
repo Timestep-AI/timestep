@@ -51,13 +51,13 @@ class AgentExecutor(BaseAgentExecutor):
         self,
         agent_id: str,
         model: str,
-        context_id_to_environment_uri: Dict[str, str],
+        environment_uri: str,
         human_in_loop: bool = False,
         memory_store: Optional[MemoryStore] = None,
     ):
         self.agent_id = agent_id
         self.model = model
-        self.context_id_to_environment_uri = context_id_to_environment_uri
+        self.environment_uri = environment_uri
         self.human_in_loop = human_in_loop
         self.memory_store = memory_store
         
@@ -85,22 +85,8 @@ class AgentExecutor(BaseAgentExecutor):
         if task and task.history:
             logger.info(f"  Task history: {len(task.history)} messages")
         
-        # Get Environment URI from context_id - fail fast if not found
-        environment_uri = self.context_id_to_environment_uri.get(context_id)
-        
-        # Single-environment mode: if only one environment is configured,
-        # use it for any context_id (explicit configuration, not fallback)
-        if not environment_uri and len(self.context_id_to_environment_uri) == 1:
-            environment_uri = next(iter(self.context_id_to_environment_uri.values()))
-        
-        # Fail fast if still not found
-        if not environment_uri:
-            available_context_ids = list(self.context_id_to_environment_uri.keys())
-            raise ValueError(
-                f"No environment found for context_id: {context_id}. "
-                f"Available context_ids: {available_context_ids}. "
-                f"If you only have one environment, it will be used for all context_ids."
-            )
+        # Use the single environment URI directly
+        environment_uri = self.environment_uri
         
         # Get system prompt and tools from Environment via HTTP client
         # Fail fast if prompt not found or other errors occur

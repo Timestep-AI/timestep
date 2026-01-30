@@ -84,7 +84,7 @@ def main():
     """Run the Weather Assistant Agent."""
     
     # Get port from environment variable or use default
-    port = int(os.getenv("WEATHER_ASSISTANT_AGENT_PORT", "10000"))
+    port = int(os.getenv("WEATHER_ASSISTANT_AGENT_PORT", "10001"))
     host = "0.0.0.0"
     http_host = "localhost" if host == "0.0.0.0" else host
     
@@ -97,7 +97,6 @@ def main():
     # Disable handoff tool for weather assistant (it doesn't need handoff capability)
     environment = Environment(
         environment_id="weather-assistant-env",
-        context_id="weather-context",
         agent_id="weather-assistant",
         human_in_loop=False,
         enable_handoff=False,  # Disable handoff tool
@@ -128,10 +127,8 @@ def main():
     agent = Agent(
         agent_id="weather-assistant",
         name="Weather Assistant",
+        environment_uri=f"http://{http_host}:{port}/mcp",
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        context_id_to_environment_uri={
-            "weather-context": f"http://{http_host}:{port}/mcp"
-        },
         human_in_loop=False,
     )
     
@@ -187,7 +184,7 @@ def main():
     loop = Loop(
         agent=agent,
         agent_base_url=agent_base_url,
-        context_id_to_environment_uri=agent.context_id_to_environment_uri,
+        environment_uri=agent.environment_uri,
     )
     
     # Mount Loop routes

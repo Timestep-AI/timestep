@@ -48,18 +48,18 @@ class Loop:
         self,
         agent: Any,  # Agent instance
         agent_base_url: str,
-        context_id_to_environment_uri: Dict[str, str],
+        environment_uri: str,
     ):
         """Initialize Loop.
         
         Args:
             agent: The Agent instance
             agent_base_url: Base URL for the agent (e.g., "http://localhost:9999")
-            context_id_to_environment_uri: Mapping from context_id to MCP environment URI
+            environment_uri: MCP environment URI
         """
         self.agent = agent
         self.agent_base_url = agent_base_url
-        self.context_id_to_environment_uri = context_id_to_environment_uri
+        self.environment_uri = environment_uri
         # Always create sampling callback (handoff tool is always in Environment)
         self.sampling_callback = self._create_sampling_callback()
         
@@ -691,24 +691,8 @@ class Loop:
                         if not task_history:
                             logger.warning(f"task.history is None or empty when tool calls received")
                         
-                        # Execute tools
-                        # Use single-environment mode: if only one environment is configured, use it
-                        # Otherwise, get environment URI from context_id (which A2A generated)
-                        if len(self.context_id_to_environment_uri) == 1:
-                            tool_environment_uri = next(iter(self.context_id_to_environment_uri.values()))
-                        else:
-                            # Get environment URI from context_id that A2A generated
-                            if not context_id:
-                                raise HTTPException(
-                                    status_code=500,
-                                    detail="context_id not available for tool execution. This should not happen."
-                                )
-                            tool_environment_uri = self.context_id_to_environment_uri.get(context_id)
-                            if not tool_environment_uri:
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail=f"No environment found for context_id: {context_id}"
-                                )
+                        # Execute tools using the single environment URI
+                        tool_environment_uri = self.environment_uri
                         
                         tool_results = []
                         for tc in tool_calls:
@@ -1065,18 +1049,8 @@ class Loop:
                                     logger.warning(f"task.history is None or empty when tool calls received (streaming)")
                                 
                                 tool_calls_found = True
-                                # Execute tools
-                                # Use single-environment mode: if only one environment is configured, use it
-                                # Otherwise, get environment URI from context_id (which A2A generated)
-                                if len(self.context_id_to_environment_uri) == 1:
-                                    tool_environment_uri = next(iter(self.context_id_to_environment_uri.values()))
-                                else:
-                                    # Get environment URI from context_id that A2A generated
-                                    tool_environment_uri = self.context_id_to_environment_uri.get(context_id)
-                                    if not tool_environment_uri:
-                                        logger.error(f"No environment found for context_id: {context_id}")
-                                        yield f"data: {json.dumps({'error': {'message': f'No environment found for context_id: {context_id}'}})}\n\n"
-                                        return
+                                # Execute tools using the single environment URI
+                                tool_environment_uri = self.environment_uri
                                 
                                 tool_results = []
                                 for tc in tool_calls:

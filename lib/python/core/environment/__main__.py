@@ -19,14 +19,12 @@ class Environment(FastMCP):
     def __init__(
         self,
         environment_id: str,
-        context_id: str,  # Maps to A2A context_id
         agent_id: str,    # Which agent this environment is for
         human_in_loop: bool = False,  # Enable MCP Elicitation/Sampling
         enable_handoff: bool = True,  # Enable handoff tool
     ):
         super().__init__(f"Environment-{environment_id}")
         self.environment_id = environment_id
-        self.context_id = context_id
         self.agent_id = agent_id
         self.human_in_loop = human_in_loop
         self.enable_handoff = enable_handoff
