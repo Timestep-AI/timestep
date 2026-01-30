@@ -4,6 +4,7 @@
 #   "httpx",
 #   "mlflow",
 #   "datasets",
+#   "openai",
 # ]
 # ///
 
@@ -87,12 +88,15 @@ def generate_traces_for_evaluation(tasks: List[Dict], agent_url: str) -> None:
     This function calls the agent to generate traces that will be evaluated.
     The agent app handles all tracing automatically via OTEL and sends traces to MLflow.
     
+    Each task gets a unique context_id to ensure conversations don't mix.
+    
     Args:
         tasks: List of GAIA tasks to process
         agent_url: URL of the agent to call
     """
     import httpx
     import time
+    from uuid import uuid4
     
     print(f"\nGenerating traces by calling agent for {len(tasks)} tasks...")
     
@@ -102,11 +106,17 @@ def generate_traces_for_evaluation(tasks: List[Dict], agent_url: str) -> None:
             logger.warning(f"Task {i} has no question, skipping")
             continue
         
+        # Log the exact question being sent for debugging
+        print(f"  Calling agent for task {i}/{len(tasks)}: {question[:60]}...")
+        
         try:
             with httpx.Client(timeout=300.0) as client:
                 response = client.post(
                     f"{agent_url}/v1/responses",
-                    json={"input": question, "stream": False},
+                    json={
+                        "input": question,
+                        "stream": False,
+                    },
                 )
                 response.raise_for_status()
                 print(f"  ✓ Generated trace for task {i}/{len(tasks)}")
@@ -164,16 +174,25 @@ async def main():
         return
     
     # Step 1: Generate traces by calling the agent
+    # Record timestamp BEFORE generating traces so we only search for traces from this run
+    from datetime import datetime
+    trace_generation_start = datetime.now()
+    print(f"\nTrace generation started at: {trace_generation_start}")
+    print(f"This timestamp will be used to filter traces (only traces after this time)")
+    
     # The agent app will create traces automatically via OTEL and send them to MLflow
     generate_traces_for_evaluation(tasks, agent_url)
     
-    # Step 2: Search and retrieve traces from MLflow
-    # Get traces from the last hour (should include the traces we just generated)
-    from datetime import datetime, timedelta
-    one_hour_ago = datetime.now() - timedelta(hours=1)
-    timestamp_ms = int(one_hour_ago.timestamp() * 1000)
+    trace_generation_end = datetime.now()
+    print(f"\nTrace generation completed at: {trace_generation_end}")
+    print(f"Duration: {(trace_generation_end - trace_generation_start).total_seconds():.2f} seconds")
     
-    print(f"\nSearching for traces created after {one_hour_ago}...")
+    # Step 2: Search and retrieve traces from MLflow
+    # Get traces created after we started generating (to avoid old traces from previous runs)
+    timestamp_ms = int(trace_generation_start.timestamp() * 1000)
+    
+    print(f"\nSearching for traces created after {trace_generation_start}...")
+    print(f"(This should only include traces from this evaluation run)")
     # Search for traces - use timestamp filter only (locations parameter causes timeouts)
     traces = mlflow.search_traces(
         filter_string=f"timestamp > {timestamp_ms}"
@@ -187,6 +206,145 @@ async def main():
     
     print(f"Found {len(traces)} traces")
     
+    # Debug: Check what columns are in the DataFrame
+    print(f"\nDataFrame columns: {list(traces.columns)}")
+    if 'expectations' in traces.columns:
+        print("  ✓ 'expectations' column exists in DataFrame")
+        # Check a sample expectation value
+        sample_expectations = traces['expectations'].dropna().head(1)
+        if not sample_expectations.empty:
+            print(f"  Sample expectation: {sample_expectations.iloc[0]}")
+    else:
+        print("  ✗ 'expectations' column NOT in DataFrame - will need to add it")
+    
+    # Check if assessments column exists (expectations are stored as assessments)
+    if 'assessments' in traces.columns:
+        print("  ✓ 'assessments' column exists in DataFrame")
+        # Check a sample assessment value
+        sample_assessments = traces['assessments'].dropna().head(1)
+        if not sample_assessments.empty:
+            print(f"  Sample assessment: {sample_assessments.iloc[0]}")
+    else:
+        print("  ✗ 'assessments' column NOT in DataFrame")
+    
+    # Filter to only complete traces (finish_reason="stop")
+    # The OpenAI instrumentor creates traces for each API call, including intermediate ones
+    # when tool calls are made. We only want the final complete traces with finish_reason='stop'.
+    print("\nFiltering to only complete traces (finish_reason='stop')...")
+    incomplete_indices = []
+    incomplete_count = 0
+    
+    for idx, trace_row in traces.iterrows():
+        is_incomplete = False
+        if 'spans' in trace_row and trace_row['spans']:
+            try:
+                spans = trace_row['spans']
+                if isinstance(spans, list) and len(spans) > 0:
+                    first_span = spans[0]
+                    if isinstance(first_span, dict) and 'attributes' in first_span:
+                        attrs = first_span['attributes']
+                        # Check finish_reason - we only want "stop" (complete), filter out "tool_calls" (incomplete)
+                        finish_reason = attrs.get('gen_ai.completion.0.finish_reason', '')
+                        # Remove quotes if present
+                        finish_reason = finish_reason.strip('"')
+                        if finish_reason != 'stop':
+                            is_incomplete = True
+                            incomplete_count += 1
+            except Exception:
+                # If we can't determine finish_reason, filter it out to be safe
+                is_incomplete = True
+                incomplete_count += 1
+        
+        if is_incomplete:
+            incomplete_indices.append(idx)
+    
+    if incomplete_count > 0:
+        print(f"  Filtering out {incomplete_count} incomplete traces (finish_reason='tool_calls')")
+        traces = traces.drop(index=incomplete_indices)
+        print(f"  Kept {len(traces)} complete traces (finish_reason='stop' or unknown)")
+    else:
+        print(f"  All {len(traces)} traces are complete")
+    
+    # Filter out weather assistant traces - we only want to evaluate personal assistant traces
+    # Weather assistant traces are intermediate steps from handoffs, not the final responses
+    print("\nFiltering out weather assistant traces (only evaluating personal assistant traces)...")
+    weather_indices = []
+    weather_count = 0
+    
+    for idx, trace_row in traces.iterrows():
+        trace_request = trace_row.get('request', '')
+        if 'weather-assistant' in trace_request.lower():
+            weather_indices.append(idx)
+            weather_count += 1
+    
+    if weather_count > 0:
+        print(f"  Filtering out {weather_count} weather assistant traces")
+        traces = traces.drop(index=weather_indices)
+        print(f"  Kept {len(traces)} personal assistant traces")
+    else:
+        print(f"  All {len(traces)} traces are personal assistant traces")
+    
+    # Check if any traces were created before we started (shouldn't happen with proper timestamp filter)
+    traces_before_start = 0
+    for idx, trace_row in traces.iterrows():
+        trace_timestamp = trace_row.get('request_time', 0)
+        if isinstance(trace_timestamp, (int, float)):
+            trace_timestamp_ms = int(trace_timestamp) if trace_timestamp > 1e12 else int(trace_timestamp * 1000)
+            if trace_timestamp_ms < timestamp_ms:
+                traces_before_start += 1
+    
+    if traces_before_start > 0:
+        print(f"⚠️  WARNING: {traces_before_start} traces were created BEFORE trace generation started!")
+        print(f"   This suggests old traces are being included. Timestamp filter: {timestamp_ms}")
+    
+    # Debug: Show detailed trace breakdown with timestamps and request previews
+    # (Only showing traces that will be evaluated - already filtered for finish_reason='stop' and personal assistant)
+    print(f"\nTrace breakdown ({len(traces)} traces that will be evaluated):")
+    
+    # Try to extract user questions from traces for better debugging
+    for idx, trace_row in traces.iterrows():
+        trace_id = trace_row.get('trace_id', 'unknown')
+        trace_request = trace_row.get('request', '')
+        request_time = trace_row.get('request_time', 'unknown')
+        request_preview = trace_request[:80] + '...' if len(trace_request) > 80 else trace_request
+        
+        # Try to extract user question from spans
+        user_question = None
+        if 'spans' in trace_row and trace_row['spans']:
+            try:
+                spans = trace_row['spans']
+                if isinstance(spans, list) and len(spans) > 0:
+                    first_span = spans[0]
+                    if isinstance(first_span, dict) and 'attributes' in first_span:
+                        attrs = first_span['attributes']
+                        for i in range(6):
+                            prompt_role_key = f'gen_ai.prompt.{i}.role'
+                            prompt_content_key = f'gen_ai.prompt.{i}.content'
+                            if prompt_role_key in attrs and attrs[prompt_role_key] == '"user"':
+                                if prompt_content_key in attrs:
+                                    user_question = attrs[prompt_content_key].strip('"')
+                                    break
+            except Exception:
+                pass
+        
+        question_info = f" - Q: {user_question[:50]}..." if user_question else ""
+        
+        # Convert timestamp to readable time if it's a number
+        time_str = request_time
+        if isinstance(request_time, (int, float)):
+            try:
+                from datetime import datetime
+                dt = datetime.fromtimestamp(request_time / 1000.0)
+                time_str = dt.strftime("%H:%M:%S.%f")[:-3]
+            except:
+                pass
+        
+        print(f"  PERSONAL: {trace_id[:20]}... at {time_str}{question_info}")
+        if question_info:
+            print(f"    Request preview: {request_preview}")
+    
+    print(f"\nSummary: {len(traces)} personal assistant traces (finish_reason='stop') ready for evaluation")
+    
     # Step 3: Annotate traces with expectations (ground truth)
     # Match traces to tasks by comparing request content
     print("\nAnnotating traces with expectations...")
@@ -198,6 +356,8 @@ async def main():
     }
     
     annotated_count = 0
+    # Store trace_id -> expected_answer mapping for later use in DataFrame
+    trace_expectations = {}
     
     for idx, trace_row in traces.iterrows():
         trace_id = trace_row.get('trace_id')
@@ -206,6 +366,7 @@ async def main():
             continue
         
         # Extract the actual user question from the trace
+        # (Weather assistant traces have already been filtered out above)
         # The 'request' column contains the full system prompt, not the user question
         # The user question is in the span attributes: gen_ai.prompt.1.content (where role="user")
         user_question = None
@@ -261,6 +422,8 @@ async def main():
                     name="expected_response",
                     value=expected_answer
                 )
+                # Store for DataFrame column
+                trace_expectations[trace_id] = expected_answer
                 annotated_count += 1
                 logger.debug(f"Added expectation to trace {trace_id} for question: {user_question[:50] if user_question else 'N/A'}...")
             except Exception as e:
@@ -269,6 +432,21 @@ async def main():
             logger.warning(f"Could not match trace {trace_id} to any task. User question: {user_question[:100] if user_question else 'N/A'}...")
     
     print(f"Annotated {annotated_count} traces with expectations")
+    
+    # Add expectations column to DataFrame for MLflow evaluation
+    # MLflow's evaluation framework needs expectations in the DataFrame columns
+    # The Correctness scorer looks for "expected_response" or "expected_facts" in the expectations dict
+    print("\nAdding expectations column to trace DataFrame...")
+    expectations_list = []
+    for idx, trace_row in traces.iterrows():
+        trace_id = trace_row.get('trace_id')
+        if trace_id and trace_id in trace_expectations:
+            expectations_list.append({"expected_response": trace_expectations[trace_id]})
+        else:
+            expectations_list.append({})
+    
+    traces['expectations'] = expectations_list
+    print(f"Added expectations column to {len(traces)} traces")
     
     # Step 4: Define scorers for MLflow evaluation
     # Correctness scorer compares against "expected_response" field in expectations

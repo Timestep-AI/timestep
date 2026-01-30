@@ -556,27 +556,15 @@ class Loop:
         if input_data is None:
             raise HTTPException(status_code=400, detail="input is required")
         
-        # Get context_id (use first available or generate one)
-        context_id = None
-        for cid in self.context_id_to_environment_uri.keys():
-            context_id = cid
-            break
-        if not context_id:
-            context_id = str(uuid4())
-        
-        environment_uri = self.context_id_to_environment_uri.get(context_id)
-        if not environment_uri:
-            raise HTTPException(status_code=400, detail=f"No environment found for context_id: {context_id}")
-        
         # Use ClientFactory (supports JSON-RPC by default)
         a2a_client = await ClientFactory.connect(self.agent_base_url)
         
         # Convert Responses API input to A2A
+        # A2A will automatically generate context_id if not provided
         a2a_message = self._convert_responses_input_to_a2a(input_data)
-        if context_id:
-            a2a_message.context_id = context_id
         
         task_id = None
+        context_id = None  # Will be extracted from A2A response
         final_content = ""
         
         # Process conversation loop until completion
@@ -704,13 +692,31 @@ class Loop:
                             logger.warning(f"task.history is None or empty when tool calls received")
                         
                         # Execute tools
+                        # Use single-environment mode: if only one environment is configured, use it
+                        # Otherwise, get environment URI from context_id (which A2A generated)
+                        if len(self.context_id_to_environment_uri) == 1:
+                            tool_environment_uri = next(iter(self.context_id_to_environment_uri.values()))
+                        else:
+                            # Get environment URI from context_id that A2A generated
+                            if not context_id:
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail="context_id not available for tool execution. This should not happen."
+                                )
+                            tool_environment_uri = self.context_id_to_environment_uri.get(context_id)
+                            if not tool_environment_uri:
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail=f"No environment found for context_id: {context_id}"
+                                )
+                        
                         tool_results = []
                         for tc in tool_calls:
                             tool_name = tc.get("name", "")
                             tool_args = tc.get("arguments", {})
                             call_id = tc.get("call_id", "")
                             
-                            result = await self._execute_tool_via_mcp(tool_name, tool_args, environment_uri)
+                            result = await self._execute_tool_via_mcp(tool_name, tool_args, tool_environment_uri)
                             # Extract text from result dict before passing to build_tool_result_message
                             output_text = self._extract_tool_output(result)
                             tool_results.append({
@@ -755,19 +761,6 @@ class Loop:
             yield f"data: {json.dumps({'error': {'message': 'input is required'}})}\n\n"
             return
         
-        # Get context_id
-        context_id = None
-        for cid in self.context_id_to_environment_uri.keys():
-            context_id = cid
-            break
-        if not context_id:
-            context_id = str(uuid4())
-        
-        environment_uri = self.context_id_to_environment_uri.get(context_id)
-        if not environment_uri:
-            yield f"data: {json.dumps({'error': {'message': f'No environment found for context_id: {context_id}'}})}\n\n"
-            return
-        
         # Use ClientFactory (supports JSON-RPC by default)
         client_start = time.time()
         a2a_client = await ClientFactory.connect(self.agent_base_url)
@@ -775,14 +768,14 @@ class Loop:
         logger.info(f"[TIMING] A2A client connection: {client_time:.3f}s")
         
         # Convert Responses API input to A2A
+        # A2A will automatically generate context_id if not provided
         message_start = time.time()
         a2a_message = self._convert_responses_input_to_a2a(input_data)
-        if context_id:
-            a2a_message.context_id = context_id
         message_sent_time = time.time() - message_start
         logger.info(f"[TIMING] Message prepared and sent: {message_sent_time:.3f}s")
         
         task_id = None
+        context_id = None  # Will be extracted from A2A response
         accumulated_content = ""
         last_sent_content = ""  # Track what we've already sent
 
@@ -1073,13 +1066,25 @@ class Loop:
                                 
                                 tool_calls_found = True
                                 # Execute tools
+                                # Use single-environment mode: if only one environment is configured, use it
+                                # Otherwise, get environment URI from context_id (which A2A generated)
+                                if len(self.context_id_to_environment_uri) == 1:
+                                    tool_environment_uri = next(iter(self.context_id_to_environment_uri.values()))
+                                else:
+                                    # Get environment URI from context_id that A2A generated
+                                    tool_environment_uri = self.context_id_to_environment_uri.get(context_id)
+                                    if not tool_environment_uri:
+                                        logger.error(f"No environment found for context_id: {context_id}")
+                                        yield f"data: {json.dumps({'error': {'message': f'No environment found for context_id: {context_id}'}})}\n\n"
+                                        return
+                                
                                 tool_results = []
                                 for tc in tool_calls:
                                     tool_name = tc.get("name", "")
                                     tool_args = tc.get("arguments", {})
                                     call_id = tc.get("call_id", "")
                                     
-                                    result = await self._execute_tool_via_mcp(tool_name, tool_args, environment_uri)
+                                    result = await self._execute_tool_via_mcp(tool_name, tool_args, tool_environment_uri)
                                     # Extract text from result dict before passing to build_tool_result_message
                                     output_text = self._extract_tool_output(result)
                                     tool_results.append({
