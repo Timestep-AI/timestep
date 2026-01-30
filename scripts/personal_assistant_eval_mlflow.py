@@ -206,27 +206,6 @@ async def main():
     
     print(f"Found {len(traces)} traces")
     
-    # Debug: Check what columns are in the DataFrame
-    print(f"\nDataFrame columns: {list(traces.columns)}")
-    if 'expectations' in traces.columns:
-        print("  ✓ 'expectations' column exists in DataFrame")
-        # Check a sample expectation value
-        sample_expectations = traces['expectations'].dropna().head(1)
-        if not sample_expectations.empty:
-            print(f"  Sample expectation: {sample_expectations.iloc[0]}")
-    else:
-        print("  ✗ 'expectations' column NOT in DataFrame - will need to add it")
-    
-    # Check if assessments column exists (expectations are stored as assessments)
-    if 'assessments' in traces.columns:
-        print("  ✓ 'assessments' column exists in DataFrame")
-        # Check a sample assessment value
-        sample_assessments = traces['assessments'].dropna().head(1)
-        if not sample_assessments.empty:
-            print(f"  Sample assessment: {sample_assessments.iloc[0]}")
-    else:
-        print("  ✗ 'assessments' column NOT in DataFrame")
-    
     # Filter to only complete traces (finish_reason="stop")
     # The OpenAI instrumentor creates traces for each API call, including intermediate ones
     # when tool calls are made. We only want the final complete traces with finish_reason='stop'.
@@ -261,13 +240,10 @@ async def main():
     if incomplete_count > 0:
         print(f"  Filtering out {incomplete_count} incomplete traces (finish_reason='tool_calls')")
         traces = traces.drop(index=incomplete_indices)
-        print(f"  Kept {len(traces)} complete traces (finish_reason='stop' or unknown)")
-    else:
-        print(f"  All {len(traces)} traces are complete")
     
     # Filter out weather assistant traces - we only want to evaluate personal assistant traces
     # Weather assistant traces are intermediate steps from handoffs, not the final responses
-    print("\nFiltering out weather assistant traces (only evaluating personal assistant traces)...")
+    print("\nFiltering out weather assistant traces...")
     weather_indices = []
     weather_count = 0
     
@@ -280,9 +256,6 @@ async def main():
     if weather_count > 0:
         print(f"  Filtering out {weather_count} weather assistant traces")
         traces = traces.drop(index=weather_indices)
-        print(f"  Kept {len(traces)} personal assistant traces")
-    else:
-        print(f"  All {len(traces)} traces are personal assistant traces")
     
     # Check if any traces were created before we started (shouldn't happen with proper timestamp filter)
     traces_before_start = 0
@@ -297,53 +270,7 @@ async def main():
         print(f"⚠️  WARNING: {traces_before_start} traces were created BEFORE trace generation started!")
         print(f"   This suggests old traces are being included. Timestamp filter: {timestamp_ms}")
     
-    # Debug: Show detailed trace breakdown with timestamps and request previews
-    # (Only showing traces that will be evaluated - already filtered for finish_reason='stop' and personal assistant)
-    print(f"\nTrace breakdown ({len(traces)} traces that will be evaluated):")
-    
-    # Try to extract user questions from traces for better debugging
-    for idx, trace_row in traces.iterrows():
-        trace_id = trace_row.get('trace_id', 'unknown')
-        trace_request = trace_row.get('request', '')
-        request_time = trace_row.get('request_time', 'unknown')
-        request_preview = trace_request[:80] + '...' if len(trace_request) > 80 else trace_request
-        
-        # Try to extract user question from spans
-        user_question = None
-        if 'spans' in trace_row and trace_row['spans']:
-            try:
-                spans = trace_row['spans']
-                if isinstance(spans, list) and len(spans) > 0:
-                    first_span = spans[0]
-                    if isinstance(first_span, dict) and 'attributes' in first_span:
-                        attrs = first_span['attributes']
-                        for i in range(6):
-                            prompt_role_key = f'gen_ai.prompt.{i}.role'
-                            prompt_content_key = f'gen_ai.prompt.{i}.content'
-                            if prompt_role_key in attrs and attrs[prompt_role_key] == '"user"':
-                                if prompt_content_key in attrs:
-                                    user_question = attrs[prompt_content_key].strip('"')
-                                    break
-            except Exception:
-                pass
-        
-        question_info = f" - Q: {user_question[:50]}..." if user_question else ""
-        
-        # Convert timestamp to readable time if it's a number
-        time_str = request_time
-        if isinstance(request_time, (int, float)):
-            try:
-                from datetime import datetime
-                dt = datetime.fromtimestamp(request_time / 1000.0)
-                time_str = dt.strftime("%H:%M:%S.%f")[:-3]
-            except:
-                pass
-        
-        print(f"  PERSONAL: {trace_id[:20]}... at {time_str}{question_info}")
-        if question_info:
-            print(f"    Request preview: {request_preview}")
-    
-    print(f"\nSummary: {len(traces)} personal assistant traces (finish_reason='stop') ready for evaluation")
+    print(f"\n{len(traces)} personal assistant traces ready for evaluation")
     
     # Step 3: Annotate traces with expectations (ground truth)
     # Match traces to tasks by comparing request content
@@ -434,9 +361,7 @@ async def main():
     print(f"Annotated {annotated_count} traces with expectations")
     
     # Add expectations column to DataFrame for MLflow evaluation
-    # MLflow's evaluation framework needs expectations in the DataFrame columns
     # The Correctness scorer looks for "expected_response" or "expected_facts" in the expectations dict
-    print("\nAdding expectations column to trace DataFrame...")
     expectations_list = []
     for idx, trace_row in traces.iterrows():
         trace_id = trace_row.get('trace_id')
@@ -446,7 +371,6 @@ async def main():
             expectations_list.append({})
     
     traces['expectations'] = expectations_list
-    print(f"Added expectations column to {len(traces)} traces")
     
     # Step 4: Define scorers for MLflow evaluation
     # Correctness scorer compares against "expected_response" field in expectations
@@ -455,21 +379,17 @@ async def main():
     ]
     
     print("\nRunning MLflow evaluation on traces...")
-    print("MLflow will automatically extract inputs, outputs, and expectations from traces.")
     
-    # Step 5: Run MLflow evaluation on traces
-    # No predict_fn needed - MLflow extracts everything from the trace objects
+    # Run MLflow evaluation on traces
+    # MLflow automatically extracts inputs, outputs, and expectations from trace objects
     results = mlflow.genai.evaluate(
-        data=traces,  # Pass traces directly, not a dataset with predict_fn
+        data=traces,
         scorers=scorers,
     )
     
-    print("\nEvaluation completed!")
+    print("\n✨ Evaluation completed!")
     print(f"Results logged to MLflow experiment: {experiment_name}")
     print(f"View results at: {mlflow_tracking_uri}")
-    
-    print("\nEvaluation complete! Check MLflow UI for detailed results and traces.")
-    print("Traces are created automatically by the agent app and sent to MLflow.")
 
 
 if __name__ == "__main__":
