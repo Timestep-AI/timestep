@@ -8,14 +8,14 @@
 # ///
 
 import asyncio
-import json
+# import json
 import logging
-import os
+# import os
 import sys
 from pathlib import Path
 
-from typing import Any
-from uuid import uuid4
+# from typing import Any
+# from uuid import uuid4
 
 from openai import AsyncOpenAI
 
@@ -51,12 +51,12 @@ if event_helpers_path.exists():
     sys.modules['timestep.utils.event_helpers'] = event_helpers_module
     spec.loader.exec_module(event_helpers_module)
 
-from a2a.client import ClientFactory
-from timestep.utils.event_helpers import extract_event_data
-from a2a.types import (
-    MessageSendParams,
-    SendMessageRequest,
-)
+# from a2a.client import ClientFactory
+# from timestep.utils.event_helpers import extract_event_data
+# from a2a.types import (
+#     MessageSendParams,
+#     SendMessageRequest,
+# )
 
 
 async def main() -> None:
@@ -64,7 +64,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)  # Get a logger instance
 
-    base_url = 'http://localhost:10000'
+    base_url = 'http://localhost:10001'
 
     # # Use ClientFactory (supports JSON-RPC by default)
     # client = await ClientFactory.connect(base_url)

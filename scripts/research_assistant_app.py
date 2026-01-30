@@ -11,7 +11,9 @@
 #   "opentelemetry-api",
 #   "opentelemetry-exporter-otlp-proto-http",
 #   "opentelemetry-exporter-otlp-proto-grpc",
-#   "opentelemetry-instrumentation-openai",
+#   "opentelemetry-instrumentation-openai-v2",
+#   "opentelemetry-instrumentation-fastapi",
+#   "opentelemetry-instrumentation-httpx",
 #   "ddgs",
 # ]
 # ///
@@ -140,6 +142,11 @@ def _map_user_location_to_region(user_location: Optional[Dict[str, Any]]) -> str
 
 def main():
     """Run the Research Assistant Agent."""
+    
+    # CRITICAL: Configure OpenTelemetry tracing FIRST, before any httpx clients are created
+    # This ensures httpx instrumentation is active before A2A/MCP clients make HTTP requests
+    from timestep.observability.tracing import configure_tracing
+    configure_tracing()
     
     # Get port from environment variable or use default
     port = int(os.getenv("RESEARCH_ASSISTANT_AGENT_PORT", "10000"))
@@ -303,10 +310,6 @@ search results."""
         lifespan=lifespan,
     )
     
-    # Configure OpenTelemetry tracing
-    from timestep.observability.tracing import configure_tracing
-    configure_tracing()
-    
     # Include all routes from the agent's FastAPI app
     for route in fastapi_app.routes:
         combined_app.routes.append(route)
@@ -328,6 +331,11 @@ search results."""
     # Mount Loop routes
     for route in loop.fastapi_app.routes:
         combined_app.routes.append(route)
+    
+    # Instrument FastAPI app AFTER all routes are added
+    # This ensures we only trace the final combined app, not individual route additions
+    from timestep.observability.tracing import configure_tracing
+    configure_tracing(app=combined_app)
     
     # All /v1/responses endpoint code has been moved to Loop
     # The endpoint is now registered via loop.fastapi_app above

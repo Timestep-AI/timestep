@@ -8,6 +8,13 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import Context
 import mcp.types as mcp_types
 
+# OpenTelemetry imports for trace context propagation
+try:
+    from opentelemetry import propagate
+except ImportError:
+    # If OpenTelemetry is not available, propagate will be None
+    propagate = None
+
 
 class Environment(FastMCP):
     """Environment is an MCP Server that provides system prompt and tools for an agent.
@@ -62,10 +69,22 @@ class Environment(FastMCP):
                     content=mcp_types.TextContent(type="text", text=message)
                 )
                 
+                # Inject trace context into MCP metadata for propagation across handoff boundary
+                metadata = {"agent_uri": agent_uri}
+                if propagate is not None:
+                    # Extract current trace context and inject into metadata dict
+                    trace_carrier = {}
+                    propagate.inject(trace_carrier)
+                    # Add trace context to metadata (W3C Trace Context format)
+                    if "traceparent" in trace_carrier:
+                        metadata["traceparent"] = trace_carrier["traceparent"]
+                    if "tracestate" in trace_carrier:
+                        metadata["tracestate"] = trace_carrier["tracestate"]
+                
                 result = await ctx.session.create_message(
                     messages=[sampling_message],
                     max_tokens=1000,
-                    metadata={"agent_uri": agent_uri}
+                    metadata=metadata
                 )
                 
                 # result.content is a TextContent object

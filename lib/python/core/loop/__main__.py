@@ -34,6 +34,14 @@ from timestep.utils.event_helpers import (
     extract_task_from_tuple,
 )
 
+# OpenTelemetry imports for trace context propagation in sampling callback
+try:
+    from opentelemetry import propagate, context
+except ImportError:
+    # If OpenTelemetry is not available, propagate and context will be None
+    propagate = None
+    context = None
+
 
 class Loop:
     """Loop orchestrates agent-environment interaction until completion (full rollout/episode).
@@ -67,6 +75,7 @@ class Loop:
         self.app = FastAPI()
         
         # Register the /v1/responses endpoint
+        # FastAPI instrumentation will automatically create spans for this endpoint
         @self.app.post("/v1/responses")
         async def handle_responses(request: Request):
             """Handle /v1/responses endpoint - automatically executes tool calls."""
@@ -359,29 +368,51 @@ class Loop:
     def _create_sampling_callback(self):
         """Create MCP sampling callback for handoff."""
         async def sampling_callback(
-            context: RequestContext["ClientSession", Any],
+            mcp_context: RequestContext["ClientSession", Any],
             params: mcp_types.CreateMessageRequestParams,
         ) -> mcp_types.CreateMessageResult | mcp_types.CreateMessageResultWithTools | mcp_types.ErrorData:
             """MCP sampling callback that handles sampling requests from the MCP server."""
             try:
                 # Extract agent_uri from metadata (passed by handoff tool)
-                agent_uri = (params.metadata or {}).get("agent_uri")
+                metadata = params.metadata or {}
+                agent_uri = metadata.get("agent_uri")
                 if not agent_uri:
                     return mcp_types.ErrorData(
                         code=mcp_types.INVALID_PARAMS,
                         message="agent_uri is required for sampling",
                     )
                 
-                # Extract message text from params.messages (SamplingMessage objects with TextContent)
-                message_text = params.messages[0].content.text if params.messages else "Please help with this task."
+                # Extract and attach trace context from MCP metadata if available
+                # This ensures trace continuity across the async handoff boundary
+                trace_context_token = None
+                if propagate is not None and context is not None:
+                    # Extract trace context from metadata (injected by handoff tool)
+                    trace_carrier = {}
+                    if "traceparent" in metadata:
+                        trace_carrier["traceparent"] = metadata["traceparent"]
+                    if "tracestate" in metadata:
+                        trace_carrier["tracestate"] = metadata["tracestate"]
+                    
+                    if trace_carrier:
+                        # Extract trace context from carrier and attach to current context
+                        extracted_context = propagate.extract(trace_carrier)
+                        trace_context_token = context.attach(extracted_context)
                 
-                result_text = await self._handle_agent_handoff(agent_uri=agent_uri, message=message_text)
-                
-                return mcp_types.CreateMessageResult(
-                    role="assistant",
-                    content=mcp_types.TextContent(type="text", text=result_text),
-                    model="a2a-agent"
-                )
+                try:
+                    # Extract message text from params.messages (SamplingMessage objects with TextContent)
+                    message_text = params.messages[0].content.text if params.messages else "Please help with this task."
+                    
+                    result_text = await self._handle_agent_handoff(agent_uri=agent_uri, message=message_text)
+                    
+                    return mcp_types.CreateMessageResult(
+                        role="assistant",
+                        content=mcp_types.TextContent(type="text", text=result_text),
+                        model="a2a-agent"
+                    )
+                finally:
+                    # Detach trace context token if we attached one
+                    if trace_context_token is not None and context is not None:
+                        context.detach(trace_context_token)
             except Exception as e:
                 return mcp_types.ErrorData(
                     code=mcp_types.INTERNAL_ERROR,
@@ -735,180 +766,275 @@ class Loop:
         return self._convert_a2a_response_to_responses(task, final_content, final_status)
     
     async def _handle_responses_streaming(self, body: Dict[str, Any]):
-        """Handle streaming /v1/responses request."""
-        request_start = time.time()
-        logger.info(f"[TIMING] Streaming request received")
+        """Handle streaming /v1/responses request.
         
-        # Responses API uses 'input' instead of 'messages'
-        input_data = body.get("input")
-        if input_data is None:
-            yield f"data: {json.dumps({'error': {'message': 'input is required'}})}\n\n"
-            return
+        Note: The root span is created in the endpoint handler wrapper function.
+        This function runs within that span's context, so all child operations
+        (OpenAI, MCP) will automatically be nested under the root span.
+        """
+        try:
+            request_start = time.time()
+            logger.info(f"[TIMING] Streaming request received")
+            
+            # Responses API uses 'input' instead of 'messages'
+            input_data = body.get("input")
+            if input_data is None:
+                yield f"data: {json.dumps({'error': {'message': 'input is required'}})}\n\n"
+                return
         
-        # Use ClientFactory (supports JSON-RPC by default)
-        client_start = time.time()
-        a2a_client = await ClientFactory.connect(self.agent_base_url)
-        client_time = time.time() - client_start
-        logger.info(f"[TIMING] A2A client connection: {client_time:.3f}s")
-        
-        # Convert Responses API input to A2A
-        # A2A will automatically generate context_id if not provided
-        message_start = time.time()
-        a2a_message = self._convert_responses_input_to_a2a(input_data)
-        message_sent_time = time.time() - message_start
-        logger.info(f"[TIMING] Message prepared and sent: {message_sent_time:.3f}s")
-        
-        task_id = None
-        context_id = None  # Will be extracted from A2A response
-        accumulated_content = ""
-        last_sent_content = ""  # Track what we've already sent
+            # Use ClientFactory (supports JSON-RPC by default)
+            client_start = time.time()
+            a2a_client = await ClientFactory.connect(self.agent_base_url)
+            client_time = time.time() - client_start
+            logger.info(f"[TIMING] A2A client connection: {client_time:.3f}s")
+            
+            # Convert Responses API input to A2A
+            # A2A will automatically generate context_id if not provided
+            message_start = time.time()
+            a2a_message = self._convert_responses_input_to_a2a(input_data)
+            message_sent_time = time.time() - message_start
+            logger.info(f"[TIMING] Message prepared and sent: {message_sent_time:.3f}s")
+            
+            task_id = None
+            context_id = None  # Will be extracted from A2A response
+            accumulated_content = ""
+            last_sent_content = ""  # Track what we've already sent
 
-        first_event_time = None
-        first_delta_time = None
-        loop_iteration = 0
+            first_event_time = None
+            first_delta_time = None
+            loop_iteration = 0
 
-        # Process conversation loop
-        while True:
-                # Send message - Client.send_message() already returns an async generator (streaming)
-                # There is no separate send_message_streaming method in the new Client API
-                
-                tool_calls_found = False
-                event_count = 0
-                loop_iteration += 1
-                
-                # Time the A2A client send_message call and first event arrival
-                send_message_start = time.time()
-                logger.info(f"[TIMING] Loop iteration #{loop_iteration}: Calling a2a_client.send_message() at {send_message_start - request_start:.3f}s")
-                
-                first_event_in_iteration = None
-                
-                async for event in a2a_client.send_message(a2a_message):
-                    event_received_time = time.time()
-                    event_count += 1
+            # Process conversation loop
+            while True:
+                    # Send message - Client.send_message() already returns an async generator (streaming)
+                    # There is no separate send_message_streaming method in the new Client API
                     
-                    if first_event_in_iteration is None:
-                        first_event_in_iteration = event_received_time - send_message_start
-                        logger.info(f"[TIMING] Loop iteration #{loop_iteration}: Time from send_message() call to first event: {first_event_in_iteration:.3f}s")
+                    tool_calls_found = False
+                    event_count = 0
+                    loop_iteration += 1
                     
-                    if first_event_time is None:
-                        first_event_time = event_received_time - request_start
-                        logger.info(f"[TIMING] Time to first A2A event received (overall): {first_event_time:.3f}s (from request start)")
+                    # Time the A2A client send_message call and first event arrival
+                    send_message_start = time.time()
+                    logger.info(f"[TIMING] Loop iteration #{loop_iteration}: Calling a2a_client.send_message() at {send_message_start - request_start:.3f}s")
                     
-                    # Extract event data (handles both tuple and direct event objects)
-                    extraction_start = time.time()
-                    event_data = extract_event_data(event)
-                    extraction_time = time.time() - extraction_start
+                    first_event_in_iteration = None
                     
-                    # Handle both dict and object access for TaskStatusUpdateEvent
-                    state_check_start = time.time()
-                    if isinstance(event_data, dict):
-                        event_kind = event_data.get('kind')
-                        event_status = event_data.get('status', {})
-                        if isinstance(event_status, dict):
-                            state_value = event_status.get('state', {}).get('value') if isinstance(event_status.get('state'), dict) else event_status.get('state')
-                        else:
-                            state_value = getattr(event_status, 'state', {}).get('value') if hasattr(event_status, 'state') else None
-                    else:
-                        event_kind = getattr(event_data, 'kind', None)
-                        event_status = getattr(event_data, 'status', None)
-                        if event_status:
-                            state_obj = getattr(event_status, 'state', None)
-                            state_value = getattr(state_obj, 'value', None) if state_obj else None
-                        else:
-                            state_value = None
-                    state_check_time = time.time() - state_check_start
-                    
-                    logger.info(f"[TIMING] Event #{event_count} received: extraction={extraction_time:.3f}s, state_check={state_check_time:.3f}s, state={state_value}, kind={event_kind}")
-                    
-                    # Check if this is a status-update (TaskStatusUpdateEvent)
-                    is_status_update = event_kind == 'status-update' or (isinstance(event_data, dict) and event_data.get('kind') == 'status-update')
-                    
-                    if is_status_update:
+                    async for event in a2a_client.send_message(a2a_message):
+                        event_received_time = time.time()
+                        event_count += 1
+                        
+                        if first_event_in_iteration is None:
+                            first_event_in_iteration = event_received_time - send_message_start
+                            logger.info(f"[TIMING] Loop iteration #{loop_iteration}: Time from send_message() call to first event: {first_event_in_iteration:.3f}s")
+                        
+                        if first_event_time is None:
+                            first_event_time = event_received_time - request_start
+                            logger.info(f"[TIMING] Time to first A2A event received (overall): {first_event_time:.3f}s (from request start)")
+                        
                         # Extract event data (handles both tuple and direct event objects)
-                        event_data_for_extraction = extract_event_data(event)
+                        extraction_start = time.time()
+                        event_data = extract_event_data(event)
+                        extraction_time = time.time() - extraction_start
                         
-                        # Extract the Task object from the tuple (first element) if available
-                        task_obj = extract_task_from_tuple(event)
-                        
-                        # Extract task_id from TaskStatusUpdateEvent (event_data)
-                        # TaskStatusUpdateEvent uses 'task_id' (snake_case)
-                        if hasattr(event_data_for_extraction, 'task_id'):
-                            extracted_task_id = event_data_for_extraction.task_id
-                        elif isinstance(event_data_for_extraction, dict):
-                            extracted_task_id = event_data_for_extraction.get('task_id')
-                        else:
-                            extracted_task_id = None
-                        
-                        if extracted_task_id:
-                            task_id = extracted_task_id
-                        
-                        # Extract context_id from TaskStatusUpdateEvent
-                        if hasattr(event_data_for_extraction, 'context_id'):
-                            extracted_context_id = event_data_for_extraction.context_id
-                        elif isinstance(event_data_for_extraction, dict):
-                            extracted_context_id = event_data_for_extraction.get('context_id')
-                        else:
-                            extracted_context_id = None
-                        
-                        if extracted_context_id:
-                            context_id = extracted_context_id
-                        
-                        # Extract is_final from TaskStatusUpdateEvent
-                        if hasattr(event_data_for_extraction, 'final'):
-                            is_final = event_data_for_extraction.final
-                        elif isinstance(event_data_for_extraction, dict):
-                            is_final = event_data_for_extraction.get('final', False)
-                        else:
-                            is_final = False
-                        
-                        # Use the Task object from tuple if available (has full history), otherwise use event
-                        if task_obj:
-                            task = task_obj
-                        else:
-                            task = event
-                        
-                        # Stream content updates
-                        if state_value == "working":
-                            # Get message from status
+                        # Handle both dict and object access for TaskStatusUpdateEvent
+                        state_check_start = time.time()
+                        if isinstance(event_data, dict):
+                            event_kind = event_data.get('kind')
+                            event_status = event_data.get('status', {})
                             if isinstance(event_status, dict):
-                                status_message = event_status.get('message')
+                                state_value = event_status.get('state', {}).get('value') if isinstance(event_status.get('state'), dict) else event_status.get('state')
                             else:
-                                status_message = getattr(event_status, 'message', None)
+                                state_value = getattr(event_status, 'state', {}).get('value') if hasattr(event_status, 'state') else None
+                        else:
+                            event_kind = getattr(event_data, 'kind', None)
+                            event_status = getattr(event_data, 'status', None)
+                            if event_status:
+                                state_obj = getattr(event_status, 'state', None)
+                                state_value = getattr(state_obj, 'value', None) if state_obj else None
+                            else:
+                                state_value = None
+                        state_check_time = time.time() - state_check_start
+                        
+                        logger.info(f"[TIMING] Event #{event_count} received: extraction={extraction_time:.3f}s, state_check={state_check_time:.3f}s, state={state_value}, kind={event_kind}")
+                        
+                        # Check if this is a status-update (TaskStatusUpdateEvent)
+                        is_status_update = event_kind == 'status-update' or (isinstance(event_data, dict) and event_data.get('kind') == 'status-update')
+                        
+                        if is_status_update:
+                            # Extract event data (handles both tuple and direct event objects)
+                            event_data_for_extraction = extract_event_data(event)
                             
-                            if status_message:
-                                # Handle both dict and object access
-                                if isinstance(status_message, dict):
-                                    parts = status_message.get('parts', [])
+                            # Extract the Task object from the tuple (first element) if available
+                            task_obj = extract_task_from_tuple(event)
+                            
+                            # Extract task_id from TaskStatusUpdateEvent (event_data)
+                            # TaskStatusUpdateEvent uses 'task_id' (snake_case)
+                            if hasattr(event_data_for_extraction, 'task_id'):
+                                extracted_task_id = event_data_for_extraction.task_id
+                            elif isinstance(event_data_for_extraction, dict):
+                                extracted_task_id = event_data_for_extraction.get('task_id')
+                            else:
+                                extracted_task_id = None
+                            
+                            if extracted_task_id:
+                                task_id = extracted_task_id
+                            
+                            # Extract context_id from TaskStatusUpdateEvent
+                            if hasattr(event_data_for_extraction, 'context_id'):
+                                extracted_context_id = event_data_for_extraction.context_id
+                            elif isinstance(event_data_for_extraction, dict):
+                                extracted_context_id = event_data_for_extraction.get('context_id')
+                            else:
+                                extracted_context_id = None
+                            
+                            if extracted_context_id:
+                                context_id = extracted_context_id
+                            
+                            # Extract is_final from TaskStatusUpdateEvent
+                            if hasattr(event_data_for_extraction, 'final'):
+                                is_final = event_data_for_extraction.final
+                            elif isinstance(event_data_for_extraction, dict):
+                                is_final = event_data_for_extraction.get('final', False)
+                            else:
+                                is_final = False
+                            
+                            # Use the Task object from tuple if available (has full history), otherwise use event
+                            if task_obj:
+                                task = task_obj
+                            else:
+                                task = event
+                            
+                            # Stream content updates
+                            if state_value == "working":
+                                # Get message from status
+                                if isinstance(event_status, dict):
+                                    status_message = event_status.get('message')
                                 else:
-                                    parts = getattr(status_message, 'parts', [])
+                                    status_message = getattr(event_status, 'message', None)
                                 
-                                current_text = ""
-                                for part in parts:
-                                    part_data = part.root if hasattr(part, 'root') else part
-                                    if isinstance(part_data, dict):
-                                        if part_data.get('kind') == 'text' and part_data.get('text'):
-                                            current_text += part_data.get('text', '')
-                                    elif hasattr(part_data, 'kind') and part_data.kind == 'text':
-                                        if hasattr(part_data, 'text'):
-                                            current_text += part_data.text
-                                
-                                # Only send the new content (delta)
-                                if current_text and current_text != last_sent_content:
-                                    delta_prep_start = time.time()
-                                    # Find the new part
-                                    if current_text.startswith(last_sent_content):
-                                        delta_content = current_text[len(last_sent_content):]
+                                if status_message:
+                                    # Handle both dict and object access
+                                    if isinstance(status_message, dict):
+                                        parts = status_message.get('parts', [])
                                     else:
-                                        # If text doesn't start with what we sent, send the whole thing
-                                        delta_content = current_text
+                                        parts = getattr(status_message, 'parts', [])
                                     
-                                    if delta_content:
-                                        delta_yield_start = time.time()
-                                        if first_delta_time is None:
-                                            first_delta_time = delta_yield_start - request_start
-                                            logger.info(f"[TIMING] Time to first delta sent: {first_delta_time:.3f}s")
-                                        accumulated_content = current_text
-                                        last_sent_content = current_text
+                                    current_text = ""
+                                    for part in parts:
+                                        part_data = part.root if hasattr(part, 'root') else part
+                                        if isinstance(part_data, dict):
+                                            if part_data.get('kind') == 'text' and part_data.get('text'):
+                                                current_text += part_data.get('text', '')
+                                        elif hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                            if hasattr(part_data, 'text'):
+                                                current_text += part_data.text
+                                    
+                                    # Only send the new content (delta)
+                                    if current_text and current_text != last_sent_content:
+                                        delta_prep_start = time.time()
+                                        # Find the new part
+                                        if current_text.startswith(last_sent_content):
+                                            delta_content = current_text[len(last_sent_content):]
+                                        else:
+                                            # If text doesn't start with what we sent, send the whole thing
+                                            delta_content = current_text
+                                        
+                                        if delta_content:
+                                            delta_yield_start = time.time()
+                                            if first_delta_time is None:
+                                                first_delta_time = delta_yield_start - request_start
+                                                logger.info(f"[TIMING] Time to first delta sent: {first_delta_time:.3f}s")
+                                            accumulated_content = current_text
+                                            last_sent_content = current_text
+                                            chunk_data = {
+                                                'id': f'resp_{uuid4().hex}',
+                                                'object': 'response.delta',
+                                                'created_at': int(time.time()),
+                                                'model': self.agent.model,
+                                                'output': [{
+                                                    'type': 'message',
+                                                    'delta': {
+                                                        'content': [{
+                                                            'type': 'output_text',
+                                                            'text': delta_content
+                                                        }]
+                                                    }
+                                                }]
+                                            }
+                                            delta_prep_time = delta_yield_start - delta_prep_start
+                                            yield f"data: {json.dumps(chunk_data)}\n\n"
+                                            delta_yield_time = time.time() - delta_yield_start
+                                            logger.info(f"[TIMING] Delta sent for event #{event_count}: prep={delta_prep_time:.3f}s, yield={delta_yield_time:.3f}s, content_length={len(delta_content)}")
+                            
+                            # Check if completed
+                            if state_value == "completed":
+                                # Extract final content from completed message
+                                if isinstance(event_status, dict):
+                                    status_message = event_status.get('message')
+                                else:
+                                    status_message = getattr(event_status, 'message', None)
+                                
+                                final_content = accumulated_content
+                                if status_message:
+                                    # Extract text from completed message
+                                    if isinstance(status_message, dict):
+                                        parts = status_message.get('parts', [])
+                                    else:
+                                        parts = getattr(status_message, 'parts', [])
+                                    
+                                    for part in parts:
+                                        part_data = part.root if hasattr(part, 'root') else part
+                                        if hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                            if hasattr(part_data, 'text'):
+                                                final_content = part_data.text  # Use final content
+                                
+                                # Get task history from the Task object (from tuple)
+                                task_history = []
+                                if task:
+                                    if isinstance(task, dict):
+                                        task_history = task.get('history', [])
+                                    elif hasattr(task, 'history'):
+                                        task_history = getattr(task, 'history', [])
+                                
+                                if task_history:
+                                    # Get the last agent message from history
+                                    for msg in reversed(task_history):
+                                        if isinstance(msg, dict):
+                                            msg_role = msg.get('role')
+                                            msg_parts = msg.get('parts', [])
+                                        else:
+                                            msg_role = getattr(msg, 'role', None)
+                                            msg_parts = getattr(msg, 'parts', [])
+                                        
+                                        if msg_role == 'agent' or str(msg_role) == 'agent':
+                                            agent_text = ""
+                                            for part in msg_parts:
+                                                part_data = part.root if hasattr(part, 'root') else part
+                                                if isinstance(part_data, dict):
+                                                    if part_data.get('kind') == 'text' and part_data.get('text'):
+                                                        agent_text += part_data.get('text', '')
+                                                elif hasattr(part_data, 'kind') and part_data.kind == 'text':
+                                                    if hasattr(part_data, 'text'):
+                                                        agent_text += part_data.text
+                                            
+                                            if agent_text:
+                                                # Use the longer text (final version)
+                                                if len(agent_text) > len(final_content):
+                                                    final_content = agent_text
+                                            break  # Only use the last agent message
+                                
+                                # Send any remaining content that hasn't been sent yet
+                                if final_content:
+                                    if last_sent_content:
+                                        if final_content.startswith(last_sent_content):
+                                            remaining_content = final_content[len(last_sent_content):]
+                                        else:
+                                            remaining_content = final_content
+                                    else:
+                                        # No content sent yet, send the full thing
+                                        remaining_content = final_content
+                                    
+                                    if remaining_content:
                                         chunk_data = {
                                             'id': f'resp_{uuid4().hex}',
                                             'object': 'response.delta',
@@ -919,85 +1045,18 @@ class Loop:
                                                 'delta': {
                                                     'content': [{
                                                         'type': 'output_text',
-                                                        'text': delta_content
+                                                        'text': remaining_content
                                                     }]
                                                 }
                                             }]
                                         }
-                                        delta_prep_time = delta_yield_start - delta_prep_start
                                         yield f"data: {json.dumps(chunk_data)}\n\n"
-                                        delta_yield_time = time.time() - delta_yield_start
-                                        logger.info(f"[TIMING] Delta sent for event #{event_count}: prep={delta_prep_time:.3f}s, yield={delta_yield_time:.3f}s, content_length={len(delta_content)}")
-                        
-                        # Check if completed
-                        if state_value == "completed":
-                            # Extract final content from completed message
-                            if isinstance(event_status, dict):
-                                status_message = event_status.get('message')
-                            else:
-                                status_message = getattr(event_status, 'message', None)
-                            
-                            final_content = accumulated_content
-                            if status_message:
-                                # Extract text from completed message
-                                if isinstance(status_message, dict):
-                                    parts = status_message.get('parts', [])
-                                else:
-                                    parts = getattr(status_message, 'parts', [])
+                                        last_sent_content = final_content
                                 
-                                for part in parts:
-                                    part_data = part.root if hasattr(part, 'root') else part
-                                    if hasattr(part_data, 'kind') and part_data.kind == 'text':
-                                        if hasattr(part_data, 'text'):
-                                            final_content = part_data.text  # Use final content
-                            
-                            # Get task history from the Task object (from tuple)
-                            task_history = []
-                            if task:
-                                if isinstance(task, dict):
-                                    task_history = task.get('history', [])
-                                elif hasattr(task, 'history'):
-                                    task_history = getattr(task, 'history', [])
-                            
-                            if task_history:
-                                # Get the last agent message from history
-                                for msg in reversed(task_history):
-                                    if isinstance(msg, dict):
-                                        msg_role = msg.get('role')
-                                        msg_parts = msg.get('parts', [])
-                                    else:
-                                        msg_role = getattr(msg, 'role', None)
-                                        msg_parts = getattr(msg, 'parts', [])
-                                    
-                                    if msg_role == 'agent' or str(msg_role) == 'agent':
-                                        agent_text = ""
-                                        for part in msg_parts:
-                                            part_data = part.root if hasattr(part, 'root') else part
-                                            if isinstance(part_data, dict):
-                                                if part_data.get('kind') == 'text' and part_data.get('text'):
-                                                    agent_text += part_data.get('text', '')
-                                            elif hasattr(part_data, 'kind') and part_data.kind == 'text':
-                                                if hasattr(part_data, 'text'):
-                                                    agent_text += part_data.text
-                                        
-                                        if agent_text:
-                                            # Use the longer text (final version)
-                                            if len(agent_text) > len(final_content):
-                                                final_content = agent_text
-                                        break  # Only use the last agent message
-                            
-                            # Send any remaining content that hasn't been sent yet
-                            if final_content:
-                                if last_sent_content:
-                                    if final_content.startswith(last_sent_content):
-                                        remaining_content = final_content[len(last_sent_content):]
-                                    else:
-                                        remaining_content = final_content
-                                else:
-                                    # No content sent yet, send the full thing
-                                    remaining_content = final_content
-                                
-                                if remaining_content:
+                                # Only return if this is the final message (is_final flag is True)
+                                # Otherwise continue streaming to get more content
+                                if is_final:
+                                    # Send completion marker
                                     chunk_data = {
                                         'id': f'resp_{uuid4().hex}',
                                         'object': 'response.delta',
@@ -1005,97 +1064,78 @@ class Loop:
                                         'model': self.agent.model,
                                         'output': [{
                                             'type': 'message',
-                                            'delta': {
-                                                'content': [{
-                                                    'type': 'output_text',
-                                                    'text': remaining_content
-                                                }]
-                                            }
+                                            'delta': {}
                                         }]
                                     }
                                     yield f"data: {json.dumps(chunk_data)}\n\n"
-                                    last_sent_content = final_content
+                                    yield "data: [DONE]\n\n"
+                                    return
+                                # If not final, continue streaming (might be intermediate completed state)
                             
-                            # Only return if this is the final message (is_final flag is True)
-                            # Otherwise continue streaming to get more content
-                            if is_final:
-                                # Send completion marker
-                                chunk_data = {
-                                    'id': f'resp_{uuid4().hex}',
-                                    'object': 'response.delta',
-                                    'created_at': int(time.time()),
-                                    'model': self.agent.model,
-                                    'output': [{
-                                        'type': 'message',
-                                        'delta': {}
-                                    }]
-                                }
-                                yield f"data: {json.dumps(chunk_data)}\n\n"
-                                yield "data: [DONE]\n\n"
-                                return
-                            # If not final, continue streaming (might be intermediate completed state)
-                        
-                        # Check if tool calls needed
-                        if state_value == "input-required":
-                            tool_calls = self._extract_tool_calls(task)
-                            if tool_calls:
-                                # Check task history
-                                task_history = []
-                                if isinstance(task, dict):
-                                    task_history = task.get('history', [])
-                                elif hasattr(task, 'history'):
-                                    task_history = getattr(task, 'history', [])
-                                if not task_history:
-                                    logger.warning(f"task.history is None or empty when tool calls received (streaming)")
-                                
-                                tool_calls_found = True
-                                # Execute tools using the single environment URI
-                                tool_environment_uri = self.environment_uri
-                                
-                                tool_results = []
-                                for tc in tool_calls:
-                                    tool_name = tc.get("name", "")
-                                    tool_args = tc.get("arguments", {})
-                                    call_id = tc.get("call_id", "")
+                            # Check if tool calls needed
+                            if state_value == "input-required":
+                                tool_calls = self._extract_tool_calls(task)
+                                if tool_calls:
+                                    # Check task history
+                                    task_history = []
+                                    if isinstance(task, dict):
+                                        task_history = task.get('history', [])
+                                    elif hasattr(task, 'history'):
+                                        task_history = getattr(task, 'history', [])
+                                    if not task_history:
+                                        logger.warning(f"task.history is None or empty when tool calls received (streaming)")
                                     
-                                    result = await self._execute_tool_via_mcp(tool_name, tool_args, tool_environment_uri)
-                                    # Extract text from result dict before passing to build_tool_result_message
-                                    output_text = self._extract_tool_output(result)
-                                    tool_results.append({
-                                        "call_id": call_id,
-                                        "name": tool_name,
-                                        "output": output_text,
-                                    })
-                                
-                                # Build tool result message and continue outer loop
-                                a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
-                                # Reset tracking for new streaming request
-                                accumulated_content = ""
-                                last_sent_content = ""
-                                break  # Break from inner loop, continue outer loop
-                            else:
-                                # No tool calls - finish
-                                chunk_data = {
-                                    'id': f'resp_{uuid4().hex}',
-                                    'object': 'response.delta',
-                                    'created_at': int(time.time()),
-                                    'model': self.agent.model,
-                                    'output': [{
-                                        'type': 'message',
-                                        'delta': {}
-                                    }]
-                                }
-                                yield f"data: {json.dumps(chunk_data)}\n\n"
-                                yield "data: [DONE]\n\n"
-                                return
-                
-                # If we broke from inner loop due to tool calls, continue outer loop
-                if tool_calls_found:
-                    continue
-                else:
-                    # No more chunks and no tool calls - break
-                    total_time = time.time() - request_start
-                    if first_delta_time is not None:
-                        logger.info(f"[TIMING] Total time-to-first-token: {first_delta_time:.3f}s")
-                    logger.info(f"[TIMING] Total streaming request time: {total_time:.3f}s")
-                    break
+                                    tool_calls_found = True
+                                    # Execute tools using the single environment URI
+                                    tool_environment_uri = self.environment_uri
+                                    
+                                    tool_results = []
+                                    for tc in tool_calls:
+                                        tool_name = tc.get("name", "")
+                                        tool_args = tc.get("arguments", {})
+                                        call_id = tc.get("call_id", "")
+                                        
+                                        result = await self._execute_tool_via_mcp(tool_name, tool_args, tool_environment_uri)
+                                        # Extract text from result dict before passing to build_tool_result_message
+                                        output_text = self._extract_tool_output(result)
+                                        tool_results.append({
+                                            "call_id": call_id,
+                                            "name": tool_name,
+                                            "output": output_text,
+                                        })
+                                    
+                                    # Build tool result message and continue outer loop
+                                    a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
+                                    # Reset tracking for new streaming request
+                                    accumulated_content = ""
+                                    last_sent_content = ""
+                                    break  # Break from inner loop, continue outer loop
+                                else:
+                                    # No tool calls - finish
+                                    chunk_data = {
+                                        'id': f'resp_{uuid4().hex}',
+                                        'object': 'response.delta',
+                                        'created_at': int(time.time()),
+                                        'model': self.agent.model,
+                                        'output': [{
+                                            'type': 'message',
+                                            'delta': {}
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                                    yield "data: [DONE]\n\n"
+                                    return
+                    
+                    # If we broke from inner loop due to tool calls, continue outer loop
+                    if tool_calls_found:
+                        continue
+                    else:
+                        # No more chunks and no tool calls - break
+                        total_time = time.time() - request_start
+                        if first_delta_time is not None:
+                            logger.info(f"[TIMING] Total time-to-first-token: {first_delta_time:.3f}s")
+                        logger.info(f"[TIMING] Total streaming request time: {total_time:.3f}s")
+                        break
+        finally:
+            # Span is managed by the wrapper function in the endpoint handler
+            pass
