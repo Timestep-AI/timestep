@@ -1,5 +1,7 @@
 """Loop class - Orchestrates agent-environment interaction loop until completion."""
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -11,6 +13,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from a2a.client import ClientFactory
+from a2a.client.client import ClientConfig
 from a2a.types import (
     Message,
     Part,
@@ -41,6 +44,15 @@ except ImportError:
     # If OpenTelemetry is not available, propagate and context will be None
     propagate = None
     context = None
+
+# Optional httpx for creating an instrumented client in the sampling callback
+# so A2A handoff requests carry the current trace context (Traceparent header)
+httpx: Any = None
+try:
+    import httpx as _httpx_runtime
+    httpx = _httpx_runtime
+except ImportError:
+    pass
 
 
 class Loop:
@@ -254,10 +266,22 @@ class Loop:
         
         return message_text.strip()
     
-    async def _handle_agent_handoff(self, agent_uri: str, message: str) -> str:
-        """Handle agent handoff by calling the A2A agent at agent_uri."""
-        # Use ClientFactory (supports JSON-RPC by default)
-        a2a_client = await ClientFactory.connect(agent_uri)
+    async def _handle_agent_handoff(
+        self,
+        agent_uri: str,
+        message: str,
+        *,
+        httpx_client: Any = None,
+    ) -> str:
+        """Handle agent handoff by calling the A2A agent at agent_uri.
+
+        When httpx_client is provided (e.g. from the sampling callback), the A2A
+        client uses it so outgoing HTTP requests carry the current trace context
+        (Traceparent header), ensuring distributed tracing across the handoff.
+        """
+        # Use ClientFactory with optional instrumented httpx client for trace propagation
+        client_config = ClientConfig(httpx_client=httpx_client) if httpx_client else None
+        a2a_client = await ClientFactory.connect(agent_uri, client_config=client_config)
         
         try:
             message_obj = create_text_message_object(role="user", content=message)
@@ -402,7 +426,20 @@ class Loop:
                     # Extract message text from params.messages (SamplingMessage objects with TextContent)
                     message_text = params.messages[0].content.text if params.messages else "Please help with this task."
                     
-                    result_text = await self._handle_agent_handoff(agent_uri=agent_uri, message=message_text)
+                    # Use an httpx client created in the current context so A2A requests carry
+                    # Traceparent header (distributed tracing across the handoff boundary)
+                    if httpx is not None:
+                        async with httpx.AsyncClient() as http_client:
+                            result_text = await self._handle_agent_handoff(
+                                agent_uri=agent_uri,
+                                message=message_text,
+                                httpx_client=http_client,
+                            )
+                    else:
+                        result_text = await self._handle_agent_handoff(
+                            agent_uri=agent_uri,
+                            message=message_text,
+                        )
                     
                     return mcp_types.CreateMessageResult(
                         role="assistant",

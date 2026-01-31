@@ -14,7 +14,6 @@
 #   "opentelemetry-instrumentation-openai-v2",
 #   "opentelemetry-instrumentation-fastapi",
 #   "opentelemetry-instrumentation-httpx",
-#   "ddgs",
 # ]
 # ///
 
@@ -31,8 +30,8 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 import uvicorn
+import httpx
 from fastapi import FastAPI
-from ddgs import DDGS
 
 # Fix package import: lib/python/ contains the timestep package
 # but Python needs to import it as 'timestep', not 'python'
@@ -117,29 +116,6 @@ def _domain_matches(domain: str, allowed_domains: List[str]) -> bool:
     return False
 
 
-def _map_user_location_to_region(user_location: Optional[Dict[str, Any]]) -> str:
-    """Map user_location dict to ddgs region string."""
-    if not user_location:
-        return "us-en"
-    
-    country = user_location.get("country", "").upper()
-    # Map ISO country codes to ddgs regions
-    region_map = {
-        "US": "us-en",
-        "GB": "uk-en",
-        "CA": "ca-en",
-        "AU": "au-en",
-        "DE": "de-de",
-        "FR": "fr-fr",
-        "ES": "es-es",
-        "IT": "it-it",
-        "RU": "ru-ru",
-        "JP": "jp-jp",
-        "CN": "cn-zh",
-    }
-    return region_map.get(country, "us-en")
-
-
 def main():
     """Run the Research Assistant Agent."""
     
@@ -176,77 +152,75 @@ def main():
         user_location: Optional[Dict[str, Any]] = None,
         external_web_access: bool = True,
     ) -> Dict[str, Any]:
-        """Performs a web search using DDGS metasearch.
+        """Performs a web search using Firecrawl.
         
         Matches OpenAI's web_search tool interface:
         - Supports domain filtering via allowed_domains
-        - Supports user location for geographic refinement
         - Returns results with URLs, titles, and content for citations
         
         Args:
             query: Search query string
             max_results: Maximum number of results to return (default: 10)
-            allowed_domains: Optional list of domains to filter results (e.g., ["pubmed.ncbi.nlm.nih.gov"])
-            user_location: Optional dict with country, city, region, timezone for geographic refinement
-            external_web_access: Whether to use live search (default: True, ddgs always uses live)
+            allowed_domains: Optional list of domains to filter results
+            user_location: Optional (unused; for interface compatibility)
+            external_web_access: Whether to use live search (default: True)
         
         Returns:
-            Dict with:
-            - action: "search" (matching OpenAI's web_search_call.action)
-            - queries: List of search queries used
-            - domains: List of domains searched (if domain filtering applied)
-            - results: List of dicts with 'title', 'url', 'content'
-            - sources: List of all URLs consulted
+            Dict with action, queries, results (title, url, content), sources, and optionally domains.
         """
+        api_key = os.getenv("FIRECRAWL_API_KEY")
+        if not api_key:
+            return {
+                "action": "search",
+                "queries": [query],
+                "error": "FIRECRAWL_API_KEY environment variable is not set",
+                "results": [],
+                "sources": [],
+            }
         try:
-            # Map user_location to ddgs region
-            region = _map_user_location_to_region(user_location)
-            
-            # Perform search using DDGS
-            ddgs = DDGS()
-            search_results = ddgs.text(
-                query=query,
-                region=region,
-                max_results=max_results,
-                backend="auto"
-            )
-            
-            # Convert ddgs results to our format
+            payload: Dict[str, Any] = {
+                "query": query,
+                "limit": max_results,
+                "sources": ["web"],
+            }
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    "https://api.firecrawl.dev/v2/search",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                resp.raise_for_status()
+                raw = resp.json()
+            web = raw.get("data", {}).get("web") if isinstance(raw.get("data"), dict) else raw.get("web")
+            if not web:
+                web = raw if isinstance(raw, list) else []
+
             results = []
             sources = []
-            
-            for result in search_results:
-                title = result.get("title", "")
-                href = result.get("href", "")
-                body = result.get("body", "")
-                
-                # Apply domain filtering if specified
+            for item in web:
+                url = item.get("url", "")
+                title = item.get("title", "")
+                content = item.get("description", "") or item.get("markdown", "") or ""
                 if allowed_domains:
-                    domain = _extract_domain(href)
+                    domain = _extract_domain(url)
                     if not _domain_matches(domain, allowed_domains):
                         continue
-                
-                results.append({
-                    "title": title,
-                    "url": href,
-                    "content": body,
-                })
-                sources.append(href)
-            
-            # Build response matching OpenAI format
+                results.append({"title": title, "url": url, "content": content})
+                sources.append(url)
+
             response = {
                 "action": "search",
                 "queries": [query],
                 "results": results,
                 "sources": sources,
             }
-            
-            # Add domains if domain filtering was applied
             if allowed_domains:
                 response["domains"] = allowed_domains
-            
             return response
-            
+
         except Exception as e:
             return {
                 "action": "search",

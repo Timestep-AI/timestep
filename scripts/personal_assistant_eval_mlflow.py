@@ -9,7 +9,13 @@
 # ///
 
 #!/usr/bin/env python3
-"""Run GAIA benchmark evaluation against personal assistant agent using MLflow."""
+"""Run GAIA benchmark evaluation against personal assistant agent using MLflow.
+
+All agents should export to the same OTLP/MLflow endpoint (distributed tracing).
+With trace context propagation, one request to /v1/responses = one trace (3 tasks = 3 traces).
+The OTel log file (from the personal assistant) is used to select which traces to evaluate
+and to supply request/response for the Correctness scorer.
+"""
 
 import asyncio
 import json
@@ -41,6 +47,92 @@ sys.modules['timestep'] = timestep_module
 # Import MLflow
 import mlflow
 from mlflow.genai.scorers import Correctness
+
+
+def _otel_trace_id_to_mlflow(trace_id: str) -> str:
+    """Convert OTel trace_id (0x...) to MLflow format (tr-...)."""
+    if not trace_id:
+        return ""
+    hex_part = trace_id.replace("0x", "").strip()
+    return f"tr-{hex_part}" if hex_part else ""
+
+
+def _parse_otel_log_file(file_path: str) -> Dict[str, Dict[str, Any]]:
+    """Parse OTel log JSONL file and build trace_id (MLflow format) -> {input, output, inputs_list}.
+
+    - input: content from the first gen_ai.user.message from service personal-assistant (original user question).
+    - inputs_list: all gen_ai.user.message contents from personal-assistant for this trace (in file order).
+      Used to match trace to task when the first message is a handoff sub-query (e.g. research assistant's query).
+    - output: message.content from the last gen_ai.choice with finish_reason=stop from
+      service.name=personal-assistant (PA's final response). If no PA stop is found,
+      uses the last gen_ai.choice with finish_reason=stop from any service.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    if not file_path or not Path(file_path).exists():
+        return result
+    try:
+        by_trace: Dict[str, List[Dict]] = {}
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                trace_id_raw = record.get("trace_id") or ""
+                trace_id_mlflow = _otel_trace_id_to_mlflow(trace_id_raw)
+                if not trace_id_mlflow:
+                    continue
+                event_name = record.get("event_name") or ""
+                body = record.get("body")
+                resource = record.get("resource") or {}
+                attrs = resource.get("attributes") or {}
+                service = (attrs.get("service.name") or "").strip('"')
+                if trace_id_mlflow not in by_trace:
+                    by_trace[trace_id_mlflow] = []
+                by_trace[trace_id_mlflow].append({
+                    "event_name": event_name,
+                    "body": body or {},
+                    "service": service,
+                })
+        for tid, events in by_trace.items():
+            input_str = None
+            inputs_list: List[str] = []
+            output_str = None
+            output_str_pa = None
+            for ev in events:
+                name = ev["event_name"]
+                body = ev["body"]
+                service = ev.get("service") or ""
+                if name == "gen_ai.user.message" and service == "personal-assistant":
+                    content = None
+                    if isinstance(body, dict) and body.get("content"):
+                        content = body["content"]
+                    elif isinstance(body, str):
+                        content = body
+                    if content:
+                        inputs_list.append(content)
+                        if input_str is None:
+                            input_str = content
+                if name == "gen_ai.choice" and isinstance(body, dict) and body.get("finish_reason") == "stop":
+                    msg = body.get("message") or {}
+                    content = msg.get("content") if isinstance(msg, dict) else None
+                    if content:
+                        output_str = content
+                        if service == "personal-assistant":
+                            output_str_pa = content
+            out = output_str_pa if output_str_pa is not None else output_str
+            if input_str is not None or out or inputs_list:
+                result[tid] = {
+                    "input": input_str or "",
+                    "output": out or "",
+                    "inputs_list": inputs_list,
+                }
+    except Exception as e:
+        logger.warning("Could not parse OTel log file %s: %s", file_path, e)
+    return result
 
 
 def load_tasks() -> List[Dict]:
@@ -142,12 +234,13 @@ async def main():
     experiment_name = default_experiment.name
     
     print(f"MLflow experiment: {experiment_name} (ID: {experiment_id})")
-    print(f"\nIMPORTANT: Make sure your agent app is running with:")
-    print(f"  OTEL_EXPORTER_OTLP_ENDPOINT={mlflow_tracking_uri}")
-    print(f"  OTEL_EXPORTER_OTLP_HEADERS=x-mlflow-experiment-id={experiment_id}")
-    print(f"\nNote: Using default experiment (ID: 0) to match agent configuration.")
-    print(f"\nThe agent app handles all tracing automatically - this script just calls it.")
-    print(f"Note: MLflow's OTLP exporter automatically appends /v1/traces to the endpoint URL.")
+    print(f"\nIMPORTANT: Use distributed tracing — all agents should export to the same OTLP/MLflow endpoint.")
+    print(f"  Start personal assistant, weather assistant, and research assistant with the same env:")
+    print(f"    OTEL_EXPORTER_OTLP_ENDPOINT={mlflow_tracking_uri}")
+    print(f"    OTEL_EXPORTER_OTLP_HEADERS=x-mlflow-experiment-id={experiment_id}")
+    print(f"  Personal assistant only (for eval): OTEL_LOGS_EXPORTER=file OTEL_LOGS_FILE_PATH=data/otel_logs.jsonl")
+    print(f"  With trace context propagation, one request = one trace (spans from PA, handoffs, tools); 3 tasks = 3 traces.")
+    print(f"\nNote: MLflow's OTLP exporter automatically appends /v1/traces to the endpoint URL.")
     
     # Create data directory if it doesn't exist (for saving failures)
     data_dir = Path("data")
@@ -158,20 +251,8 @@ async def main():
     tasks = load_tasks()
     print(f"Loaded {len(tasks)} tasks (1 test task + 2 GAIA tasks)")
     
-    # Verify agent is reachable
     agent_url = os.getenv("PERSONAL_ASSISTANT_AGENT_URL", "http://localhost:9999")
-    print(f"\nConnecting to personal assistant at {agent_url}")
-    
-    import httpx
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{agent_url}/", timeout=5.0)
-            print(f"Agent is reachable (status: {response.status_code})")
-    except Exception as e:
-        print(f"Warning: Could not verify agent is running at {agent_url}: {e}")
-        print("Make sure the personal assistant is running before starting evaluation.")
-        print("Start it with: uv run scripts/personal_assistant_app.py")
-        return
+    print(f"\nPersonal assistant URL: {agent_url}")
     
     # Step 1: Generate traces by calling the agent
     # Record timestamp BEFORE generating traces so we only search for traces from this run
@@ -205,58 +286,27 @@ async def main():
         return
     
     print(f"Found {len(traces)} traces")
+
+    # Require OTel log file: it is the canonical source for which traces to evaluate.
+    # The personal assistant must be run with OTEL_LOGS_EXPORTER=file and OTEL_LOGS_FILE_PATH.
+    log_path = os.getenv("OTEL_LOGS_FILE_PATH", "data/otel_logs.jsonl")
+    if not Path(log_path).exists():
+        print(f"\nERROR: OTel log file not found: {log_path}")
+        print("Run the personal assistant with: OTEL_LOGS_EXPORTER=file OTEL_LOGS_FILE_PATH=data/otel_logs.jsonl")
+        return
+    log_io = _parse_otel_log_file(log_path)
+    if not log_io:
+        print(f"\nERROR: OTel log file is empty or has no parseable trace entries: {log_path}")
+        return
     
-    # Filter to only complete traces (finish_reason="stop")
-    # The OpenAI instrumentor creates traces for each API call, including intermediate ones
-    # when tool calls are made. We only want the final complete traces with finish_reason='stop'.
-    print("\nFiltering to only complete traces (finish_reason='stop')...")
-    incomplete_indices = []
-    incomplete_count = 0
-    
-    for idx, trace_row in traces.iterrows():
-        is_incomplete = False
-        if 'spans' in trace_row and trace_row['spans']:
-            try:
-                spans = trace_row['spans']
-                if isinstance(spans, list) and len(spans) > 0:
-                    first_span = spans[0]
-                    if isinstance(first_span, dict) and 'attributes' in first_span:
-                        attrs = first_span['attributes']
-                        # Check finish_reason - we only want "stop" (complete), filter out "tool_calls" (incomplete)
-                        finish_reason = attrs.get('gen_ai.completion.0.finish_reason', '')
-                        # Remove quotes if present
-                        finish_reason = finish_reason.strip('"')
-                        if finish_reason != 'stop':
-                            is_incomplete = True
-                            incomplete_count += 1
-            except Exception:
-                # If we can't determine finish_reason, filter it out to be safe
-                is_incomplete = True
-                incomplete_count += 1
-        
-        if is_incomplete:
-            incomplete_indices.append(idx)
-    
-    if incomplete_count > 0:
-        print(f"  Filtering out {incomplete_count} incomplete traces (finish_reason='tool_calls')")
-        traces = traces.drop(index=incomplete_indices)
-    
-    # Filter to only personal assistant traces - we only want to evaluate personal assistant traces
-    # Weather assistant traces are intermediate steps from handoffs, not the final responses
-    print("\nFiltering to personal assistant traces only...")
-    personal_assistant_indices = []
-    
-    for idx, trace_row in traces.iterrows():
-        trace_request = trace_row.get('request', '')
-        if 'personal-assistant' in trace_request.lower():
-            personal_assistant_indices.append(idx)
-    
-    if len(personal_assistant_indices) < len(traces):
-        excluded_count = len(traces) - len(personal_assistant_indices)
-        print(f"  Keeping {len(personal_assistant_indices)} personal assistant traces (excluding {excluded_count} other traces)")
-        traces = traces.loc[personal_assistant_indices]
-    else:
-        print(f"  All {len(traces)} traces are personal assistant traces")
+    # Use log file as source of truth: evaluate only traces that appear there (one per task).
+    wanted_ids = set(log_io.keys())
+    before = len(traces)
+    traces = traces[traces["trace_id"].isin(wanted_ids)]
+    print(f"\nEvaluating {len(traces)} trace(s) from log (log has {len(log_io)} task(s)); {before - len(traces)} trace(s) from MLflow excluded (not in log).")
+    if traces.empty:
+        print("No traces from this run found in MLflow. Ensure the agent exported traces to the same experiment and after the script's start time.")
+        return
     
     # Check if any traces were created before we started (shouldn't happen with proper timestamp filter)
     traces_before_start = 0
@@ -271,10 +321,28 @@ async def main():
         print(f"⚠️  WARNING: {traces_before_start} traces were created BEFORE trace generation started!")
         print(f"   This suggests old traces are being included. Timestamp filter: {timestamp_ms}")
     
-    print(f"\n{len(traces)} personal assistant traces ready for evaluation")
+    print(f"\n{len(traces)} traces ready for evaluation")
+    
+    # Populate request/response from log file; set inputs/outputs for Correctness scorer
+    # Correctness scorer requires DataFrame columns named "inputs" and "outputs"
+    if "response" not in traces.columns:
+        traces["response"] = ""
+    for idx, trace_row in traces.iterrows():
+        tid = trace_row.get("trace_id")
+        if tid and tid in log_io:
+            traces.at[idx, "request"] = log_io[tid]["input"]
+            traces.at[idx, "response"] = log_io[tid]["output"]
+    if "request" in traces.columns:
+        traces["inputs"] = traces["request"].fillna("")
+    else:
+        traces["inputs"] = ""
+    if "response" in traces.columns:
+        traces["outputs"] = traces["response"].fillna("")
+    else:
+        traces["outputs"] = ""
     
     # Step 3: Annotate traces with expectations (ground truth)
-    # Match traces to tasks by comparing request content
+    # Match traces to tasks by comparing request content (prefer log-derived input when available)
     print("\nAnnotating traces with expectations...")
     
     # Create a mapping of questions to expected answers
@@ -293,23 +361,24 @@ async def main():
             logger.warning(f"Trace row {idx} has no trace_id, skipping")
             continue
         
-        # Extract the actual user question from the trace
-        # (Weather assistant traces have already been filtered out above)
-        # The 'request' column contains the full system prompt, not the user question
-        # The user question is in the span attributes: gen_ai.prompt.1.content (where role="user")
+        # Extract the actual user question from the trace for matching to a task.
+        # Prefer log-derived input; use inputs_list to find the first message that matches a task
+        # (handoff traces may have research/weather sub-query as first PA message in file order).
         user_question = None
-        
-        # Try to get from spans if available
-        if 'spans' in trace_row and trace_row['spans']:
+        inputs_list: List[str] = []
+        if trace_id in log_io:
+            rec = log_io[trace_id]
+            if rec.get("input"):
+                user_question = rec["input"]
+            inputs_list = rec.get("inputs_list") or []
+        # Fallback: span attributes gen_ai.prompt.*.content (where role="user") or request column
+        if not user_question and "spans" in trace_row and trace_row["spans"]:
             try:
-                # Spans is a list, get the first span (usually the main LLM call)
                 spans = trace_row['spans']
                 if isinstance(spans, list) and len(spans) > 0:
                     first_span = spans[0]
                     if isinstance(first_span, dict) and 'attributes' in first_span:
                         attrs = first_span['attributes']
-                        # Look for user prompt in attributes (gen_ai.prompt.1.content where role="user")
-                        # Check prompts 0-5 to find the user message
                         for i in range(6):
                             prompt_role_key = f'gen_ai.prompt.{i}.role'
                             prompt_content_key = f'gen_ai.prompt.{i}.content'
@@ -319,28 +388,34 @@ async def main():
                                     break
             except Exception as e:
                 logger.debug(f"Could not extract user question from spans: {e}")
-        
-        # Fallback: try to extract from request column (might contain system prompt + question)
         if not user_question and 'request' in trace_row:
             trace_request = trace_row['request']
-            # Try to find the actual question in the request (after system prompt)
             for question in question_to_answer.keys():
                 if question in trace_request:
                     user_question = question
                     break
-        
-        # Match trace to task by comparing user question
+
+        # Match trace to task: try primary user_question first, then any message in inputs_list
+        # that matches a task (so we get expected_response even when first PA message is a handoff sub-query).
         expected_answer = None
+        def _match_question(q: str) -> str | None:
+            if not q:
+                return None
+            if q in question_to_answer:
+                return question_to_answer[q]
+            for question, answer in question_to_answer.items():
+                if question in q or q in question:
+                    return answer
+            return None
+
         if user_question:
-            # Try exact match first
-            if user_question in question_to_answer:
-                expected_answer = question_to_answer[user_question]
-            else:
-                # Try partial match (question might be slightly different)
-                for question, answer in question_to_answer.items():
-                    if question in user_question or user_question in question:
-                        expected_answer = answer
-                        break
+            expected_answer = _match_question(user_question)
+        if expected_answer is None and inputs_list:
+            for msg in inputs_list:
+                expected_answer = _match_question(msg)
+                if expected_answer is not None:
+                    user_question = msg
+                    break
         
         # If we found a match, add the expectation
         if expected_answer:
@@ -371,8 +446,12 @@ async def main():
         else:
             expectations_list.append({})
     
-    traces['expectations'] = expectations_list
+    traces["expectations"] = expectations_list
     
+    if traces.empty:
+        print("\nNo traces to evaluate. Exiting.")
+        return
+
     # Step 4: Define scorers for MLflow evaluation
     # Correctness scorer compares against "expected_response" field in expectations
     scorers = [

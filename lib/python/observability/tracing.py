@@ -51,6 +51,21 @@ except ImportError as e:
     HTTPXClientInstrumentor = None
     logger.warning(f"Failed to import httpx instrumentation: {e}")
 
+try:
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+except ImportError:
+    RequestsInstrumentor = None
+
+try:
+    from opentelemetry.instrumentation.urllib3 import URLLib3Instrumentor
+except ImportError:
+    URLLib3Instrumentor = None
+
+try:
+    from opentelemetry.instrumentation.urllib import URLLibInstrumentor
+except ImportError:
+    URLLibInstrumentor = None
+
 # Ensure W3C Trace Context propagator is configured
 # This is critical for distributed tracing across HTTP boundaries
 try:
@@ -79,11 +94,12 @@ def configure_tracing(app=None) -> None:
     - OTEL_RESOURCE_ATTRIBUTES: Resource attributes (optional)
     - OTEL_PROPAGATORS: Propagators to use (default: tracecontext,baggage)
     - OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: Set to 'true' to capture prompts/completions as OTel log events (requires LoggerProvider)
-    - OTEL_LOGS_EXPORTER: Log export target(s), comma-separated: 'console' (stdout), 'otlp' (OTLP endpoint). Default: 'otlp' if available, else 'console'
+    - OTEL_LOGS_EXPORTER: Log export target(s), comma-separated: 'console' (stdout), 'otlp', 'file'. Default: 'otlp' if available, else 'console'
+    - OTEL_LOGS_FILE_PATH: Path for file exporter (default: data/otel_logs.jsonl). Used when OTEL_LOGS_EXPORTER contains 'file'.
 
     Args:
         app: Optional FastAPI app instance to instrument. If provided, instruments this specific app
-             with excluded internal routes (/mcp, /.well-known). If None, does not instrument FastAPI.
+             (excluding only /.well-known). If None, does not instrument FastAPI.
     """
     # Check if already initialized
     if isinstance(trace.get_tracer_provider(), TracerProvider):
@@ -99,7 +115,7 @@ def configure_tracing(app=None) -> None:
         # If app is provided and FastAPI instrumentation is available, instrument it
         if app is not None and FastAPIInstrumentor is not None:
             try:
-                excluded_urls = "/mcp,/.well-known"
+                excluded_urls = "/.well-known"
                 FastAPIInstrumentor().instrument_app(app, excluded_urls=excluded_urls)
                 logger.info(f"FastAPI app instrumented (excluding: {excluded_urls})")
             except Exception as e:
@@ -117,7 +133,7 @@ def configure_tracing(app=None) -> None:
     # The instrumentation uses logger.emit(LogRecord(...)) for prompts/completions when
     # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true. Without a LoggerProvider,
     # those log records are never exported (Jaeger "Events" tab shows span events, not logs).
-    # OTEL_LOGS_EXPORTER: 'console' (stdout), 'otlp', or 'console,otlp'. No built-in file exporter.
+    # OTEL_LOGS_EXPORTER: 'console' (stdout), 'otlp', 'file', or comma-separated (e.g. 'console,file').
     if _SDK_LOGS_AVAILABLE:
         try:
             exporters_env = os.getenv("OTEL_LOGS_EXPORTER", "otlp" if _OTLP_LOGS_AVAILABLE else "console").strip().lower()
@@ -129,6 +145,17 @@ def configure_tracing(app=None) -> None:
             if "console" in exporters_list:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
                 added.append("console")
+            if "file" in exporters_list:
+                try:
+                    from timestep.observability.file_log_exporter import FileLogExporter
+                    file_path = os.getenv("OTEL_LOGS_FILE_PATH", "data/otel_logs.jsonl").strip()
+                    if file_path:
+                        logger_provider.add_log_record_processor(BatchLogRecordProcessor(FileLogExporter(file_path)))
+                        added.append("file")
+                    else:
+                        logger.warning("OTEL_LOGS_EXPORTER=file requested but OTEL_LOGS_FILE_PATH is empty")
+                except Exception as file_exc:
+                    logger.warning("Could not add file log exporter: %s", file_exc)
             if "otlp" in exporters_list and _OTLP_LOGS_AVAILABLE:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
                 added.append("otlp")
@@ -171,13 +198,38 @@ def configure_tracing(app=None) -> None:
     else:
         logger.warning("httpx instrumentation not available - install opentelemetry-instrumentation-httpx")
         logger.warning("Without httpx instrumentation, HTTP requests will not propagate trace context")
-    
-    # Instrument FastAPI app if provided, excluding internal routes
+
+    # Instrument requests so outbound HTTP from tools (e.g. web_search/DDGS) are child spans
+    if RequestsInstrumentor is not None:
+        try:
+            RequestsInstrumentor().instrument()
+            logger.info("requests instrumentation enabled - tool HTTP calls (e.g. DuckDuckGo) will be child spans")
+        except Exception as e:
+            logger.warning("Failed to instrument requests: %s", e)
+
+    # Instrument urllib3/urllib so any tool using them (e.g. ddgs/primp) gets context propagation.
+    # Optional: if instrumentors not installed, those HTTP calls may appear as root traces.
+    if URLLib3Instrumentor is not None:
+        try:
+            URLLib3Instrumentor().instrument()
+            logger.info("urllib3 instrumentation enabled - tool HTTP calls will be child spans")
+        except Exception as e:
+            logger.warning("Failed to instrument urllib3: %s", e)
+    if URLLibInstrumentor is not None:
+        try:
+            URLLibInstrumentor().instrument()
+            logger.info("urllib instrumentation enabled - tool HTTP calls will be child spans")
+        except Exception as e:
+            logger.warning("Failed to instrument urllib: %s", e)
+
+    # Instrument FastAPI app if provided, excluding only non-semantic routes
     if app is not None and FastAPIInstrumentor is not None:
         try:
-            # Exclude internal routes to avoid creating separate traces for agent-to-environment communication
-            # excluded_urls must be a comma-separated string, not a list
-            excluded_urls = "/mcp,/.well-known"
+            # Exclude only /.well-known (agent card). Do NOT exclude /mcp: tool execution
+            # (e.g. web_search -> DDGS) runs in the /mcp request handler; if /mcp is excluded,
+            # that handler has no trace context, so outbound calls (e.g. to search backends)
+            # create new root traces instead of being children of the same request trace.
+            excluded_urls = "/.well-known"
             FastAPIInstrumentor().instrument_app(app, excluded_urls=excluded_urls)
             logger.info(f"FastAPI app instrumented (excluding: {excluded_urls})")
         except Exception as e:

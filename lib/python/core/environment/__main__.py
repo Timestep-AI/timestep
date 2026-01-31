@@ -8,11 +8,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import Context
 import mcp.types as mcp_types
 
-# OpenTelemetry imports for trace context propagation
 try:
     from opentelemetry import propagate
 except ImportError:
-    # If OpenTelemetry is not available, propagate will be None
     propagate = None
 
 
@@ -22,7 +20,7 @@ class Environment(FastMCP):
     The system prompt is stored as a FastMCP prompt, and tools are registered
     using FastMCP's @tool() decorator. Each agent has its own environment.
     """
-    
+
     def __init__(
         self,
         environment_id: str,
@@ -35,10 +33,7 @@ class Environment(FastMCP):
         self.agent_id = agent_id
         self.human_in_loop = human_in_loop
         self.enable_handoff = enable_handoff
-        
-        # Note: System prompt should be registered by the user using @environment.prompt() decorator
-        # No default prompt is registered to avoid override issues
-        
+
         # Register handoff tool conditionally based on enable_handoff parameter
         if enable_handoff:
             @self.tool()
