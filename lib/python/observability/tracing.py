@@ -10,6 +10,30 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 
 logger = logging.getLogger(__name__)
 
+# Optional: LoggerProvider for OTel logs (used by OpenAI instrumentation for message content)
+# SDK log components (LoggerProvider, ConsoleLogExporter) are in opentelemetry-sdk
+try:
+    from opentelemetry import _logs
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import (
+        BatchLogRecordProcessor,
+        ConsoleLogExporter,
+    )
+    _SDK_LOGS_AVAILABLE = True
+except ImportError:
+    _logs = None
+    LoggerProvider = None
+    BatchLogRecordProcessor = None
+    ConsoleLogExporter = None
+    _SDK_LOGS_AVAILABLE = False
+
+try:
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    _OTLP_LOGS_AVAILABLE = True
+except ImportError:
+    OTLPLogExporter = None
+    _OTLP_LOGS_AVAILABLE = False
+
 # Configure logger to suppress noisy OTLP export errors
 export_logger = logging.getLogger("opentelemetry.sdk.trace.export")
 export_logger.setLevel(logging.WARNING)
@@ -54,8 +78,9 @@ def configure_tracing(app=None) -> None:
     - OTEL_EXPORTER_OTLP_HEADERS: Headers for OTLP export (optional)
     - OTEL_RESOURCE_ATTRIBUTES: Resource attributes (optional)
     - OTEL_PROPAGATORS: Propagators to use (default: tracecontext,baggage)
-    - OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: Set to 'true' to capture message content (handled by instrumentation)
-    
+    - OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: Set to 'true' to capture prompts/completions as OTel log events (requires LoggerProvider)
+    - OTEL_LOGS_EXPORTER: Log export target(s), comma-separated: 'console' (stdout), 'otlp' (OTLP endpoint). Default: 'otlp' if available, else 'console'
+
     Args:
         app: Optional FastAPI app instance to instrument. If provided, instruments this specific app
              with excluded internal routes (/mcp, /.well-known). If None, does not instrument FastAPI.
@@ -63,6 +88,14 @@ def configure_tracing(app=None) -> None:
     # Check if already initialized
     if isinstance(trace.get_tracer_provider(), TracerProvider):
         logger.debug("Tracing already initialized")
+        
+        # Check message content capture status even if tracing is already initialized
+        capture_message_content = os.getenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false").lower() == "true"
+        if capture_message_content:
+            logger.info("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true - message content will be captured as OTel log events (if LoggerProvider is configured)")
+        else:
+            logger.info("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT not set or false - message content will not be captured")
+
         # If app is provided and FastAPI instrumentation is available, instrument it
         if app is not None and FastAPIInstrumentor is not None:
             try:
@@ -79,9 +112,47 @@ def configure_tracing(app=None) -> None:
     tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(tracer_provider)
-    
+
+    # Configure LoggerProvider so OpenAI instrumentation can emit message content as OTel logs.
+    # The instrumentation uses logger.emit(LogRecord(...)) for prompts/completions when
+    # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true. Without a LoggerProvider,
+    # those log records are never exported (Jaeger "Events" tab shows span events, not logs).
+    # OTEL_LOGS_EXPORTER: 'console' (stdout), 'otlp', or 'console,otlp'. No built-in file exporter.
+    if _SDK_LOGS_AVAILABLE:
+        try:
+            exporters_env = os.getenv("OTEL_LOGS_EXPORTER", "otlp" if _OTLP_LOGS_AVAILABLE else "console").strip().lower()
+            exporters_list = [x.strip() for x in exporters_env.split(",") if x.strip()]
+            if not exporters_list:
+                exporters_list = ["console"]
+            logger_provider = LoggerProvider(resource=resource)
+            added = []
+            if "console" in exporters_list:
+                logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
+                added.append("console")
+            if "otlp" in exporters_list and _OTLP_LOGS_AVAILABLE:
+                logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+                added.append("otlp")
+            elif "otlp" in exporters_list and not _OTLP_LOGS_AVAILABLE:
+                logger.warning("OTEL_LOGS_EXPORTER=otlp requested but opentelemetry-exporter-otlp-proto-http not available; use OTEL_LOGS_EXPORTER=console for stdout")
+            if added:
+                _logs.set_logger_provider(logger_provider)
+                logger.info("LoggerProvider configured (exporters: %s) - message content as OTel logs when OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true", ",".join(added))
+        except Exception as e:
+            logger.warning("Could not configure LoggerProvider for message content capture: %s", e)
+    else:
+        logger.debug("LoggerProvider not configured - opentelemetry-sdk required for log export")
+
     # Instrument OpenAI
     # The instrumentation automatically reads OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT from environment
+    # IMPORTANT: The environment variable must be set BEFORE importing the instrumentation
+    # Check if message content capture is enabled
+    capture_message_content = os.getenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false").lower() == "true"
+    if capture_message_content:
+        logger.info("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true - message content will be captured as OTel log events (if LoggerProvider is configured)")
+    else:
+        logger.info("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT not set or false - message content will not be captured")
+        logger.info("Set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true to capture prompts and completions as log events")
+    
     try:
         from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
         OpenAIInstrumentor().instrument()
