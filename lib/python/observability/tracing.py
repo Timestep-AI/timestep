@@ -7,7 +7,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +54,7 @@ def configure_tracing(app=None) -> None:
     - OTEL_EXPORTER_OTLP_HEADERS: Headers for OTLP export (optional)
     - OTEL_RESOURCE_ATTRIBUTES: Resource attributes (optional)
     - OTEL_PROPAGATORS: Propagators to use (default: tracecontext,baggage)
+    - OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: Set to 'true' to capture message content (handled by instrumentation)
     
     Args:
         app: Optional FastAPI app instance to instrument. If provided, instruments this specific app
@@ -66,8 +66,6 @@ def configure_tracing(app=None) -> None:
         # If app is provided and FastAPI instrumentation is available, instrument it
         if app is not None and FastAPIInstrumentor is not None:
             try:
-                # Exclude internal routes to avoid creating separate traces for agent-to-environment communication
-                # excluded_urls must be a comma-separated string, not a list
                 excluded_urls = "/mcp,/.well-known"
                 FastAPIInstrumentor().instrument_app(app, excluded_urls=excluded_urls)
                 logger.info(f"FastAPI app instrumented (excluding: {excluded_urls})")
@@ -83,7 +81,13 @@ def configure_tracing(app=None) -> None:
     trace.set_tracer_provider(tracer_provider)
     
     # Instrument OpenAI
-    OpenAIInstrumentor().instrument()
+    # The instrumentation automatically reads OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT from environment
+    try:
+        from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
+        OpenAIInstrumentor().instrument()
+        logger.info("OpenAI instrumentation enabled")
+    except Exception as e:
+        logger.error(f"Failed to instrument OpenAI: {e}", exc_info=True)
     
     # Instrument httpx to propagate trace context in outgoing HTTP requests
     # CRITICAL: This must be called before any httpx clients are created
