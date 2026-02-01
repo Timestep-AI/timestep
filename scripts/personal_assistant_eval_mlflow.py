@@ -135,6 +135,12 @@ def _parse_otel_log_file(file_path: str) -> Dict[str, Dict[str, Any]]:
     return result
 
 
+# Recommended instructions for GAIA benchmark (included when calling /v1/responses for GAIA questions)
+GAIA_INSTRUCTIONS = (
+    "You are a general AI assistant. I will ask you a question. Report your thoughts, and finish your answer with the following template: FINAL ANSWER: [YOUR FINAL ANSWER]. YOUR FINAL ANSWER should be a number OR as few words as possible OR a comma separated list of numbers and/or strings. If you are asked for a number, don't use comma to write your number neither use units such as $ or percent sign unless specified otherwise. If you are asked for a string, don't use articles, neither abbreviations (e.g. for cities), and write the digits in plain text unless specified otherwise. If you are asked for a comma separated list, apply the above rules depending of whether the element to be put in the list is a number or a string."
+)
+
+
 def load_tasks() -> List[Dict]:
     """Load evaluation tasks including GAIA tasks and test tasks.
     
@@ -201,14 +207,20 @@ def generate_traces_for_evaluation(tasks: List[Dict], agent_url: str) -> None:
         # Log the exact question being sent for debugging
         print(f"  Calling agent for task {i}/{len(tasks)}: {question[:60]}...")
         
+        # Include GAIA instructions for GAIA tasks (not for the test weather task)
+        is_gaia_task = task.get("task_id") != "test-weather-oakland"
+        body: Dict[str, Any] = {
+            "input": question,
+            "stream": False,
+        }
+        if is_gaia_task:
+            body["instructions"] = GAIA_INSTRUCTIONS
+
         try:
             with httpx.Client(timeout=300.0) as client:
                 response = client.post(
                     f"{agent_url}/v1/responses",
-                    json={
-                        "input": question,
-                        "stream": False,
-                    },
+                    json=body,
                 )
                 response.raise_for_status()
                 print(f"  ✓ Generated trace for task {i}/{len(tasks)}")

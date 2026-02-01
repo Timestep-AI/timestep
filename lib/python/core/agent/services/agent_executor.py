@@ -103,10 +103,16 @@ class AgentExecutor(BaseAgentExecutor):
             
                 # Get system prompt (FastMCP prompt) - fail fast if not found
                 # Human-in-the-loop: MCP Elicitation can happen here
+                # Extract instructions from message metadata if present
+                meta = getattr(context.message, "metadata", None) or {}
+                instructions = meta.get("instructions")
+                
+                prompt_args = {"agent_name": self.agent_id}
+                if instructions:
+                    prompt_args["instructions"] = instructions
+                
                 prompt_start = time.time()
-                system_prompt_result = await mcp_session.get_prompt("system_prompt", {
-                    "agent_name": self.agent_id
-                })
+                system_prompt_result = await mcp_session.get_prompt("system_prompt", prompt_args)
                 prompt_time = time.time() - prompt_start
                 logger.info(f"[TIMING] MCP prompt fetch: {prompt_time:.3f}s")
                 if not system_prompt_result.messages or not system_prompt_result.messages[0].content.text:

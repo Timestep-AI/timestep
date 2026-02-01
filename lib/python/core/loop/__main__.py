@@ -631,6 +631,10 @@ class Loop:
         # A2A will automatically generate context_id if not provided
         a2a_message = self._convert_responses_input_to_a2a(input_data)
         
+        # Add instructions to metadata if present
+        if "instructions" in body:
+            a2a_message.metadata = {"instructions": body["instructions"]}
+        
         task_id = None
         context_id = None  # Will be extracted from A2A response
         final_content = ""
@@ -829,6 +833,11 @@ class Loop:
             # A2A will automatically generate context_id if not provided
             message_start = time.time()
             a2a_message = self._convert_responses_input_to_a2a(input_data)
+            
+            # Add instructions to metadata if present
+            if "instructions" in body:
+                a2a_message.metadata = {"instructions": body["instructions"]}
+            
             message_sent_time = time.time() - message_start
             logger.info(f"[TIMING] Message prepared and sent: {message_sent_time:.3f}s")
             

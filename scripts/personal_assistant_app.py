@@ -134,9 +134,13 @@ def main():
     
     # Update system prompt for personal assistant
     @environment.prompt()
-    def system_prompt(agent_name: str) -> str:
-        """System prompt for the personal assistant agent."""
-        return f"""You are {agent_name}, a helpful personal assistant. 
+    def system_prompt(agent_name: str, instructions: str = "") -> str:
+        """System prompt for the personal assistant agent.
+
+        Per-request instructions (e.g. from POST /v1/responses body.instructions) are
+        passed as the instructions prompt argument and appended when present.
+        """
+        base = f"""You are {agent_name}, a helpful personal assistant. 
 You can help with various tasks. For research questions, web searches, or 
 information lookups, use the handoff tool to delegate to the research assistant agent.
 For weather-related questions, use the handoff tool to delegate to the weather assistant agent.
@@ -150,6 +154,9 @@ The agent_uri must be the full URL.
 Example handoff tool calls:
 - Research: agent_uri: http://localhost:10000, message: Search for information about quantum computing.
 - Weather: agent_uri: http://localhost:10001, message: What is the current weather in Oakland?"""
+        if instructions:
+            return base + "\n\n" + (instructions if isinstance(instructions, str) else str(instructions))
+        return base
     
     # Get MCP app from environment
     mcp_app = environment.streamable_http_app()
