@@ -242,11 +242,10 @@ search results."""
     # Get MCP app from environment
     mcp_app = environment.streamable_http_app()
     
-    # Create agent
+    # Create agent (no environment_uri needed - Loop handles MCP communication)
     agent = Agent(
         agent_id="research-assistant",
         name="Research Assistant",
-        environment_uri=f"http://{http_host}:{port}/mcp",
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         human_in_loop=False,
     )
@@ -294,12 +293,16 @@ search results."""
     
     # Get agent base URL for Loop
     agent_base_url = f"http://{http_host}:{port}"
+    environment_uri = f"http://{http_host}:{port}/mcp"
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     
     # Create Loop instance
+    # Loop is a pure client - no direct references to Agent or Environment
     loop = Loop(
-        agent=agent,
         agent_base_url=agent_base_url,
-        environment_uri=agent.environment_uri,
+        environment_uri=environment_uri,
+        agent_id="research-assistant",
+        model_name=model_name,
     )
     
     # Mount Loop routes

@@ -30,6 +30,7 @@ from mcp.shared.context import RequestContext
 from timestep.utils.message_helpers import (
     TOOL_CALLS_KEY,
     TOOL_RESULTS_KEY,
+    convert_mcp_tool_to_openai,
 )
 from timestep.utils.event_helpers import (
     extract_event_data,
@@ -59,27 +60,34 @@ class Loop:
     """Loop orchestrates agent-environment interaction until completion (full rollout/episode).
     
     This component provides a /v1/responses endpoint (OpenAI-compatible) that:
-    1. Handles tool execution via MCP
-    2. Continues agent loop until final response (complete rollout/episode)
-    3. Supports both streaming and non-streaming modes
+    1. Fetches system prompt and tools from Environment (MCP) before sending to Agent
+    2. Handles tool execution via MCP
+    3. Continues agent loop until final response (complete rollout/episode)
+    4. Supports both streaming and non-streaming modes
+    
+    Loop is a pure client component - it communicates with Agent and Environment via protocols,
+    not direct class references.
     """
     
     def __init__(
         self,
-        agent: Any,  # Agent instance
         agent_base_url: str,
         environment_uri: str,
+        agent_id: str,
+        model_name: str,
     ):
         """Initialize Loop.
         
         Args:
-            agent: The Agent instance
-            agent_base_url: Base URL for the agent (e.g., "http://localhost:9999")
-            environment_uri: MCP environment URI
+            agent_base_url: Base URL for the agent (e.g., "http://localhost:9999") - for A2A client
+            environment_uri: MCP environment URI - for MCP client
+            agent_id: Agent ID for fetching system prompt from Environment
+            model_name: Model name for Responses API format
         """
-        self.agent = agent
         self.agent_base_url = agent_base_url
         self.environment_uri = environment_uri
+        self.agent_id = agent_id
+        self.model_name = model_name
         # Always create sampling callback (handoff tool is always in Environment)
         self.sampling_callback = self._create_sampling_callback()
         
@@ -106,6 +114,38 @@ class Loop:
     def fastapi_app(self) -> FastAPI:
         """Get the FastAPI app with /v1/responses route."""
         return self.app
+    
+    async def _fetch_system_prompt_and_tools(self, instructions: Optional[str] = None) -> tuple[str, List[Dict[str, Any]]]:
+        """Fetch system prompt and tools from Environment via MCP.
+        
+        Args:
+            instructions: Optional instructions to pass to system prompt
+            
+        Returns:
+            Tuple of (system_prompt, tools)
+        """
+        async with streamable_http_client(self.environment_uri) as (read, write, _):
+            async with ClientSession(read, write) as mcp_session:
+                await mcp_session.initialize()
+                
+                # Get system prompt
+                prompt_args = {"agent_name": self.agent_id}
+                if instructions:
+                    prompt_args["instructions"] = instructions
+                
+                system_prompt_result = await mcp_session.get_prompt("system_prompt", prompt_args)
+                if not system_prompt_result.messages or not system_prompt_result.messages[0].content.text:
+                    raise ValueError(f"System prompt 'system_prompt' returned empty result from environment at {self.environment_uri}")
+                system_prompt = system_prompt_result.messages[0].content.text
+                
+                # Get tools
+                tools_result = await mcp_session.list_tools()
+                tools = [
+                    convert_mcp_tool_to_openai(tool)
+                    for tool in tools_result.tools
+                ]
+                
+                return system_prompt, tools
     
     def _extract_tool_calls(self, task: Any) -> Optional[List[Dict[str, Any]]]:
         """Extract tool calls from task status message DataPart."""
@@ -275,16 +315,59 @@ class Loop:
     ) -> str:
         """Handle agent handoff by calling the A2A agent at agent_uri.
 
+        Fetches system prompt and tools from the target agent's Environment (MCP)
+        and includes them in the A2A message metadata before calling the agent.
+
         When httpx_client is provided (e.g. from the sampling callback), the A2A
         client uses it so outgoing HTTP requests carry the current trace context
         (Traceparent header), ensuring distributed tracing across the handoff.
         """
+        # Fetch system prompt and tools from target agent's Environment
+        target_env_uri = f"{agent_uri}/mcp"
+        
+        # Get agent name from agent card to use for system prompt
+        agent_name = "agent"  # Default fallback
+        if httpx_client:
+            try:
+                agent_card_url = f"{agent_uri}/.well-known/agent-card.json"
+                card_resp = await httpx_client.get(agent_card_url, timeout=10.0)
+                if card_resp.status_code == 200:
+                    card_data = card_resp.json()
+                    agent_name = card_data.get("name", "agent")
+            except Exception as e:
+                logger.warning(f"Could not fetch agent card from {agent_uri}: {e}, using default agent_name")
+        
+        # Fetch system prompt and tools from target agent's Environment
+        async with streamable_http_client(target_env_uri) as (read, write, _):
+            async with ClientSession(read, write) as mcp_session:
+                await mcp_session.initialize()
+                
+                # Get system prompt
+                prompt_args = {"agent_name": agent_name}
+                system_prompt_result = await mcp_session.get_prompt("system_prompt", prompt_args)
+                if not system_prompt_result.messages or not system_prompt_result.messages[0].content.text:
+                    raise ValueError(f"System prompt 'system_prompt' returned empty result from environment at {target_env_uri}")
+                system_prompt = system_prompt_result.messages[0].content.text
+                
+                # Get tools
+                tools_result = await mcp_session.list_tools()
+                tools = [
+                    convert_mcp_tool_to_openai(tool)
+                    for tool in tools_result.tools
+                ]
+        
         # Use ClientFactory with optional instrumented httpx client for trace propagation
         client_config = ClientConfig(httpx_client=httpx_client) if httpx_client else None
         a2a_client = await ClientFactory.connect(agent_uri, client_config=client_config)
         
         try:
             message_obj = create_text_message_object(role="user", content=message)
+            
+            # Include system prompt and tools in metadata (AgentExecutor will extract these)
+            message_obj.metadata = {
+                "system_prompt": system_prompt,
+                "tools": tools,
+            }
             
             # Process message using ClientFactory (non-streaming, polling mode)
             final_message = ""
@@ -366,6 +449,11 @@ class Loop:
                             
                             # Build tool result message and send it
                             tool_result_msg = self._build_tool_result_message(tool_results, task_id, context_id)
+                            # Include system prompt and tools in metadata for tool result message too
+                            tool_result_msg.metadata = {
+                                "system_prompt": system_prompt,
+                                "tools": tools,
+                            }
                             message_obj = tool_result_msg
                             # Break from inner loop to continue outer loop with new message
                             break
@@ -611,11 +699,26 @@ class Loop:
             "id": f"resp_{uuid4().hex}",
             "object": "response",
             "created_at": int(time.time()),
-            "model": self.agent.model,
+            "model": self.model_name,
             "output": output_items
         }
         
         return response
+    
+    def _add_system_prompt_and_tools_to_metadata(
+        self,
+        message: Message,
+        system_prompt: str,
+        tools: List[Dict[str, Any]],
+        instructions: Optional[str] = None,
+    ) -> None:
+        """Add system prompt and tools to message metadata."""
+        message.metadata = {
+            "system_prompt": system_prompt,
+            "tools": tools,
+        }
+        if instructions:
+            message.metadata["instructions"] = instructions
     
     async def _handle_responses_non_streaming(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """Handle non-streaming /v1/responses request."""
@@ -624,6 +727,10 @@ class Loop:
         if input_data is None:
             raise HTTPException(status_code=400, detail="input is required")
         
+        # Fetch system prompt and tools from Environment (MCP) once at the start
+        instructions = body.get("instructions")
+        system_prompt, tools = await self._fetch_system_prompt_and_tools(instructions=instructions)
+        
         # Use ClientFactory (supports JSON-RPC by default)
         a2a_client = await ClientFactory.connect(self.agent_base_url)
         
@@ -631,9 +738,8 @@ class Loop:
         # A2A will automatically generate context_id if not provided
         a2a_message = self._convert_responses_input_to_a2a(input_data)
         
-        # Add instructions to metadata if present
-        if "instructions" in body:
-            a2a_message.metadata = {"instructions": body["instructions"]}
+        # Include system prompt and tools in metadata (AgentExecutor will extract these)
+        self._add_system_prompt_and_tools_to_metadata(a2a_message, system_prompt, tools, instructions)
         
         task_id = None
         context_id = None  # Will be extracted from A2A response
@@ -783,6 +889,8 @@ class Loop:
                         
                         # Build tool result message and send it
                         a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
+                        # Include system prompt and tools in metadata for tool result message too
+                        self._add_system_prompt_and_tools_to_metadata(a2a_message, system_prompt, tools, instructions)
                         # Break from inner loop to continue outer loop with new message
                         break
                     else:
@@ -823,6 +931,10 @@ class Loop:
                 yield f"data: {json.dumps({'error': {'message': 'input is required'}})}\n\n"
                 return
         
+            # Fetch system prompt and tools from Environment (MCP) once at the start
+            instructions = body.get("instructions")
+            system_prompt, tools = await self._fetch_system_prompt_and_tools(instructions=instructions)
+            
             # Use ClientFactory (supports JSON-RPC by default)
             client_start = time.time()
             a2a_client = await ClientFactory.connect(self.agent_base_url)
@@ -834,9 +946,8 @@ class Loop:
             message_start = time.time()
             a2a_message = self._convert_responses_input_to_a2a(input_data)
             
-            # Add instructions to metadata if present
-            if "instructions" in body:
-                a2a_message.metadata = {"instructions": body["instructions"]}
+            # Include system prompt and tools in metadata (AgentExecutor will extract these)
+            self._add_system_prompt_and_tools_to_metadata(a2a_message, system_prompt, tools, instructions)
             
             message_sent_time = time.time() - message_start
             logger.info(f"[TIMING] Message prepared and sent: {message_sent_time:.3f}s")
@@ -996,7 +1107,7 @@ class Loop:
                                                 'id': f'resp_{uuid4().hex}',
                                                 'object': 'response.delta',
                                                 'created_at': int(time.time()),
-                                                'model': self.agent.model,
+                                                'model': self.model_name,
                                                 'output': [{
                                                     'type': 'message',
                                                     'delta': {
@@ -1085,7 +1196,7 @@ class Loop:
                                             'id': f'resp_{uuid4().hex}',
                                             'object': 'response.delta',
                                             'created_at': int(time.time()),
-                                            'model': self.agent.model,
+                                            'model': self.model_name,
                                             'output': [{
                                                 'type': 'message',
                                                 'delta': {
@@ -1107,7 +1218,7 @@ class Loop:
                                         'id': f'resp_{uuid4().hex}',
                                         'object': 'response.delta',
                                         'created_at': int(time.time()),
-                                        'model': self.agent.model,
+                                        'model': self.model_name,
                                         'output': [{
                                             'type': 'message',
                                             'delta': {}
@@ -1152,6 +1263,8 @@ class Loop:
                                     
                                     # Build tool result message and continue outer loop
                                     a2a_message = self._build_tool_result_message(tool_results, task_id, context_id)
+                                    # Include system prompt and tools in metadata for tool result message too
+                                    self._add_system_prompt_and_tools_to_metadata(a2a_message, system_prompt, tools, instructions)
                                     # Reset tracking for new streaming request
                                     accumulated_content = ""
                                     last_sent_content = ""
@@ -1162,7 +1275,7 @@ class Loop:
                                         'id': f'resp_{uuid4().hex}',
                                         'object': 'response.delta',
                                         'created_at': int(time.time()),
-                                        'model': self.agent.model,
+                                        'model': self.model_name,
                                         'output': [{
                                             'type': 'message',
                                             'delta': {}

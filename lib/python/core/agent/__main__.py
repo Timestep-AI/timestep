@@ -28,14 +28,13 @@ class Agent:
     1. Contains AgentExecutor internally for single-step execution
     2. Exposes agent URI via A2A protocol
     3. Responds to A2A requests
-    4. Uses a single environment URI
+    4. No knowledge of Environment (Loop handles MCP communication)
     """
     
     def __init__(
         self,
         agent_id: str,
         name: str,
-        environment_uri: str,
         model: str = "gpt-4o-mini",
         human_in_loop: bool = False,
         memory_store: Optional[MemoryStore] = None,
@@ -43,18 +42,15 @@ class Agent:
         self.agent_id = agent_id
         self.name = name
         self.model = model
-        self.environment_uri = environment_uri
         self.human_in_loop = human_in_loop
         
         # Initialize memory store (context-level conversation history)
         self.memory_store = memory_store or InMemoryMemoryStore()
         
-        # AgentExecutor is inside Agent
+        # AgentExecutor is inside Agent (no environment_uri needed - Loop handles MCP)
         self.agent_executor = AgentExecutor(
             agent_id=agent_id,
             model=model,
-            environment_uri=self.environment_uri,
-            human_in_loop=human_in_loop,
             memory_store=self.memory_store,
         )
         

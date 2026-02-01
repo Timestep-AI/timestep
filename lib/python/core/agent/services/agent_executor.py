@@ -1,4 +1,4 @@
-"""AgentExecutor class - AgentExecutor that uses MCP client to get system prompt and tools."""
+"""AgentExecutor class - Execution engine that extracts system prompt and tools from message metadata."""
 
 import json
 import logging
@@ -20,12 +20,9 @@ from a2a.types import (
     Message,
 )
 from a2a.client.helpers import create_text_message_object
-from mcp.client.streamable_http import streamable_http_client
-from mcp import ClientSession
 
 from timestep.utils.message_helpers import (
     extract_user_text_and_tool_results,
-    convert_mcp_tool_to_openai,
     convert_openai_tool_call_to_mcp,
     convert_memory_history_to_openai_messages,
     get_message_id,
@@ -36,29 +33,24 @@ from timestep.core.agent.stores.memory_store import MemoryStore
 
 
 class AgentExecutor(BaseAgentExecutor):
-    """AgentExecutor is an AgentExecutor that uses MCP client to get system prompt and tools from Environment.
+    """AgentExecutor extracts system prompt and tools from message metadata.
     
     The AgentExecutor:
-    1. Receives A2A RequestContext with context_id
-    2. Uses MCP client to locate Environment by context_id
-    3. Gets system prompt (FastMCP prompt) and tools from Environment
-    4. Invokes OpenAI model (async/streaming)
-    5. Emits tool calls in A2A format (client handles execution)
-    6. Returns A2A Task
+    1. Receives A2A RequestContext with message containing system prompt and tools in metadata
+    2. Extracts system prompt and tools from message metadata (provided by Loop)
+    3. Invokes OpenAI model (async/streaming)
+    4. Emits tool calls in A2A format (client handles execution)
+    5. Returns A2A Task
     """
     
     def __init__(
         self,
         agent_id: str,
         model: str,
-        environment_uri: str,
-        human_in_loop: bool = False,
         memory_store: Optional[MemoryStore] = None,
     ):
         self.agent_id = agent_id
         self.model = model
-        self.environment_uri = environment_uri
-        self.human_in_loop = human_in_loop
         self.memory_store = memory_store
         
         # Initialize AsyncOpenAI client
@@ -69,7 +61,7 @@ class AgentExecutor(BaseAgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
-        """Execute agent task using OpenAI and MCP client for system prompt/tools."""
+        """Execute agent task using OpenAI with system prompt and tools from message metadata."""
         execute_start = time.time()
         task_id = context.task_id
         context_id = context.context_id
@@ -85,49 +77,15 @@ class AgentExecutor(BaseAgentExecutor):
         if task and task.history:
             logger.info(f"  Task history: {len(task.history)} messages")
         
-        # Use the single environment URI directly
-        environment_uri = self.environment_uri
+        # Extract system prompt and tools from message metadata (provided by Loop)
+        meta = getattr(context.message, "metadata", None) or {}
+        system_prompt = meta.get("system_prompt")
+        tools = meta.get("tools", [])
         
-        # Get system prompt and tools from Environment via HTTP client
-        # Fail fast if prompt not found or other errors occur
-        mcp_connect_start = time.time()
-        async with streamable_http_client(environment_uri) as (read, write, _):
-            mcp_connect_time = time.time() - mcp_connect_start
-            logger.info(f"[TIMING] MCP connection: {mcp_connect_time:.3f}s")
-            
-            mcp_init_start = time.time()
-            async with ClientSession(read, write) as mcp_session:
-                await mcp_session.initialize()
-                mcp_init_time = time.time() - mcp_init_start
-                logger.info(f"[TIMING] MCP session init: {mcp_init_time:.3f}s")
-            
-                # Get system prompt (FastMCP prompt) - fail fast if not found
-                # Human-in-the-loop: MCP Elicitation can happen here
-                # Extract instructions from message metadata if present
-                meta = getattr(context.message, "metadata", None) or {}
-                instructions = meta.get("instructions")
-                
-                prompt_args = {"agent_name": self.agent_id}
-                if instructions:
-                    prompt_args["instructions"] = instructions
-                
-                prompt_start = time.time()
-                system_prompt_result = await mcp_session.get_prompt("system_prompt", prompt_args)
-                prompt_time = time.time() - prompt_start
-                logger.info(f"[TIMING] MCP prompt fetch: {prompt_time:.3f}s")
-                if not system_prompt_result.messages or not system_prompt_result.messages[0].content.text:
-                    raise ValueError(f"System prompt 'system_prompt' returned empty result from environment at {environment_uri}")
-                system_prompt = system_prompt_result.messages[0].content.text
-            
-                # Get available tools
-                tools_start = time.time()
-                tools_result = await mcp_session.list_tools()
-                tools_time = time.time() - tools_start
-                logger.info(f"[TIMING] MCP tools fetch: {tools_time:.3f}s")
-                tools = [
-                    convert_mcp_tool_to_openai(tool)
-                    for tool in tools_result.tools
-                ]
+        if not system_prompt:
+            raise ValueError("system_prompt required in message metadata")
+        
+        logger.info(f"Extracted system_prompt (length={len(system_prompt)}), tools (count={len(tools)}) from message metadata")
         
         # Extract user message and tool results from incoming message
         user_text, tool_results = extract_user_text_and_tool_results(context.message)
